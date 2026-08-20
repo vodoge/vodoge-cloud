@@ -38,7 +38,7 @@ type FrameConn interface {
 type Server struct {
 	Region  string
 	Hub     *session.Hub
-	Journal *ingress.Journal
+	Journal ingress.Store
 	Now     func() time.Time
 }
 
@@ -99,7 +99,10 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 	})
 	connectionID = resume.ConnectionID
 
-	snapshot := server.Journal.Snapshot(device.DeviceID)
+	snapshot, err := server.Journal.Snapshot(device.TenantID, device.DeviceID)
+	if err != nil {
+		return err
+	}
 	if err := writeEnvelope(conn, device.DeviceID, contract.MessageKindResumeAck, contract.ResumeAckPayload{
 		ConnectionID:     resume.ConnectionID,
 		CommittedThrough: formatSeq(snapshot.CommittedThrough),
@@ -151,6 +154,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 				return err
 			}
 			result, err := server.Journal.Accept(ingress.Record{
+				TenantID:   device.TenantID,
 				DeviceID:   device.DeviceID,
 				EnvelopeID: envelope.ID,
 				Seq:        seq,

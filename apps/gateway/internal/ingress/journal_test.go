@@ -24,7 +24,10 @@ func TestAcceptAdvancesOnlyTheContiguousPrefix(t *testing.T) {
 			t.Fatalf("seq %d status = %v", seq, result.Status)
 		}
 	}
-	window := journal.Snapshot("dev-1")
+	window, err := journal.Snapshot("", "dev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if window.CommittedThrough != 2 {
 		t.Fatalf("committed after hole = %d, want 2", window.CommittedThrough)
 	}

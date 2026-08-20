@@ -97,7 +97,11 @@ func TestServeDeviceAcksResumeAndIdempotentIngest(t *testing.T) {
 	if uplink.CommittedThrough != "1" {
 		t.Fatalf("committed = %s, want 1", uplink.CommittedThrough)
 	}
-	if server.Journal.CommittedThrough(device.DeviceID) != 1 {
+	window, err := server.Journal.Snapshot(device.TenantID, device.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.CommittedThrough != 1 {
 		t.Fatal("duplicate ingest must not create a second sequence")
 	}
 	if _, online := server.Hub.Lookup(device.DeviceID); online {

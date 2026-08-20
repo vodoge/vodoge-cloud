@@ -24,8 +24,16 @@ var (
 	ErrInvalidRecord = errors.New("invalid ingress record")
 )
 
+// Store is the cloud ingress journal. PostgreSQL is the durable home; the
+// in-memory Journal is the unit-test double and the policy prototype.
+type Store interface {
+	Accept(record Record) (Result, error)
+	Snapshot(tenantID, deviceID string) (Window, error)
+}
+
 // Record is one sequenced uplink envelope after authentication.
 type Record struct {
+	TenantID   string
 	DeviceID   string
 	EnvelopeID string
 	Seq        uint64
@@ -112,19 +120,21 @@ func (journal *Journal) Accept(record Record) (Result, error) {
 }
 
 // Snapshot is the durable contiguous prefix for a device.
-func (journal *Journal) Snapshot(deviceID string) Window {
+func (journal *Journal) Snapshot(tenantID, deviceID string) (Window, error) {
+	_ = tenantID
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
 	device := journal.devices[deviceID]
 	if device == nil {
-		return Window{MissingRanges: []Range{}}
+		return Window{MissingRanges: []Range{}}, nil
 	}
-	return device.window()
+	return device.window(), nil
 }
 
 // CommittedThrough is the contiguous prefix durably recorded for a device.
 func (journal *Journal) CommittedThrough(deviceID string) uint64 {
-	return journal.Snapshot(deviceID).CommittedThrough
+	window, _ := journal.Snapshot("", deviceID)
+	return window.CommittedThrough
 }
 
 func (device *deviceJournal) window() Window {
