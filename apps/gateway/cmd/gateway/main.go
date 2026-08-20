@@ -33,6 +33,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
@@ -66,28 +67,53 @@ func main() {
 		proc.matrix = matrix.SQL{DB: sqlStore.DB}
 		proc.queue = commands.SQL{DB: sqlStore.DB}
 		proc.audit = audit.SQL{DB: sqlStore.DB}
+		proc.rules = rules.SQL{DB: sqlStore.DB}
 	}
 
+	handler := proc.handler()
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           proc.handler(),
-		TLSConfig:         tlsConfig,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    8 << 10,
+	}
+
+	tlsAddr := strings.TrimSpace(os.Getenv("VODOGE_GATEWAY_TLS_ADDR"))
+	var tlsServer *http.Server
+	if tlsAddr != "" {
+		if tlsConfig == nil {
+			logger.Error("gateway tls", "error", "VODOGE_GATEWAY_TLS_ADDR requires VODOGE_GATEWAY_TLS_*")
+			os.Exit(1)
+		}
+		tlsServer = &http.Server{
+			Addr:              tlsAddr,
+			Handler:           handler,
+			TLSConfig:         tlsConfig,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    8 << 10,
+		}
+	} else if tlsConfig != nil {
+		httpServer.TLSConfig = tlsConfig
 	}
 
 	shutdownSignals := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil, "sql", os.Getenv("VODOGE_DATABASE_URL") != "", "redis", os.Getenv("REDIS_URL") != "")
-		if tlsConfig != nil {
+		logger.Info("gateway listening", "address", address, "tls_addr", tlsAddr, "mtls", tlsConfig != nil, "sql", os.Getenv("VODOGE_DATABASE_URL") != "", "redis", os.Getenv("REDIS_URL") != "")
+		if httpServer.TLSConfig != nil {
 			serverErrors <- httpServer.ListenAndServeTLS("", "")
 			return
 		}
 		serverErrors <- httpServer.ListenAndServe()
 	}()
+	if tlsServer != nil {
+		go func() {
+			serverErrors <- tlsServer.ListenAndServeTLS("", "")
+		}()
+	}
 
 	select {
 	case signal := <-shutdownSignals:
@@ -97,6 +123,9 @@ func main() {
 		if err := httpServer.Shutdown(context); err != nil {
 			logger.Error("gateway shutdown failed", "error", err)
 			os.Exit(1)
+		}
+		if tlsServer != nil {
+			_ = tlsServer.Shutdown(context)
 		}
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -116,6 +145,7 @@ type process struct {
 	matrix  matrix.Store
 	queue   commands.Queue
 	audit   audit.Log
+	rules   rules.Store
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -145,6 +175,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		matrix:  &matrix.Memory{},
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
+		rules:   &rules.Memory{},
 	}
 }
 
@@ -170,6 +201,9 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
 	mux.HandleFunc("PUT /v1/capability-matrix", process.putMatrix)
+	mux.HandleFunc("POST /v1/commands", process.enqueueCommand)
+	mux.HandleFunc("GET /v1/audit", process.listAudit)
+	mux.HandleFunc("GET /v1/rules", process.listRules)
 	return securityHeaders(mux)
 }
 
@@ -314,6 +348,95 @@ func (process *process) putMatrix(writer http.ResponseWriter, request *http.Requ
 		"sha256":  overlay.SHA256,
 		"queued":  queued,
 	})
+}
+
+func (process *process) enqueueCommand(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		DeviceID string `json:"device_id"`
+		To       string `json:"to"`
+		Text     string `json:"body"`
+		Kind     string `json:"kind"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		http.Error(writer, "invalid command", http.StatusBadRequest)
+		return
+	}
+	if body.DeviceID == "" {
+		http.Error(writer, "device_id is required", http.StatusBadRequest)
+		return
+	}
+	kind := body.Kind
+	if kind == "" {
+		kind = "send_sms"
+	}
+	payload, err := json.Marshal(map[string]any{
+		"kind": "SendSms",
+		"to":   body.To,
+		"body": body.Text,
+	})
+	if err != nil {
+		http.Error(writer, "invalid command", http.StatusBadRequest)
+		return
+	}
+	if kind != "send_sms" {
+		http.Error(writer, "unsupported command kind", http.StatusBadRequest)
+		return
+	}
+	id, err := process.queue.Enqueue(request.Context(), commands.Item{
+		TenantID:       entry.TenantID,
+		DeviceID:       body.DeviceID,
+		Kind:           "send_sms",
+		IdempotencyKey: "sms:" + body.DeviceID + ":" + body.To + ":" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		Payload:        payload,
+		ExpiresAt:      time.Now().Add(10 * time.Minute),
+	})
+	if err != nil {
+		http.Error(writer, "command queue unavailable", http.StatusInternalServerError)
+		return
+	}
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "send_sms",
+		Target: body.DeviceID,
+		Detail: payload,
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"id": id, "status": "queued"})
+}
+
+func (process *process) listAudit(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	events, err := process.audit.List(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"events": events})
+}
+
+func (process *process) listRules(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	list, err := process.rules.List(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "rules unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"rules": list})
 }
 
 func (process *process) sse(writer http.ResponseWriter, request *http.Request) {

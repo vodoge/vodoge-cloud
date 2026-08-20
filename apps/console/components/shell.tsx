@@ -32,6 +32,12 @@ export function Shell({
           <Link href="/sessions" aria-current={pathname === "/sessions" ? "page" : undefined}>
             {t("nav.sessions", locale)}
           </Link>
+          <Link href="/rules" aria-current={pathname === "/rules" ? "page" : undefined}>
+            {t("nav.rules", locale)}
+          </Link>
+          <Link href="/audit" aria-current={pathname === "/audit" ? "page" : undefined}>
+            {t("nav.audit", locale)}
+          </Link>
           <Link href="/login" aria-current={pathname === "/login" ? "page" : undefined}>
             {t("nav.login", locale)}
           </Link>

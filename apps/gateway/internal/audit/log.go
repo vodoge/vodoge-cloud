@@ -21,6 +21,7 @@ type Event struct {
 // Log records an event. Implementations must not update existing rows.
 type Log interface {
 	Append(ctx context.Context, tenantID string, event Event) error
+	List(ctx context.Context, tenantID string) ([]Event, error)
 }
 
 // Memory keeps events for tests.
@@ -44,6 +45,12 @@ func (log *Memory) Append(_ context.Context, tenantID string, event Event) error
 
 // ForTenant returns events for tenantID only.
 func (log *Memory) ForTenant(tenantID string) []Event {
+	events, _ := log.List(context.Background(), tenantID)
+	return events
+}
+
+// List returns events for tenantID only.
+func (log *Memory) List(_ context.Context, tenantID string) ([]Event, error) {
 	log.mu.Lock()
 	defer log.mu.Unlock()
 	out := make([]Event, 0)
@@ -52,7 +59,7 @@ func (log *Memory) ForTenant(tenantID string) []Event {
 			out = append(out, item.Event)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // SQL inserts into app.audit_log.
@@ -72,4 +79,32 @@ func (log SQL) Append(ctx context.Context, tenantID string, event Event) error {
 			tenantID, event.Actor, event.Action, event.Target, string(event.Detail))
 		return err
 	})
+}
+
+// List returns the newest 200 audit rows for the tenant.
+func (log SQL) List(ctx context.Context, tenantID string) ([]Event, error) {
+	var events []Event
+	err := tenant.Transact(ctx, log.DB, tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT actor, action, COALESCE(target, ''), detail
+			  FROM app.audit_log
+			 ORDER BY at DESC
+			 LIMIT 200`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item Event
+			if err := rows.Scan(&item.Actor, &item.Action, &item.Target, &item.Detail); err != nil {
+				return err
+			}
+			events = append(events, item)
+		}
+		return rows.Err()
+	})
+	if events == nil {
+		events = []Event{}
+	}
+	return events, err
 }

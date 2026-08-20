@@ -199,6 +199,12 @@ button[type="submit"],
   cursor: not-allowed;
 }
 
+button[type="submit"].primary {
+  background: var(--accent);
+  color: #102018;
+  cursor: pointer;
+}
+
 .locale-switch {
   display: inline-flex;
   border: 1px solid var(--line);

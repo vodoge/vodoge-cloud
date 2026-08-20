@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 const gateway = process.env.VODOGE_GATEWAY_URL?.trim() || "http://127.0.0.1:18080";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   poweredByHeader: false,
   outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   async rewrites() {
