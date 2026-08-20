@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/tenant"
 )
 
 // SQLStore persists sequenced envelopes through app.accept_ingress.
@@ -22,7 +24,7 @@ func (store *SQLStore) timeout() time.Duration {
 	return 5 * time.Second
 }
 
-// Ping reports whether the regional database is reachable.
+// Ping reports whether PostgreSQL is reachable.
 func (store *SQLStore) Ping() error {
 	if store == nil || store.DB == nil {
 		return fmt.Errorf("%w: sql store is not configured", ErrInvalidRecord)
@@ -47,36 +49,25 @@ func (store *SQLStore) Accept(record Record) (Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), store.timeout())
 	defer cancel()
 
-	tx, err := store.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return Result{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", record.TenantID); err != nil {
-		return Result{}, err
-	}
-
 	var status string
 	var committed uint64
 	var missing json.RawMessage
 	var more bool
-	err = tx.QueryRowContext(
-		ctx,
-		`SELECT status, committed_through, missing_ranges, more_missing
-		   FROM app.accept_ingress($1, $2, $3, $4, $5, $6::jsonb)`,
-		record.TenantID,
-		record.DeviceID,
-		int64(record.Seq),
-		record.EnvelopeID,
-		record.Kind,
-		string(record.Payload),
-	).Scan(&status, &committed, &missing, &more)
+	err := tenant.Transact(ctx, store.DB, record.TenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(
+			ctx,
+			`SELECT status, committed_through, missing_ranges, more_missing
+			   FROM app.accept_ingress($1, $2, $3, $4, $5, $6::jsonb)`,
+			record.TenantID,
+			record.DeviceID,
+			int64(record.Seq),
+			record.EnvelopeID,
+			record.Kind,
+			string(record.Payload),
+		).Scan(&status, &committed, &missing, &more)
+	})
 	if err != nil {
 		return Result{}, mapSQLError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return Result{}, err
 	}
 
 	window, err := parseWindow(committed, missing, more)
@@ -107,30 +98,19 @@ func (store *SQLStore) Snapshot(tenantID, deviceID string) (Window, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), store.timeout())
 	defer cancel()
 
-	tx, err := store.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return Window{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
-		return Window{}, err
-	}
-
 	var committed uint64
 	var missing json.RawMessage
 	var more bool
-	err = tx.QueryRowContext(
-		ctx,
-		`SELECT committed_through, missing_ranges, more_missing
-		   FROM app.ingress_window($1, $2)`,
-		tenantID,
-		deviceID,
-	).Scan(&committed, &missing, &more)
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(
+			ctx,
+			`SELECT committed_through, missing_ranges, more_missing
+			   FROM app.ingress_window($1, $2)`,
+			tenantID,
+			deviceID,
+		).Scan(&committed, &missing, &more)
+	})
 	if err != nil {
-		return Window{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return Window{}, err
 	}
 	return parseWindow(committed, missing, more)
