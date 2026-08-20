@@ -25,3 +25,11 @@ fi
 if [ "$(owner_psql -Atqc "SELECT to_regclass('app.command_delivery_attempts') IS NOT NULL")" != "t" ]; then
   owner_psql -f /workspace/packages/db/migrations/0002_command_dispatch_lifecycle.sql
 fi
+
+if [ "$(owner_psql -Atqc "SELECT to_regclass('app.ingress') IS NOT NULL")" != "t" ]; then
+  owner_psql -f /workspace/packages/db/migrations/0003_ingress.sql
+fi
+
+if [ "$(owner_psql -Atqc "SELECT to_regprocedure('app.accept_ingress(uuid,uuid,bigint,uuid,text,jsonb)') IS NOT NULL")" != "t" ]; then
+  owner_psql -f /workspace/packages/db/migrations/0004_accept_ingress.sql
+fi
