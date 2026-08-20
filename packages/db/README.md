@@ -52,7 +52,20 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f bootstrap/roles.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_regional_data.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenant_isolation.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/command_outbox.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
 ```
 
 The tests deliberately switch to `vodoge_app`; testing RLS as a superuser would
 produce a false result because superusers bypass RLS.
+
+## Control plane
+
+`controlplane/migrations/` is a separate database. It stores only tenant-to-region
+routing (`control.tenants`). A tenant's `region` is immutable after insert.
+
+```sh
+psql "$CONTROLPLANE_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f controlplane/migrations/0001_tenants.sql
+psql "$CONTROLPLANE_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f controlplane/tests/region_immutability.sql
+```
