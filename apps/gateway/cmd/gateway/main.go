@@ -24,6 +24,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
@@ -56,10 +57,14 @@ func main() {
 		os.Exit(1)
 	}
 	wakeups := connectWakeup(os.Getenv("REDIS_URL"), os.Getenv("VODOGE_GATEWAY_NODE_ID"), logger)
+	proc := newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants, wakeups, enrollment)
+	if sqlStore, ok := journal.(*ingress.SQLStore); ok && sqlStore.DB != nil {
+		proc.catalog = catalog.SQL{DB: sqlStore.DB}
+	}
 
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants, wakeups, enrollment).handler(),
+		Handler:           proc.handler(),
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -101,6 +106,7 @@ type process struct {
 	tenants *directory.Resolver
 	enroll  *enroll.Handler
 	events  *events.Bus
+	catalog catalog.Store
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -126,6 +132,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		tenants: tenants,
 		enroll:  enrollment,
 		events:  bus,
+		catalog: catalog.Empty{},
 	}
 }
 
@@ -148,6 +155,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/events", process.sse)
 	mux.HandleFunc("GET /v1/devices", process.devices)
 	mux.HandleFunc("GET /v1/messages", process.messages)
+	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	return securityHeaders(mux)
 }
 
@@ -167,21 +175,48 @@ func (process *process) tenantFromRequest(request *http.Request) (region.Entry, 
 }
 
 func (process *process) devices(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := process.tenantFromRequest(request); !ok {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
 		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
+	list, err := process.catalog.ListDevices(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []any{}})
+	_ = json.NewEncoder(writer).Encode(map[string]any{"devices": list})
 }
 
 func (process *process) messages(writer http.ResponseWriter, request *http.Request) {
-	if _, ok := process.tenantFromRequest(request); !ok {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
 		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
+	list, err := process.catalog.ListMessages(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(writer).Encode(map[string]any{"messages": []any{}})
+	_ = json.NewEncoder(writer).Encode(map[string]any{"messages": list})
+}
+
+func (process *process) sessions(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	list, err := process.catalog.ListSessions(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"sessions": list})
 }
 
 func (process *process) sse(writer http.ResponseWriter, request *http.Request) {
