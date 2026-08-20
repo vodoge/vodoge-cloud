@@ -55,6 +55,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0003_ingress.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0004_accept_ingress.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0005_tenants.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0006_enrollment.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0007_rules_and_audit.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0008_project_ingress.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f bootstrap/seed_operator.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls_coverage.sql
@@ -62,6 +64,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenants.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenant_isolation.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/command_outbox.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/enrollment.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/accept_ingress.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/project_ingress.sql
 ```
 
 The tests deliberately switch to `vodoge_app`; testing RLS as a superuser would

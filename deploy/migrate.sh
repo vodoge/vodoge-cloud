@@ -73,3 +73,7 @@ owner_psql -f /workspace/packages/db/bootstrap/seed_operator.sql
 if [ "$(owner_psql -Atqc "SELECT to_regclass('app.rules') IS NOT NULL")" != "t" ]; then
   owner_psql -f /workspace/packages/db/migrations/0007_rules_and_audit.sql
 fi
+
+if [ "$(owner_psql -Atqc "SELECT to_regprocedure('app.project_ingress_row()') IS NOT NULL")" != "t" ]; then
+  owner_psql -f /workspace/packages/db/migrations/0008_project_ingress.sql
+fi
