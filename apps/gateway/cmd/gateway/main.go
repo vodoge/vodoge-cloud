@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -100,6 +101,9 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver)
 	if tenants == nil {
 		tenants = directory.New(nil)
 	}
+	if base := strings.TrimSpace(os.Getenv("VODOGE_BASE_DOMAIN")); base != "" {
+		tenants.BaseDomain = base
+	}
 	return &process{
 		region: region,
 		session: &wss.Server{
@@ -119,6 +123,7 @@ func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
+	mux.HandleFunc("GET /v1/tenant", process.tenants.ServeHost)
 	mux.Handle("GET /v1/tenants/{slug}", process.tenants)
 	mux.Handle("GET "+wss.Path, process.session)
 	return securityHeaders(mux)

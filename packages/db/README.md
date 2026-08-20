@@ -54,6 +54,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_command_dispatch_life
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0003_ingress.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0004_accept_ingress.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0005_tenants.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f bootstrap/seed_operator.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls_coverage.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenants.sql

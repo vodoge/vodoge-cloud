@@ -67,6 +67,14 @@ func TestUnknownTenantSlugIs404(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", response.Code)
 	}
+
+	apex := httptest.NewRecorder()
+	apexReq := httptest.NewRequest(http.MethodGet, "/v1/tenant", nil)
+	apexReq.Host = "vodoge.com"
+	healthHandler().ServeHTTP(apex, apexReq)
+	if apex.Code != http.StatusNotFound {
+		t.Fatalf("apex host status = %d, want 404", apex.Code)
+	}
 }
 
 func TestEdgePathRequiresMutualTLS(t *testing.T) {

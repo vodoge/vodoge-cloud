@@ -30,10 +30,22 @@ replay schema creation.
 
 ## Public Routing
 
-The foundation binds its only host port to loopback. Add a dedicated Caddy site
-from `Caddyfile.snippet` only after DNS is ready. The public site must remain
-TLS 1.3-only. Device mTLS WSS is not exposed by this initial health service;
-the later WSS gateway will have its own mTLS configuration and tests.
+The SaaS parent domain is `vodoge.com`. The first tenant is `a.vodoge.com`
+(slug `a`). Keep the existing apex `vodoge.com` Caddy site as-is.
+
+Point DNS yourself, then add the site block in `Caddyfile.snippet`:
+
+```
+a.vodoge.com.  A  43.108.53.126
+```
+
+The gateway reads `Host` / `X-Forwarded-Host` against `VODOGE_BASE_DOMAIN`
+(`vodoge.com`). `GET /v1/tenant` on `a.vodoge.com` resolves that tenant;
+the same request on `vodoge.com` is 404.
+
+The compose stack binds its host port to loopback (`127.0.0.1:18080`). The
+public site must remain TLS 1.3-only. Device mTLS WSS uses the same hostname
+once certificates are configured.
 
 ## Operations
 

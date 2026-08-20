@@ -20,13 +20,18 @@ type Lookup func(ctx context.Context, slug string) (region.Entry, bool, error)
 
 // Resolver is the cached slug directory used by Host routing.
 type Resolver struct {
-	Cache  *region.Cache
-	Lookup Lookup
+	Cache      *region.Cache
+	Lookup     Lookup
+	BaseDomain string
 }
 
 // New returns a resolver. A nil lookup means only primed cache entries resolve.
 func New(lookup Lookup) *Resolver {
-	return &Resolver{Cache: region.NewCache(), Lookup: lookup}
+	return &Resolver{
+		Cache:      region.NewCache(),
+		Lookup:     lookup,
+		BaseDomain: DefaultBaseDomain,
+	}
 }
 
 // Resolve returns the tenant for slug. Empty or unknown slugs are not found.
@@ -77,18 +82,34 @@ func SQLLookup(db *sql.DB) Lookup {
 
 // ServeHTTP is GET /v1/tenants/{slug}. Unknown slugs are 404.
 func (resolver *Resolver) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	resolver.writeTenant(writer, request, request.PathValue("slug"))
+}
+
+// ServeHost is GET /v1/tenant. The tenant comes from Host, e.g. a.vodoge.com.
+func (resolver *Resolver) ServeHost(writer http.ResponseWriter, request *http.Request) {
+	base := resolver.BaseDomain
+	if base == "" {
+		base = DefaultBaseDomain
+	}
+	slug, ok := SlugFromHost(requestHost(request), base)
+	if !ok {
+		writeTenantError(writer, http.StatusNotFound, "unknown tenant")
+		return
+	}
+	resolver.writeTenant(writer, request, slug)
+}
+
+func (resolver *Resolver) writeTenant(writer http.ResponseWriter, request *http.Request, slug string) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
 
-	entry, ok, err := resolver.Resolve(request.Context(), request.PathValue("slug"))
+	entry, ok, err := resolver.Resolve(request.Context(), slug)
 	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"error": "tenant lookup failed"})
+		writeTenantError(writer, http.StatusInternalServerError, "tenant lookup failed")
 		return
 	}
 	if !ok {
-		writer.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(writer).Encode(map[string]string{"error": "unknown tenant"})
+		writeTenantError(writer, http.StatusNotFound, "unknown tenant")
 		return
 	}
 	_ = json.NewEncoder(writer).Encode(map[string]string{
@@ -97,4 +118,11 @@ func (resolver *Resolver) ServeHTTP(writer http.ResponseWriter, request *http.Re
 		"region":    entry.Region,
 		"status":    entry.Status,
 	})
+}
+
+func writeTenantError(writer http.ResponseWriter, code int, message string) {
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(code)
+	_ = json.NewEncoder(writer).Encode(map[string]string{"error": message})
 }

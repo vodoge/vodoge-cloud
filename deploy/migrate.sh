@@ -63,3 +63,5 @@ fi
 if [ "$(owner_psql -Atqc "SELECT to_regclass('app.tenants') IS NOT NULL")" != "t" ]; then
   owner_psql -f /workspace/packages/db/migrations/0005_tenants.sql
 fi
+
+owner_psql -f /workspace/packages/db/bootstrap/seed_operator.sql

@@ -79,3 +79,30 @@ func TestServeHTTPUnknownSlugIs404(t *testing.T) {
 		t.Fatalf("body = %v", body)
 	}
 }
+
+func TestServeHostUsesSubdomainOfVodogeCom(t *testing.T) {
+	t.Parallel()
+
+	resolver := New(nil)
+	resolver.Cache.Store(region.Entry{
+		TenantID: OperatorTenantID, Slug: OperatorSlug, Region: "cn", Status: "active",
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/tenant", resolver.ServeHost)
+
+	found := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/tenant", nil)
+	request.Host = "a.vodoge.com"
+	mux.ServeHTTP(found, request)
+	if found.Code != http.StatusOK {
+		t.Fatalf("a.vodoge.com status = %d", found.Code)
+	}
+
+	apex := httptest.NewRecorder()
+	apexReq := httptest.NewRequest(http.MethodGet, "/v1/tenant", nil)
+	apexReq.Host = "vodoge.com"
+	mux.ServeHTTP(apex, apexReq)
+	if apex.Code != http.StatusNotFound {
+		t.Fatalf("vodoge.com status = %d, want 404", apex.Code)
+	}
+}
