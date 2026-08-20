@@ -21,6 +21,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
@@ -42,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	journal, err := openJournal()
+	journal, tenants, err := openRuntime()
 	if err != nil {
 		logger.Error("gateway database", "error", err)
 		os.Exit(1)
@@ -50,7 +51,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal).handler(),
+		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants).handler(),
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -89,11 +90,15 @@ func main() {
 type process struct {
 	region  string
 	session *wss.Server
+	tenants *directory.Resolver
 }
 
-func newProcess(region string, store ingress.Store) *process {
+func newProcess(region string, store ingress.Store, tenants *directory.Resolver) *process {
 	if store == nil {
 		store = ingress.NewJournal()
+	}
+	if tenants == nil {
+		tenants = directory.New(nil)
 	}
 	return &process{
 		region: region,
@@ -102,17 +107,19 @@ func newProcess(region string, store ingress.Store) *process {
 			Hub:     session.NewHub(),
 			Journal: store,
 		},
+		tenants: tenants,
 	}
 }
 
 func healthHandler() http.Handler {
-	return newProcess("", nil).handler()
+	return newProcess("", nil, nil).handler()
 }
 
 func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
+	mux.Handle("GET /v1/tenants/{slug}", process.tenants)
 	mux.Handle("GET "+wss.Path, process.session)
 	return securityHeaders(mux)
 }
@@ -133,14 +140,14 @@ func pingStore(store ingress.Store) error {
 	return pinger.Ping()
 }
 
-func openJournal() (ingress.Store, error) {
+func openRuntime() (ingress.Store, *directory.Resolver, error) {
 	dsn := os.Getenv("VODOGE_DATABASE_URL")
 	if dsn == "" {
-		return ingress.NewJournal(), nil
+		return ingress.NewJournal(), directory.New(nil), nil
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(32)
 	db.SetConnMaxLifetime(time.Hour)
@@ -148,9 +155,9 @@ func openJournal() (ingress.Store, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, nil, fmt.Errorf("ping database: %w", err)
 	}
-	return &ingress.SQLStore{DB: db}, nil
+	return &ingress.SQLStore{DB: db}, directory.New(directory.SQLLookup(db)), nil
 }
 
 func healthResponse(status string, code int) http.HandlerFunc {

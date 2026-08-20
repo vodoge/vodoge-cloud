@@ -43,7 +43,7 @@ func TestReadyzFailsWhenDatabaseIsUnreachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	handler := newProcess("", &ingress.SQLStore{DB: db, Timeout: 500 * time.Millisecond}).handler()
+	handler := newProcess("", &ingress.SQLStore{DB: db, Timeout: 500 * time.Millisecond}, nil).handler()
 
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	response := httptest.NewRecorder()
@@ -56,6 +56,16 @@ func TestReadyzFailsWhenDatabaseIsUnreachable(t *testing.T) {
 	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if live.Code != http.StatusOK {
 		t.Fatalf("healthz = %d, want 200", live.Code)
+	}
+}
+
+func TestUnknownTenantSlugIs404(t *testing.T) {
+	t.Parallel()
+
+	response := httptest.NewRecorder()
+	healthHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/tenants/missing", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
 	}
 }
 
