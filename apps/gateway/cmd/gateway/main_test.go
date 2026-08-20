@@ -120,6 +120,14 @@ func TestUnknownTenantSlugIs404(t *testing.T) {
 	if apex.Code != http.StatusNotFound {
 		t.Fatalf("apex host status = %d, want 404", apex.Code)
 	}
+
+	events := httptest.NewRecorder()
+	eventReq := httptest.NewRequest(http.MethodGet, "/v1/events", nil)
+	eventReq.Host = "vodoge.com"
+	healthHandler().ServeHTTP(events, eventReq)
+	if events.Code != http.StatusNotFound {
+		t.Fatalf("sse on apex status = %d, want 404", events.Code)
+	}
 }
 
 func TestEnrollRouteExistsWithoutClientCertificate(t *testing.T) {

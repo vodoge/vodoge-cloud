@@ -26,7 +26,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
@@ -98,6 +100,7 @@ type process struct {
 	session *wss.Server
 	tenants *directory.Resolver
 	enroll  *enroll.Handler
+	events  *events.Bus
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -110,6 +113,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 	if base := strings.TrimSpace(os.Getenv("VODOGE_BASE_DOMAIN")); base != "" {
 		tenants.BaseDomain = base
 	}
+	bus := events.NewBus()
 	return &process{
 		region: region,
 		session: &wss.Server{
@@ -117,9 +121,11 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 			Hub:     session.NewHub(),
 			Journal: store,
 			Wakeups: wakeups,
+			Events:  bus,
 		},
 		tenants: tenants,
 		enroll:  enrollment,
+		events:  bus,
 	}
 }
 
@@ -139,7 +145,83 @@ func (process *process) handler() http.Handler {
 		mux.HandleFunc("POST "+enroll.Path, enroll.Unavailable)
 	}
 	mux.Handle("GET "+wss.Path, process.session)
+	mux.HandleFunc("GET /v1/events", process.sse)
+	mux.HandleFunc("GET /v1/devices", process.devices)
+	mux.HandleFunc("GET /v1/messages", process.messages)
 	return securityHeaders(mux)
+}
+
+func (process *process) tenantFromRequest(request *http.Request) (region.Entry, bool) {
+	slug, ok := directory.SlugFromHost(request.Header.Get("X-Forwarded-Host"), process.tenants.BaseDomain)
+	if !ok {
+		slug, ok = directory.SlugFromHost(request.Host, process.tenants.BaseDomain)
+	}
+	if !ok {
+		return region.Entry{}, false
+	}
+	entry, found, err := process.tenants.Resolve(request.Context(), slug)
+	if err != nil || !found {
+		return region.Entry{}, false
+	}
+	return entry, true
+}
+
+func (process *process) devices(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := process.tenantFromRequest(request); !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []any{}})
+}
+
+func (process *process) messages(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := process.tenantFromRequest(request); !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"messages": []any{}})
+}
+
+func (process *process) sse(writer http.ResponseWriter, request *http.Request) {
+	slug, ok := directory.SlugFromHost(request.Header.Get("X-Forwarded-Host"), process.tenants.BaseDomain)
+	if !ok {
+		slug, ok = directory.SlugFromHost(request.Host, process.tenants.BaseDomain)
+	}
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	entry, found, err := process.tenants.Resolve(request.Context(), slug)
+	if err != nil || !found {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		http.Error(writer, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-store")
+	ch, cancel := process.events.Subscribe(entry.TenantID)
+	defer cancel()
+	fmt.Fprintf(writer, "event: hello\ndata: %s\n\n", entry.Slug)
+	flusher.Flush()
+	ctx := request.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, open := <-ch:
+			if !open {
+				return
+			}
+			fmt.Fprintf(writer, "event: uplink\ndata: %s\n\n", event)
+			flusher.Flush()
+		}
+	}
 }
 
 func (process *process) readyz(writer http.ResponseWriter, _ *http.Request) {

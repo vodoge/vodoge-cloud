@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -60,6 +61,7 @@ type Server struct {
 	Commands PendingCommands
 	Receipts ReceiptHandler
 	Wakeups  wakeup.Publisher
+	Events   *events.Bus
 	Now      func() time.Time
 }
 
@@ -241,6 +243,9 @@ func (server *Server) hintPresence(deviceID string) {
 }
 
 func (server *Server) hintEvent(event wakeup.Event) {
+	if server.Events != nil {
+		server.Events.Publish(event.TenantID, event.Kind)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), wakeup.HintTimeout)
 	defer cancel()
 	// UplinkAck confirms PostgreSQL, not SSE publication.
