@@ -19,3 +19,12 @@ export async function getTenantFromHeaders(): Promise<Tenant | null> {
     status: status || "unknown",
   };
 }
+
+export async function requestHost(): Promise<string> {
+  const requestHeaders = await headers();
+  const forwarded = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("X-Forwarded-Host");
+  if (forwarded) {
+    return forwarded.split(",")[0]?.trim() ?? "";
+  }
+  return requestHeaders.get("host") ?? "";
+}
