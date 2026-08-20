@@ -1,0 +1,11 @@
+# Add a dedicated site only after DNS for the chosen Cloud hostname points at
+# the deployment host. Do not replace the existing vodoge.com management route.
+# TLS 1.3 is mandatory at the public edge.
+#
+# cloud.example.com {
+#     tls {
+#         protocols tls1.3
+#     }
+#
+#     reverse_proxy 127.0.0.1:18080
+# }
