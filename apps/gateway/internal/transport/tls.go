@@ -49,15 +49,39 @@ func ServerTLSConfig(serverCertificate tls.Certificate, clientCAs *x509.CertPool
 	}, nil
 }
 
+// OptionalClientTLSConfig is TLS 1.3 with a verified client certificate when
+// one is presented. POST /v1/enroll has no client cert yet; /v1/edge still
+// requires one at the HTTP layer.
+func OptionalClientTLSConfig(serverCertificate tls.Certificate, clientCAs *x509.CertPool) (*tls.Config, error) {
+	config, err := ServerTLSConfig(serverCertificate, clientCAs)
+	if err != nil {
+		return nil, err
+	}
+	config.ClientAuth = tls.VerifyClientCertIfGiven
+	config.VerifyConnection = verifyTLS13OptionalClient
+	return config, nil
+}
+
 func verifyTLS13Connection(state tls.ConnectionState) error {
+	if err := verifyTLS13Handshake(state); err != nil {
+		return err
+	}
+	if len(state.VerifiedChains) == 0 {
+		return errors.New("gateway TLS connection has no verified client certificate chain")
+	}
+	return nil
+}
+
+func verifyTLS13OptionalClient(state tls.ConnectionState) error {
+	return verifyTLS13Handshake(state)
+}
+
+func verifyTLS13Handshake(state tls.ConnectionState) error {
 	if state.Version != tls.VersionTLS13 {
 		return fmt.Errorf("gateway TLS negotiated unsupported version %x", state.Version)
 	}
 	if !isAllowedTLS13CipherSuite(state.CipherSuite) {
 		return fmt.Errorf("gateway TLS negotiated unsupported cipher suite %x", state.CipherSuite)
-	}
-	if len(state.VerifiedChains) == 0 {
-		return errors.New("gateway TLS connection has no verified client certificate chain")
 	}
 	return nil
 }

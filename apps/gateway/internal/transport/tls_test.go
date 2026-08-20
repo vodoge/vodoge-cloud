@@ -75,6 +75,54 @@ func TestServerTLSConfigRejectsInvalidServerCertificate(t *testing.T) {
 	}
 }
 
+func TestOptionalClientTLSConfigAllowsMissingClientCertificate(t *testing.T) {
+	t.Parallel()
+
+	serverCertificate, clientCAs := testServerCertificate(t)
+	config, err := OptionalClientTLSConfig(serverCertificate, clientCAs)
+	if err != nil {
+		t.Fatalf("OptionalClientTLSConfig() error = %v", err)
+	}
+	if config.MinVersion != tls.VersionTLS13 || config.MaxVersion != tls.VersionTLS13 {
+		t.Fatalf("versions = %x/%x, want TLS 1.3", config.MinVersion, config.MaxVersion)
+	}
+	if config.ClientAuth != tls.VerifyClientCertIfGiven {
+		t.Errorf("ClientAuth = %v, want VerifyClientCertIfGiven", config.ClientAuth)
+	}
+	if err := config.VerifyConnection(tls.ConnectionState{
+		Version:     tls.VersionTLS13,
+		CipherSuite: tls.TLS_AES_128_GCM_SHA256,
+	}); err != nil {
+		t.Fatalf("missing client certificate rejected: %v", err)
+	}
+
+	serverConnection, clientConnection := net.Pipe()
+	t.Cleanup(func() {
+		_ = serverConnection.Close()
+		_ = clientConnection.Close()
+	})
+
+	server := tls.Server(serverConnection, config)
+	client := tls.Client(clientConnection, &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
+		RootCAs:    clientCAs,
+		ServerName: "gateway.test",
+	})
+
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- server.Handshake() }()
+	if err := client.Handshake(); err != nil {
+		t.Fatalf("client handshake without client certificate: %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server handshake without client certificate: %v", err)
+	}
+	if client.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("version = %x, want TLS 1.3", client.ConnectionState().Version)
+	}
+}
+
 func TestTLS12ClientCannotNegotiate(t *testing.T) {
 	t.Parallel()
 
