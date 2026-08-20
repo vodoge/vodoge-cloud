@@ -1,12 +1,14 @@
-// Command gateway starts the initial Cloud gateway process.
+// Command gateway is the Cloud device-facing process.
 //
-// The process currently provides deployment health endpoints only. WSS,
-// MessagePack framing, and device authentication are added in later slices;
-// this binary deliberately does not claim to accept device traffic yet.
+// /healthz and /readyz stay on plaintext HTTP for the Compose healthcheck.
+// /v1/edge upgrades to the authenticated device WebSocket. Production supplies
+// VODOGE_GATEWAY_TLS_* so that listener uses TLS 1.3 mTLS.
 package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
 )
 
 const defaultAddress = ":8080"
@@ -27,9 +34,16 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	server := &http.Server{
+	tlsConfig, err := optionalServerTLS()
+	if err != nil {
+		logger.Error("gateway tls", "error", err)
+		os.Exit(1)
+	}
+
+	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           healthHandler(),
+		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION")).handler(),
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    8 << 10,
@@ -39,8 +53,12 @@ func main() {
 	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("gateway foundation listening", "address", address)
-		serverErrors <- server.ListenAndServe()
+		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil)
+		if tlsConfig != nil {
+			serverErrors <- httpServer.ListenAndServeTLS("", "")
+			return
+		}
+		serverErrors <- httpServer.ListenAndServe()
 	}()
 
 	select {
@@ -48,7 +66,7 @@ func main() {
 		logger.Info("gateway shutdown requested", "signal", signal.String())
 		context, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(context); err != nil {
+		if err := httpServer.Shutdown(context); err != nil {
 			logger.Error("gateway shutdown failed", "error", err)
 			os.Exit(1)
 		}
@@ -60,10 +78,31 @@ func main() {
 	}
 }
 
+type process struct {
+	region  string
+	session *wss.Server
+}
+
+func newProcess(region string) *process {
+	return &process{
+		region: region,
+		session: &wss.Server{
+			Region:  region,
+			Hub:     session.NewHub(),
+			Journal: ingress.NewJournal(),
+		},
+	}
+}
+
 func healthHandler() http.Handler {
+	return newProcess("").handler()
+}
+
+func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthResponse("healthy"))
 	mux.HandleFunc("GET /readyz", healthResponse("ready"))
+	mux.Handle("GET "+wss.Path, process.session)
 	return securityHeaders(mux)
 }
 
@@ -73,7 +112,7 @@ func healthResponse(status string) http.HandlerFunc {
 		writer.Header().Set("Cache-Control", "no-store")
 		if err := json.NewEncoder(writer).Encode(map[string]string{
 			"component": "vodoge-gateway",
-			"mode":      "foundation",
+			"mode":      "edge",
 			"status":    status,
 		}); err != nil {
 			_ = fmt.Errorf("encode health response: %w", err)
@@ -88,4 +127,29 @@ func securityHeaders(next http.Handler) http.Handler {
 		writer.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(writer, request)
 	})
+}
+
+func optionalServerTLS() (*tls.Config, error) {
+	certFile := os.Getenv("VODOGE_GATEWAY_TLS_CERT")
+	keyFile := os.Getenv("VODOGE_GATEWAY_TLS_KEY")
+	caFile := os.Getenv("VODOGE_GATEWAY_CLIENT_CA")
+	if certFile == "" && keyFile == "" && caFile == "" {
+		return nil, nil
+	}
+	if certFile == "" || keyFile == "" || caFile == "" {
+		return nil, errors.New("VODOGE_GATEWAY_TLS_CERT, VODOGE_GATEWAY_TLS_KEY, and VODOGE_GATEWAY_CLIENT_CA are required together")
+	}
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load gateway certificate: %w", err)
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("client CA file contained no certificates")
+	}
+	return transport.ServerTLSConfig(certificate, pool)
 }

@@ -30,3 +30,15 @@ func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestEdgePathRequiresMutualTLS(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/edge", nil)
+	request.Header.Set("Sec-WebSocket-Protocol", "vodoge.edge.v1")
+	response := httptest.NewRecorder()
+	healthHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", response.Code)
+	}
+}

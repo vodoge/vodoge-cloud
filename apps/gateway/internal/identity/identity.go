@@ -9,6 +9,7 @@
 package identity
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -27,6 +28,18 @@ type Device struct {
 	TenantID string
 	DeviceID string
 	Region   string
+}
+
+// FromConnectionState reads identity from a completed mTLS handshake.
+func FromConnectionState(state *tls.ConnectionState) (Device, error) {
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return Device{}, ErrMissingCertificate
+	}
+	leaf := state.PeerCertificates[0]
+	if len(state.VerifiedChains) > 0 && len(state.VerifiedChains[0]) > 0 {
+		leaf = state.VerifiedChains[0][0]
+	}
+	return FromCertificate(leaf)
 }
 
 // FromCertificate reads identity from a verified client certificate leaf.

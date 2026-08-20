@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -43,6 +44,19 @@ func TestFromCertificateRejectsUnknownRegion(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidIdentity) {
 		t.Fatalf("error = %v, want ErrInvalidIdentity", err)
+	}
+}
+
+func TestFromConnectionStateRequiresAClientCertificate(t *testing.T) {
+	t.Parallel()
+
+	_, err := FromConnectionState(nil)
+	if !errors.Is(err, ErrMissingCertificate) {
+		t.Fatalf("nil state err = %v", err)
+	}
+	_, err = FromConnectionState(&tls.ConnectionState{})
+	if !errors.Is(err, ErrMissingCertificate) {
+		t.Fatalf("empty peer err = %v", err)
 	}
 }
 
