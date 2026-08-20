@@ -24,7 +24,7 @@ func TestCacheSurvivesWithoutFurtherLookups(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, entry)
 	}
 
-	// A later control-plane outage must not evict an already-resolved mapping.
+	// A later database blip must not evict an already-resolved mapping.
 	if cache.Len() != 1 {
 		t.Fatalf("len = %d, want 1 after simulated control-plane outage", cache.Len())
 	}

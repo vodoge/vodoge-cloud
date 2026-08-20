@@ -8,6 +8,15 @@ SET ROLE vodoge_app;
 BEGIN;
 SET LOCAL app.tenant_id = '33333333-3333-3333-3333-333333333333';
 
+INSERT INTO app.tenants (id, slug, name, status, region)
+VALUES (
+    '33333333-3333-3333-3333-333333333333',
+    'dispatch-lifecycle',
+    'Dispatch Lifecycle',
+    'active',
+    'cn'
+);
+
 INSERT INTO app.devices (id, tenant_id, imei, name, vertical)
 VALUES (
     'cccccccc-cccc-cccc-cccc-cccccccccccc',

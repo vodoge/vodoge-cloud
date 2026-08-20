@@ -5,6 +5,15 @@ SET ROLE vodoge_app;
 BEGIN;
 SET LOCAL app.tenant_id = '66666666-6666-6666-6666-666666666666';
 
+INSERT INTO app.tenants (id, slug, name, status, region)
+VALUES (
+    '66666666-6666-6666-6666-666666666666',
+    'accept-ingress',
+    'Accept Ingress',
+    'active',
+    'cn'
+);
+
 INSERT INTO app.devices (id, tenant_id, imei, name, vertical)
 VALUES (
     'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',

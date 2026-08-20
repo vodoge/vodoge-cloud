@@ -59,3 +59,7 @@ fi
 if [ "$(owner_psql -Atqc "SELECT to_regprocedure('app.accept_ingress(uuid,uuid,bigint,uuid,text,jsonb)') IS NOT NULL")" != "t" ]; then
   owner_psql -f /workspace/packages/db/migrations/0004_accept_ingress.sql
 fi
+
+if [ "$(owner_psql -Atqc "SELECT to_regclass('app.tenants') IS NOT NULL")" != "t" ]; then
+  owner_psql -f /workspace/packages/db/migrations/0005_tenants.sql
+fi

@@ -8,6 +8,15 @@ SET ROLE vodoge_app;
 BEGIN;
 SET LOCAL app.tenant_id = '11111111-1111-1111-1111-111111111111';
 
+INSERT INTO app.tenants (id, slug, name, status, region)
+VALUES (
+    '11111111-1111-1111-1111-111111111111',
+    'apple',
+    'Apple',
+    'active',
+    'cn'
+);
+
 INSERT INTO app.devices (id, tenant_id, imei, name, vertical)
 VALUES (
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -20,6 +29,15 @@ COMMIT;
 
 BEGIN;
 SET LOCAL app.tenant_id = '22222222-2222-2222-2222-222222222222';
+
+INSERT INTO app.tenants (id, slug, name, status, region)
+VALUES (
+    '22222222-2222-2222-2222-222222222222',
+    'orange',
+    'Orange',
+    'active',
+    'intl'
+);
 
 DO $$
 DECLARE

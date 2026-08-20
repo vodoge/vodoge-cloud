@@ -12,10 +12,10 @@ cannot safely improvise later:
 - `packages/contract` is the single JSON Schema source for edge-to-cloud
   messages. Go and TypeScript types are generated from it; CI fails if they drift.
 - `apps/gateway` provides a Go TLS 1.3 mTLS transport foundation and an in-memory
-  tenant-to-region cache that survives a later control-plane outage.
-- `packages/db` defines the regional PostgreSQL tenant boundary, durable command
-  outbox, idempotency, and RLS tests, plus the global control-plane tenant table
-  whose `region` column is immutable.
+  slug-to-tenant cache.
+- `packages/db` is one PostgreSQL: tenant directory, devices, messages, commands,
+  RLS, and an immutable `region` field on `app.tenants`. Isolation is `tenant_id`,
+  not a database per tenant or per region.
 
 ## Non-negotiable invariants
 
@@ -32,7 +32,7 @@ cannot safely improvise later:
 ```
 apps/gateway/       Go long-connection gateway foundation
 packages/contract/  Versioned edge-cloud protocol schema
-packages/db/        PostgreSQL regional data-plane migrations and SQL checks
+packages/db/        PostgreSQL migrations and SQL checks (shared tables + RLS)
 docs/                Protocol and delivery semantics
 ```
 

@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
--- Run after tenant_isolation.sql in a disposable regional database, or update
+-- Run after tenant_isolation.sql in a disposable database, or update
 -- the fixed IDs below if the fixture is reused.
 SET ROLE vodoge_app;
 

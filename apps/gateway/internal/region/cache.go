@@ -1,6 +1,6 @@
-// Package region caches the tenant-to-region mapping from the global control
-// plane. The mapping is almost immutable, so a resolved entry remains usable if
-// the global database later becomes unreachable.
+// Package region caches slug → tenant lookups from app.tenants.
+// Region is a field on the tenant, not a separate database. The mapping is
+// almost immutable, so a resolved entry can be reused across requests.
 package region
 
 import "sync"
@@ -24,8 +24,9 @@ func NewCache() *Cache {
 	return &Cache{entries: make(map[string]Entry)}
 }
 
-// Lookup returns a previously stored routing entry. A miss does not imply the
-// tenant does not exist; it only means this process has not resolved it yet.
+// Lookup returns a previously stored tenant directory entry. A miss does not
+// imply the tenant does not exist; it only means this process has not resolved
+// it yet.
 func (cache *Cache) Lookup(slug string) (Entry, bool) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()

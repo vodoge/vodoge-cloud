@@ -1,8 +1,8 @@
-# Regional Database Foundation
+# Database Foundation
 
-This directory holds the regional data-plane schema. The global control-plane
-database is intentionally separate and contains only tenant-to-region routing;
-it must not receive messages, command payloads, or device state.
+One PostgreSQL holds the tenant directory and all business rows. Isolation is
+the `tenant_id` column plus RLS, not a database per tenant or per region.
+`region` is a field on `app.tenants` and on device certificates.
 
 ## Apply order
 
@@ -50,22 +50,19 @@ Run these against a disposable database as the migration administrator:
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f bootstrap/roles.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_regional_data.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_command_dispatch_lifecycle.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0003_ingress.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0004_accept_ingress.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0005_tenants.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenants.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/tenant_isolation.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/command_outbox.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
 ```
 
 The tests deliberately switch to `vodoge_app`; testing RLS as a superuser would
 produce a false result because superusers bypass RLS.
 
-## Control plane
-
-`controlplane/migrations/` is a separate database. It stores only tenant-to-region
-routing (`control.tenants`). A tenant's `region` is immutable after insert.
-
-```sh
-psql "$CONTROLPLANE_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f controlplane/migrations/0001_tenants.sql
-psql "$CONTROLPLANE_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f controlplane/tests/region_immutability.sql
-```
+Apply every file in `migrations/` in lexical order. `app.resolve_tenant(slug)`
+is the Host-lookup path; it does not use `SET LOCAL`. Every other tenant-scoped
+query still must.
