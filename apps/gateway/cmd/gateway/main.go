@@ -1,8 +1,10 @@
 // Command gateway is the Cloud device-facing process.
 //
 // /healthz and /readyz stay on plaintext HTTP for the Compose healthcheck.
-// /v1/edge upgrades to the authenticated device WebSocket. Production supplies
-// VODOGE_GATEWAY_TLS_* so that listener uses TLS 1.3 mTLS.
+// /v1/enroll exchanges a one-time code for a device certificate over TLS 1.3
+// without a client cert. /v1/edge upgrades to the authenticated device
+// WebSocket. Production supplies VODOGE_GATEWAY_TLS_* so the listener uses
+// TLS 1.3 and verifies a client certificate when one is presented.
 package main
 
 import (
@@ -23,9 +25,11 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
 )
 
@@ -44,15 +48,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	journal, tenants, err := openRuntime()
+	journal, tenants, enrollment, err := openRuntime()
 	if err != nil {
 		logger.Error("gateway database", "error", err)
 		os.Exit(1)
 	}
+	wakeups := connectWakeup(os.Getenv("REDIS_URL"), os.Getenv("VODOGE_GATEWAY_NODE_ID"), logger)
 
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants).handler(),
+		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants, wakeups, enrollment).handler(),
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -63,7 +68,7 @@ func main() {
 	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil, "sql", os.Getenv("VODOGE_DATABASE_URL") != "")
+		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil, "sql", os.Getenv("VODOGE_DATABASE_URL") != "", "redis", os.Getenv("REDIS_URL") != "")
 		if tlsConfig != nil {
 			serverErrors <- httpServer.ListenAndServeTLS("", "")
 			return
@@ -92,9 +97,10 @@ type process struct {
 	region  string
 	session *wss.Server
 	tenants *directory.Resolver
+	enroll  *enroll.Handler
 }
 
-func newProcess(region string, store ingress.Store, tenants *directory.Resolver) *process {
+func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
 	if store == nil {
 		store = ingress.NewJournal()
 	}
@@ -110,13 +116,15 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver)
 			Region:  region,
 			Hub:     session.NewHub(),
 			Journal: store,
+			Wakeups: wakeups,
 		},
 		tenants: tenants,
+		enroll:  enrollment,
 	}
 }
 
 func healthHandler() http.Handler {
-	return newProcess("", nil, nil).handler()
+	return newProcess("", nil, nil, nil, nil).handler()
 }
 
 func (process *process) handler() http.Handler {
@@ -125,6 +133,11 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /readyz", process.readyz)
 	mux.HandleFunc("GET /v1/tenant", process.tenants.ServeHost)
 	mux.Handle("GET /v1/tenants/{slug}", process.tenants)
+	if process.enroll != nil {
+		mux.Handle("POST "+enroll.Path, process.enroll)
+	} else {
+		mux.HandleFunc("POST "+enroll.Path, enroll.Unavailable)
+	}
 	mux.Handle("GET "+wss.Path, process.session)
 	return securityHeaders(mux)
 }
@@ -145,14 +158,48 @@ func pingStore(store ingress.Store) error {
 	return pinger.Ping()
 }
 
-func openRuntime() (ingress.Store, *directory.Resolver, error) {
+func connectWakeup(url, nodeID string, logger *slog.Logger) wakeup.Publisher {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	url = strings.TrimSpace(url)
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		host, err := os.Hostname()
+		if err != nil || strings.TrimSpace(host) == "" {
+			nodeID = "gateway"
+		} else {
+			nodeID = strings.TrimSpace(host)
+		}
+	}
+	if url == "" {
+		logger.Info("gateway redis disabled", "reason", "REDIS_URL unset")
+		return wakeup.Nop{}
+	}
+
+	conn, err := wakeup.Dial(url, nodeID)
+	if err != nil {
+		logger.Error("gateway redis", "error", err)
+		return wakeup.Nop{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := conn.Ping(ctx); err != nil {
+		logger.Warn("gateway redis ping failed; uplink continues without routing hints until redis recovers", "error", err, "node_id", nodeID)
+		return conn
+	}
+	logger.Info("gateway redis connected", "node_id", nodeID)
+	return conn
+}
+
+func openRuntime() (ingress.Store, *directory.Resolver, *enroll.Handler, error) {
 	dsn := os.Getenv("VODOGE_DATABASE_URL")
 	if dsn == "" {
-		return ingress.NewJournal(), directory.New(nil), nil
+		return ingress.NewJournal(), directory.New(nil), nil, nil
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open database: %w", err)
+		return nil, nil, nil, fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(32)
 	db.SetConnMaxLifetime(time.Hour)
@@ -160,9 +207,44 @@ func openRuntime() (ingress.Store, *directory.Resolver, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, nil, fmt.Errorf("ping database: %w", err)
+		return nil, nil, nil, fmt.Errorf("ping database: %w", err)
 	}
-	return &ingress.SQLStore{DB: db}, directory.New(directory.SQLLookup(db)), nil
+
+	var enrollment *enroll.Handler
+	authority, err := loadDeviceCA()
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, nil, err
+	}
+	if authority != nil {
+		enrollment = &enroll.Handler{
+			Service: &enroll.Service{
+				Issuer: &enroll.SQLIssuer{DB: db},
+				CA:     authority,
+			},
+		}
+	}
+	return &ingress.SQLStore{DB: db}, directory.New(directory.SQLLookup(db)), enrollment, nil
+}
+
+func loadDeviceCA() (*enroll.Authority, error) {
+	certFile := os.Getenv("VODOGE_DEVICE_CA_CERT")
+	keyFile := os.Getenv("VODOGE_DEVICE_CA_KEY")
+	if certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New("VODOGE_DEVICE_CA_CERT and VODOGE_DEVICE_CA_KEY are required together")
+	}
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read device CA certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read device CA key: %w", err)
+	}
+	return enroll.ParseAuthority(certPEM, keyPEM)
 }
 
 func healthResponse(status string, code int) http.HandlerFunc {
@@ -211,5 +293,5 @@ func optionalServerTLS() (*tls.Config, error) {
 	if !pool.AppendCertsFromPEM(pem) {
 		return nil, errors.New("client CA file contained no certificates")
 	}
-	return transport.ServerTLSConfig(certificate, pool)
+	return transport.OptionalClientTLSConfig(certificate, pool)
 }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"database/sql"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 )
 
 func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
@@ -43,7 +46,7 @@ func TestReadyzFailsWhenDatabaseIsUnreachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	handler := newProcess("", &ingress.SQLStore{DB: db, Timeout: 500 * time.Millisecond}, nil).handler()
+	handler := newProcess("", &ingress.SQLStore{DB: db, Timeout: 500 * time.Millisecond}, nil, wakeup.Failing{}, nil).handler()
 
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	response := httptest.NewRecorder()
@@ -56,6 +59,48 @@ func TestReadyzFailsWhenDatabaseIsUnreachable(t *testing.T) {
 	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if live.Code != http.StatusOK {
 		t.Fatalf("healthz = %d, want 200", live.Code)
+	}
+}
+
+func TestReadyzIgnoresRedis(t *testing.T) {
+	t.Parallel()
+
+	handler := newProcess("", ingress.NewJournal(), nil, wakeup.Failing{}, nil).handler()
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; redis must not gate uplink readiness", response.Code)
+	}
+}
+
+func TestConnectWakeupUnsetURLIsNop(t *testing.T) {
+	t.Parallel()
+
+	publisher := connectWakeup("", "node-1", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, ok := publisher.(wakeup.Nop); !ok {
+		t.Fatalf("publisher type = %T, want wakeup.Nop", publisher)
+	}
+}
+
+func TestConnectWakeupBadURLIsNop(t *testing.T) {
+	t.Parallel()
+
+	publisher := connectWakeup("://not-a-url", "node-1", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, ok := publisher.(wakeup.Nop); !ok {
+		t.Fatalf("publisher type = %T, want wakeup.Nop", publisher)
+	}
+}
+
+func TestConnectWakeupPingFailureKeepsClient(t *testing.T) {
+	t.Parallel()
+
+	publisher := connectWakeup("redis://127.0.0.1:1/0", "node-1", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if publisher == nil {
+		t.Fatal("publisher is nil")
+	}
+	if _, ok := publisher.(wakeup.Nop); ok {
+		t.Fatal("unreachable redis must keep the client so later recovery can publish")
 	}
 }
 
@@ -74,6 +119,16 @@ func TestUnknownTenantSlugIs404(t *testing.T) {
 	healthHandler().ServeHTTP(apex, apexReq)
 	if apex.Code != http.StatusNotFound {
 		t.Fatalf("apex host status = %d, want 404", apex.Code)
+	}
+}
+
+func TestEnrollRouteExistsWithoutClientCertificate(t *testing.T) {
+	t.Parallel()
+
+	response := httptest.NewRecorder()
+	healthHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/enroll", http.NoBody))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when device CA is not configured", response.Code)
 	}
 }
 
