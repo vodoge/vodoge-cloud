@@ -82,6 +82,8 @@ services:
       VODOGE_GATEWAY_ADDR: :8080
       VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
       VODOGE_DATABASE_URL: postgres://${VODOGE_APP_USER:?set VODOGE_APP_USER in .env}:${VODOGE_APP_PASSWORD:?set VODOGE_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      VODOGE_GATEWAY_NODE_ID: ${VODOGE_GATEWAY_NODE_ID:-gateway}
     ports:
       - 127.0.0.1:${VODOGE_GATEWAY_PORT:-18080}:8080
     depends_on:

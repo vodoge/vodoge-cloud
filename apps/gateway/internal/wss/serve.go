@@ -6,6 +6,7 @@
 package wss
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
@@ -48,12 +50,16 @@ type ReceiptHandler interface {
 }
 
 // Server holds live connections and the uplink journal.
+//
+// Wakeups is optional. Redis is a routing hint only; a nil or failing publisher
+// must not prevent Accept or UplinkAck.
 type Server struct {
 	Region   string
 	Hub      *session.Hub
 	Journal  ingress.Store
 	Commands PendingCommands
 	Receipts ReceiptHandler
+	Wakeups  wakeup.Publisher
 	Now      func() time.Time
 }
 
@@ -128,6 +134,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 	}, now); err != nil {
 		return err
 	}
+	server.hintPresence(device.DeviceID)
 
 	if err := server.deliverPending(device, conn, now); err != nil {
 		return err
@@ -147,6 +154,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 		if !server.Hub.Touch(connectionID, server.now()) {
 			return errors.New("connection superseded")
 		}
+		server.hintPresence(device.DeviceID)
 
 		switch envelope.Kind {
 		case contract.MessageKindPing:
@@ -210,10 +218,33 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			}, server.now()); err != nil {
 				return err
 			}
+			if result.Status == ingress.StatusInserted {
+				server.hintEvent(wakeup.Event{
+					TenantID:   device.TenantID,
+					DeviceID:   device.DeviceID,
+					EnvelopeID: envelope.ID,
+					Kind:       string(envelope.Kind),
+					Seq:        seq,
+				})
+			}
 		default:
 			return fmt.Errorf("unexpected envelope %s", envelope.Kind)
 		}
 	}
+}
+
+func (server *Server) hintPresence(deviceID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), wakeup.HintTimeout)
+	defer cancel()
+	// Presence is a routing hint. A down Redis must not close the session.
+	_ = wakeup.Maybe(server.Wakeups).RegisterDevice(ctx, deviceID)
+}
+
+func (server *Server) hintEvent(event wakeup.Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), wakeup.HintTimeout)
+	defer cancel()
+	// UplinkAck confirms PostgreSQL, not SSE publication.
+	_ = wakeup.Maybe(server.Wakeups).PublishEvent(ctx, event)
 }
 
 func (server *Server) deliverPending(device identity.Device, conn FrameConn, now time.Time) error {
