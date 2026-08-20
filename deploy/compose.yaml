@@ -80,12 +80,22 @@ services:
     restart: unless-stopped
     environment:
       VODOGE_GATEWAY_ADDR: :8080
+      VODOGE_GATEWAY_TLS_ADDR: :8443
+      VODOGE_GATEWAY_REGION: ${VODOGE_GATEWAY_REGION:-cn}
       VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
       VODOGE_DATABASE_URL: postgres://${VODOGE_APP_USER:?set VODOGE_APP_USER in .env}:${VODOGE_APP_PASSWORD:?set VODOGE_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
       VODOGE_GATEWAY_NODE_ID: ${VODOGE_GATEWAY_NODE_ID:-gateway}
+      VODOGE_GATEWAY_TLS_CERT: /certs/gateway.crt
+      VODOGE_GATEWAY_TLS_KEY: /certs/gateway.key
+      VODOGE_GATEWAY_CLIENT_CA: /certs/device-ca.crt
+      VODOGE_DEVICE_CA_CERT: /certs/device-ca.crt
+      VODOGE_DEVICE_CA_KEY: /certs/device-ca.key
+    volumes:
+      - ./certs:/certs:ro
     ports:
       - 127.0.0.1:${VODOGE_GATEWAY_PORT:-18080}:8080
+      - ${VODOGE_EDGE_TLS_PORT:-444}:8443
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,16 +103,37 @@ services:
         condition: service_healthy
     networks:
       - backend
+      - edge
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 10
-      start_period: 5s
+      start_period: 8s
+
+  console:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.console
+    restart: unless-stopped
+    environment:
+      VODOGE_GATEWAY_URL: http://gateway:8080
+      VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    ports:
+      - 127.0.0.1:${VODOGE_CONSOLE_PORT:-13000}:3000
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - backend
 
 networks:
   backend:
     internal: true
+  edge:
+    driver: bridge
 
 volumes:
   postgres-data:

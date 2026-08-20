@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/vodoge-
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/vodoge-gateway /usr/local/bin/vodoge-gateway
 
 ENV VODOGE_GATEWAY_ADDR=:8080
