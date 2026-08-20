@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -34,12 +35,26 @@ type FrameConn interface {
 	Close() error
 }
 
+// PendingCommands loads durable commands for a device that just resumed.
+// Offline devices keep commands queued in PostgreSQL; this is called only after
+// a live connection is bound.
+type PendingCommands interface {
+	PendingForDevice(tenantID, deviceID string, now time.Time) []dispatch.PendingCommand
+}
+
+// ReceiptHandler records CommandReceipt from the edge.
+type ReceiptHandler interface {
+	RecordReceipt(tenantID string, receipt dispatch.Receipt, now time.Time) error
+}
+
 // Server holds live connections and the uplink journal.
 type Server struct {
-	Region  string
-	Hub     *session.Hub
-	Journal ingress.Store
-	Now     func() time.Time
+	Region   string
+	Hub      *session.Hub
+	Journal  ingress.Store
+	Commands PendingCommands
+	Receipts ReceiptHandler
+	Now      func() time.Time
 }
 
 func (server *Server) now() time.Time {
@@ -114,6 +129,10 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 		return err
 	}
 
+	if err := server.deliverPending(device, conn, now); err != nil {
+		return err
+	}
+
 	for {
 		if err := conn.SetReadDeadline(server.now().Add(session.IdleTimeout)); err != nil {
 			return err
@@ -143,6 +162,24 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 				PingID:       envelope.ID,
 				ServerTime:   server.now().UnixMilli(),
 			}, server.now()); err != nil {
+				return err
+			}
+		case contract.MessageKindCommandReceipt:
+			if server.Receipts == nil {
+				break
+			}
+			var payload contract.CommandReceiptPayload
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				return fmt.Errorf("command receipt: %w", err)
+			}
+			receipt := dispatch.Receipt{
+				ID:         envelope.ID,
+				CommandID:  payload.CmdID,
+				DeliveryID: payload.DeliveryID,
+				Status:     dispatch.ReceiptStatus(payload.Status),
+				ReceivedAt: time.UnixMilli(payload.ReceivedAt),
+			}
+			if err := server.Receipts.RecordReceipt(device.TenantID, receipt, server.now()); err != nil {
 				return err
 			}
 		case contract.MessageKindSmsReceived, contract.MessageKindDeviceState, contract.MessageKindCommandResult, contract.MessageKindEsimInventory, contract.MessageKindAlert:
@@ -177,6 +214,29 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			return fmt.Errorf("unexpected envelope %s", envelope.Kind)
 		}
 	}
+}
+
+func (server *Server) deliverPending(device identity.Device, conn FrameConn, now time.Time) error {
+	if server.Commands == nil {
+		return nil
+	}
+	for _, pending := range server.Commands.PendingForDevice(device.TenantID, device.DeviceID, now) {
+		if pending.Command.Expired(now) {
+			continue
+		}
+		attempt := int64(pending.Attempt)
+		payload := contract.CommandDeliverPayload{
+			CmdID:     pending.Command.ID,
+			IssuedAt:  pending.Command.IssuedAt.UnixMilli(),
+			ExpiresAt: pending.Command.ExpiresAt.UnixMilli(),
+			Attempt:   &attempt,
+			Command:   contract.Command(append([]byte(nil), pending.Command.Payload...)),
+		}
+		if err := writeEnvelope(conn, device.DeviceID, contract.MessageKindCommandDeliver, payload, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func readEnvelope(conn FrameConn) (contract.Envelope, error) {

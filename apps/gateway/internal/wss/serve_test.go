@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -150,6 +151,52 @@ func TestServeDeviceAnswersPingAndRejectsWrongFirstKind(t *testing.T) {
 		ServeDevice(device, bad)
 	if err == nil || err.Error() != "first envelope must be Resume" {
 		t.Fatalf("wrong first kind err = %v", err)
+	}
+}
+
+type staticPending struct {
+	items []dispatch.PendingCommand
+}
+
+func (s staticPending) PendingForDevice(string, string, time.Time) []dispatch.PendingCommand {
+	return s.items
+}
+
+func TestServeDeviceDeliversQueuedCommandsAfterResume(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{TenantID: "t", DeviceID: "dev-1", Region: "cn"}
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	conn := newMemoryConn(mustEnvelope(t, contract.Envelope{
+		V: contract.ProtocolVersion, Kind: contract.MessageKindResume,
+		ID: "11111111-1111-4111-8111-111111111111", Ts: now.UnixMilli(), DeviceID: device.DeviceID,
+		Payload: mustJSON(t, contract.ResumePayload{
+			ConnectionID: "conn-1", LastAssignedSeq: "0", LastAckedSeq: "0",
+			PendingGapIds: []string{}, CapabilityMatrixVersion: "1",
+		}),
+	}))
+	server := &Server{
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		Commands: staticPending{items: []dispatch.PendingCommand{{
+			Attempt: 1,
+			Command: dispatch.Command{
+				TenantID: device.TenantID, ID: "cmd-1", DeviceID: device.DeviceID,
+				Kind: "send_sms", Payload: []byte(`{"kind":"send_sms","to":"10086","body":"hi"}`),
+				IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+			},
+		}}},
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v", err)
+	}
+	if conn.nwrites() < 2 {
+		t.Fatalf("writes = %d, want ResumeAck + CommandDeliver", conn.nwrites())
+	}
+	deliver := decodeWritten(t, conn.written(1))
+	if deliver.Kind != contract.MessageKindCommandDeliver {
+		t.Fatalf("second write = %s, want CommandDeliver", deliver.Kind)
 	}
 }
 
