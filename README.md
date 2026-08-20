@@ -30,6 +30,7 @@ cannot safely improvise later:
 ## Layout
 
 ```
+apps/console/       Next.js tenant console (Host routing + zh/en i18n)
 apps/gateway/       Go long-connection gateway foundation
 packages/contract/  Versioned edge-cloud protocol schema
 packages/db/        PostgreSQL migrations and SQL checks (shared tables + RLS)
@@ -43,6 +44,13 @@ The gateway tests run with Go:
 ```sh
 cd apps/gateway
 go test ./...
+```
+
+Console Host parse, tenant cache, and i18n key checks (no gateway required):
+
+```sh
+cd apps/console
+npm test
 ```
 
 Database tests require a disposable PostgreSQL instance; see
