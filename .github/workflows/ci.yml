@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Gateway tests
+        working-directory: apps/gateway
+        run: go test ./...
+      - name: Contract tests
+        working-directory: packages/contract/go
+        run: go test ./...
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generated types match schema
+        run: python3 packages/contract/codegen/generate.py --check --go packages/contract/go/contract.go --ts packages/contract/ts/index.ts

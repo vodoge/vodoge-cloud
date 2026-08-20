@@ -10,11 +10,12 @@ The first implementation slices establish the contracts that the edge and cloud
 cannot safely improvise later:
 
 - `packages/contract` is the single JSON Schema source for edge-to-cloud
-  messages, resume, acknowledgements, command receipts, and command results.
-- `apps/gateway` provides a Go TLS transport foundation that requires mTLS and
-  TLS 1.3.
+  messages. Go and TypeScript types are generated from it; CI fails if they drift.
+- `apps/gateway` provides a Go TLS 1.3 mTLS transport foundation and an in-memory
+  tenant-to-region cache that survives a later control-plane outage.
 - `packages/db` defines the regional PostgreSQL tenant boundary, durable command
-  outbox, idempotency, and RLS tests.
+  outbox, idempotency, and RLS tests, plus the global control-plane tenant table
+  whose `region` column is immutable.
 
 ## Non-negotiable invariants
 
