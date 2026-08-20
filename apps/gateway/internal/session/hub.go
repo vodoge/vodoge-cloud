@@ -89,6 +89,24 @@ func (hub *Hub) Lookup(deviceID string) (Connection, bool) {
 	return *connection, true
 }
 
+// Unbind removes a connection only if it is still the live binding. A superseded
+// session calling Unbind must not drop the newer connection.
+func (hub *Hub) Unbind(connectionID string) bool {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	deviceID, ok := hub.byID[connectionID]
+	if !ok {
+		return false
+	}
+	connection := hub.byDevice[deviceID]
+	if connection == nil || connection.ID != connectionID {
+		return false
+	}
+	delete(hub.byID, connectionID)
+	delete(hub.byDevice, deviceID)
+	return true
+}
+
 // SweepIdle unbinds connections that have been silent longer than IdleTimeout.
 func (hub *Hub) SweepIdle(now time.Time) []Connection {
 	hub.mu.Lock()

@@ -63,3 +63,27 @@ func TestSweepIdleUnbindsSilentDevices(t *testing.T) {
 		t.Fatal("fresh device must remain")
 	}
 }
+
+func TestUnbindIgnoresSupersededConnection(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub()
+	device := identity.Device{TenantID: "t", DeviceID: "dev-1", Region: "cn"}
+	now := time.Now()
+	hub.Bind(Connection{ID: "conn-a", Device: device, ConnectedAt: now, LastPacketAt: now})
+	hub.Bind(Connection{ID: "conn-b", Device: device, ConnectedAt: now, LastPacketAt: now})
+
+	if hub.Unbind("conn-a") {
+		t.Fatal("superseded connection must not unbind the live session")
+	}
+	got, ok := hub.Lookup("dev-1")
+	if !ok || got.ID != "conn-b" {
+		t.Fatalf("lookup after stale unbind = %+v", got)
+	}
+	if !hub.Unbind("conn-b") {
+		t.Fatal("live connection must unbind")
+	}
+	if _, ok := hub.Lookup("dev-1"); ok {
+		t.Fatal("device must be offline after live unbind")
+	}
+}
