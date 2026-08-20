@@ -57,14 +57,19 @@ map, while the nested shape remains available to validation and code generation.
 
 ## Required generated artifacts
 
-The repository scaffold should eventually generate and commit:
+Generated artifacts are committed:
 
-- Go models and MessagePack codecs for `vodoge-gateway`;
-- TypeScript types and schema validators for console-side command creation;
-- Rust models and codecs in `vodoge-edge/contract`;
-- valid and invalid cross-language fixture frames, including replay, hole, and
-  duplicate-command cases.
+- Go models in `go/`
+- TypeScript types in `ts/`
+- Rust models in `vodoge-edge/contract` from a copy of the same schema
 
-CI must regenerate these artifacts and fail when the resulting diff is not
-empty. The state-machine semantics that those bindings must implement are in
+Regenerate and fail CI on drift:
+
+```sh
+python3 packages/contract/codegen/generate.py --check \
+  --go packages/contract/go/contract.go \
+  --ts packages/contract/ts/index.ts
+```
+
+The state-machine semantics that those bindings must implement are in
 [`../../docs/protocol-reliability.md`](../../docs/protocol-reliability.md).
