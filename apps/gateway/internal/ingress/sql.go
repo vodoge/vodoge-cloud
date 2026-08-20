@@ -22,6 +22,16 @@ func (store *SQLStore) timeout() time.Duration {
 	return 5 * time.Second
 }
 
+// Ping reports whether the regional database is reachable.
+func (store *SQLStore) Ping() error {
+	if store == nil || store.DB == nil {
+		return fmt.Errorf("%w: sql store is not configured", ErrInvalidRecord)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), store.timeout())
+	defer cancel()
+	return store.DB.PingContext(ctx)
+}
+
 // Accept records one sequenced envelope in PostgreSQL, then returns the durable window.
 func (store *SQLStore) Accept(record Record) (Result, error) {
 	if store == nil || store.DB == nil {

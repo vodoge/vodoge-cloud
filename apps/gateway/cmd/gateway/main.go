@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
@@ -40,9 +42,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	journal, err := openJournal()
+	if err != nil {
+		logger.Error("gateway database", "error", err)
+		os.Exit(1)
+	}
+
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION")).handler(),
+		Handler:           newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal).handler(),
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -53,7 +61,7 @@ func main() {
 	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil)
+		logger.Info("gateway listening", "address", address, "mtls", tlsConfig != nil, "sql", os.Getenv("VODOGE_DATABASE_URL") != "")
 		if tlsConfig != nil {
 			serverErrors <- httpServer.ListenAndServeTLS("", "")
 			return
@@ -83,33 +91,73 @@ type process struct {
 	session *wss.Server
 }
 
-func newProcess(region string) *process {
+func newProcess(region string, store ingress.Store) *process {
+	if store == nil {
+		store = ingress.NewJournal()
+	}
 	return &process{
 		region: region,
 		session: &wss.Server{
 			Region:  region,
 			Hub:     session.NewHub(),
-			Journal: ingress.NewJournal(),
+			Journal: store,
 		},
 	}
 }
 
 func healthHandler() http.Handler {
-	return newProcess("").handler()
+	return newProcess("", nil).handler()
 }
 
 func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthResponse("healthy"))
-	mux.HandleFunc("GET /readyz", healthResponse("ready"))
+	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
+	mux.HandleFunc("GET /readyz", process.readyz)
 	mux.Handle("GET "+wss.Path, process.session)
 	return securityHeaders(mux)
 }
 
-func healthResponse(status string) http.HandlerFunc {
+func (process *process) readyz(writer http.ResponseWriter, _ *http.Request) {
+	if err := pingStore(process.session.Journal); err != nil {
+		healthResponse("not-ready", http.StatusServiceUnavailable)(writer, nil)
+		return
+	}
+	healthResponse("ready", http.StatusOK)(writer, nil)
+}
+
+func pingStore(store ingress.Store) error {
+	pinger, ok := store.(interface{ Ping() error })
+	if !ok {
+		return nil
+	}
+	return pinger.Ping()
+}
+
+func openJournal() (ingress.Store, error) {
+	dsn := os.Getenv("VODOGE_DATABASE_URL")
+	if dsn == "" {
+		return ingress.NewJournal(), nil
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db.SetMaxOpenConns(32)
+	db.SetConnMaxLifetime(time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	return &ingress.SQLStore{DB: db}, nil
+}
+
+func healthResponse(status string, code int) http.HandlerFunc {
 	return func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 		writer.Header().Set("Cache-Control", "no-store")
+		writer.WriteHeader(code)
 		if err := json.NewEncoder(writer).Encode(map[string]string{
 			"component": "vodoge-gateway",
 			"mode":      "edge",

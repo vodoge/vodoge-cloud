@@ -1,9 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 )
 
 func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
@@ -28,6 +32,30 @@ func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
 				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 			}
 		})
+	}
+}
+
+func TestReadyzFailsWhenDatabaseIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("pgx", "postgres://vodoge_gateway:x@127.0.0.1:1/vodoge?connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	handler := newProcess("", &ingress.SQLStore{DB: db, Timeout: 500 * time.Millisecond}).handler()
+
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+
+	live := httptest.NewRecorder()
+	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if live.Code != http.StatusOK {
+		t.Fatalf("healthz = %d, want 200", live.Code)
 	}
 }
 
