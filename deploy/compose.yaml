@@ -61,6 +61,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       VODOGE_OWNER_USER: ${VODOGE_OWNER_USER:?set VODOGE_OWNER_USER in .env}
       VODOGE_OWNER_PASSWORD: ${VODOGE_OWNER_PASSWORD:?set VODOGE_OWNER_PASSWORD in .env}
+      VODOGE_APP_USER: ${VODOGE_APP_USER:?set VODOGE_APP_USER in .env}
+      VODOGE_APP_PASSWORD: ${VODOGE_APP_PASSWORD:?set VODOGE_APP_PASSWORD in .env}
     volumes:
       - ../packages/db:/workspace/packages/db:ro
       - ./migrate.sh:/workspace/deploy/migrate.sh:ro
@@ -78,6 +80,7 @@ services:
     restart: unless-stopped
     environment:
       VODOGE_GATEWAY_ADDR: :8080
+      VODOGE_DATABASE_URL: postgres://${VODOGE_APP_USER:?set VODOGE_APP_USER in .env}:${VODOGE_APP_PASSWORD:?set VODOGE_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}?sslmode=disable
     ports:
       - 127.0.0.1:${VODOGE_GATEWAY_PORT:-18080}:8080
     depends_on:

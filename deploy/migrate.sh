@@ -7,6 +7,8 @@ set -eu
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 : "${VODOGE_OWNER_USER:?VODOGE_OWNER_USER is required}"
 : "${VODOGE_OWNER_PASSWORD:?VODOGE_OWNER_PASSWORD is required}"
+: "${VODOGE_APP_USER:?VODOGE_APP_USER is required}"
+: "${VODOGE_APP_PASSWORD:?VODOGE_APP_PASSWORD is required}"
 
 admin_psql() {
   PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$@"
@@ -17,6 +19,30 @@ owner_psql() {
 }
 
 admin_psql -f /workspace/packages/db/bootstrap/roles.sql
+
+# vodoge_app stays NOLOGIN. The gateway connects as this inherited login role.
+case "$VODOGE_APP_USER" in
+  *[!a-zA-Z0-9_]*|"")
+    echo "VODOGE_APP_USER must be a simple SQL identifier" >&2
+    exit 1
+    ;;
+esac
+if [ "$(admin_psql -Atqc "SELECT COUNT(*) FROM pg_roles WHERE rolname = '${VODOGE_APP_USER}'")" = "0" ]; then
+  admin_psql \
+    --set=app_user="$VODOGE_APP_USER" \
+    --set=app_password="$VODOGE_APP_PASSWORD" <<'SQL'
+CREATE ROLE :"app_user" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION INHERIT
+    PASSWORD :'app_password';
+SQL
+fi
+admin_psql \
+  --set=app_user="$VODOGE_APP_USER" \
+  --set=app_password="$VODOGE_APP_PASSWORD" \
+  --set=database_name="$PGDATABASE" <<'SQL'
+ALTER ROLE :"app_user" PASSWORD :'app_password';
+GRANT vodoge_app TO :"app_user";
+GRANT CONNECT ON DATABASE :"database_name" TO :"app_user";
+SQL
 
 if [ "$(owner_psql -Atqc "SELECT to_regclass('app.commands') IS NOT NULL")" != "t" ]; then
   owner_psql -f /workspace/packages/db/migrations/0001_regional_data.sql
