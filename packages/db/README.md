@@ -57,6 +57,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0005_tenants.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0006_enrollment.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0007_rules_and_audit.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0008_project_ingress.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0009_capability_matrix.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f bootstrap/seed_operator.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/app_role_not_superuser.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls_coverage.sql
