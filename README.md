@@ -1,17 +1,48 @@
 # VoDoge Cloud
 
-VoDoge Cloud is the multi-tenant control plane for VoDoge Edge devices.
+VoDoge Cloud is the multi-tenant control plane for VoDoge Edge devices. It is
+the authoritative home for tenant data, device commands, messaging history,
+rules, audit records, and the browser console.
 
-## Design principles
+## Current scope
 
-- Devices connect outward through WSS; customer sites do not need inbound ports.
-- Device connections use mTLS and TLS 1.3 only.
-- PostgreSQL is the authoritative store; Redis is never the durable command queue.
-- Tenant and region boundaries are enforced in the data plane.
-- Commands, acknowledgements, and offline recovery are designed for at-least-once delivery.
+The first implementation slices establish the contracts that the edge and cloud
+cannot safely improvise later:
 
-## Status
+- `packages/contract` is the single JSON Schema source for edge-to-cloud
+  messages, resume, acknowledgements, command receipts, and command results.
+- `apps/gateway` provides a Go TLS transport foundation that requires mTLS and
+  TLS 1.3.
+- `packages/db` defines the regional PostgreSQL tenant boundary, durable command
+  outbox, idempotency, and RLS tests.
 
-The project is in active foundational development. The first milestones establish the protocol contract, TLS transport, tenant isolation, and reliable command-delivery semantics.
+## Non-negotiable invariants
 
-See the repository history for independently reviewable implementation slices.
+- Device connections are outbound WSS with mTLS and TLS 1.3 only.
+- Redis is a wakeup and routing accelerator, never the durable command queue.
+- PostgreSQL commands and their outbox records commit atomically.
+- A device reconnect and periodic reconciliation recover from a lost Pub/Sub
+  wakeup.
+- Tenant context is established transaction-locally and enforced with PostgreSQL
+  row-level security. Missing context returns no rows.
+
+## Layout
+
+```
+apps/gateway/       Go long-connection gateway foundation
+packages/contract/  Versioned edge-cloud protocol schema
+packages/db/        PostgreSQL regional data-plane migrations and SQL checks
+docs/                Protocol and delivery semantics
+```
+
+## Checks
+
+The gateway tests run with Go:
+
+```sh
+cd apps/gateway
+go test ./...
+```
+
+Database tests require a disposable PostgreSQL instance; see
+`packages/db/README.md` for the migration and test order.
