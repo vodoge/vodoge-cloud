@@ -1,6 +1,9 @@
 package rules
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestExtractCode(t *testing.T) {
 	t.Parallel()
@@ -15,5 +18,15 @@ func TestExtractCode(t *testing.T) {
 	}
 	if _, ok := ExtractCode("no digits here"); ok {
 		t.Fatal("expected no code")
+	}
+}
+
+func TestExtractWithPrefersTenantPatterns(t *testing.T) {
+	t.Parallel()
+
+	custom := regexp.MustCompile(`PIN[:\s]+(\d{4})`)
+	code, ok := ExtractWith("PIN: 4321 extra 999999", []*regexp.Regexp{custom})
+	if !ok || code != "4321" {
+		t.Fatalf("got %q %v", code, ok)
 	}
 }

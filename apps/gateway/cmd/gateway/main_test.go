@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
@@ -233,6 +236,58 @@ func TestCatalogRoutesAreTenantScoped(t *testing.T) {
 	handler.ServeHTTP(forwarded, fwd)
 	if forwarded.Code != http.StatusOK {
 		t.Fatalf("forwarded host status = %d body=%s", forwarded.Code, forwarded.Body.String())
+	}
+}
+
+func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"})
+	proc := newProcess("", nil, tenants, nil, nil)
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{
+			"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}},
+			"t-b": {{ID: "d-b", Name: "lab-b", State: "offline"}},
+		},
+	}
+	handler := proc.handler()
+
+	req := httptest.NewRequest(http.MethodPut, "http://a.vodoge.com/v1/capability-matrix", strings.NewReader(`{"matrix":{"version":"hot-1","rule":[]}}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["version"] != "hot-1" {
+		t.Fatalf("body = %#v", body)
+	}
+	if queued, _ := body["queued"].(float64); queued != 1 {
+		t.Fatalf("queued = %#v", body["queued"])
+	}
+
+	queue := proc.queue.(*commands.Memory)
+	if len(queue.Items) != 1 || queue.Items[0].DeviceID != "d-a" || queue.Items[0].Kind != "update_capability_matrix" {
+		t.Fatalf("queue = %+v", queue.Items)
+	}
+	events := proc.audit.(*audit.Memory).ForTenant("t-a")
+	if len(events) != 1 || events[0].Action != "update_capability_matrix" {
+		t.Fatalf("audit = %+v", events)
+	}
+	if len(proc.audit.(*audit.Memory).ForTenant("t-b")) != 0 {
+		t.Fatal("tenant b saw tenant a audit")
+	}
+
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/capability-matrix", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("tenant b matrix status = %d", missing.Code)
 	}
 }
 

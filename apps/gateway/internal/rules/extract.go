@@ -11,9 +11,22 @@ var fallbackDigits = regexp.MustCompile(`\b(\d{4,8})\b`)
 
 // ExtractCode returns the first verification code in body.
 func ExtractCode(body string) (string, bool) {
+	return ExtractWith(body, nil)
+}
+
+// ExtractWith tries tenant-supplied patterns first, then the built-in matchers.
+func ExtractWith(body string, extra []*regexp.Regexp) (string, bool) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return "", false
+	}
+	for _, pattern := range extra {
+		if pattern == nil {
+			continue
+		}
+		if match := pattern.FindStringSubmatch(body); len(match) >= 2 {
+			return match[1], true
+		}
 	}
 	if match := defaultCode.FindStringSubmatch(body); len(match) == 2 {
 		return match[1], true

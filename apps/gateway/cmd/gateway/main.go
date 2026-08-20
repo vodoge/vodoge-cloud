@@ -24,11 +24,14 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
@@ -60,6 +63,9 @@ func main() {
 	proc := newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants, wakeups, enrollment)
 	if sqlStore, ok := journal.(*ingress.SQLStore); ok && sqlStore.DB != nil {
 		proc.catalog = catalog.SQL{DB: sqlStore.DB}
+		proc.matrix = matrix.SQL{DB: sqlStore.DB}
+		proc.queue = commands.SQL{DB: sqlStore.DB}
+		proc.audit = audit.SQL{DB: sqlStore.DB}
 	}
 
 	httpServer := &http.Server{
@@ -107,6 +113,9 @@ type process struct {
 	enroll  *enroll.Handler
 	events  *events.Bus
 	catalog catalog.Store
+	matrix  matrix.Store
+	queue   commands.Queue
+	audit   audit.Log
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -133,6 +142,9 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		enroll:  enrollment,
 		events:  bus,
 		catalog: catalog.Empty{},
+		matrix:  &matrix.Memory{},
+		queue:   &commands.Memory{},
+		audit:   &audit.Memory{},
 	}
 }
 
@@ -156,6 +168,8 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/devices", process.devices)
 	mux.HandleFunc("GET /v1/messages", process.messages)
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
+	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
+	mux.HandleFunc("PUT /v1/capability-matrix", process.putMatrix)
 	return securityHeaders(mux)
 }
 
@@ -217,6 +231,89 @@ func (process *process) sessions(writer http.ResponseWriter, request *http.Reque
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"sessions": list})
+}
+
+func (process *process) getMatrix(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	overlay, found, err := process.matrix.Get(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "matrix unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(writer, "matrix not found", http.StatusNotFound)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(overlay)
+}
+
+func (process *process) putMatrix(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Matrix json.RawMessage `json:"matrix"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil || len(body.Matrix) == 0 {
+		http.Error(writer, "invalid matrix", http.StatusBadRequest)
+		return
+	}
+	overlay, err := matrix.Parse(body.Matrix)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := process.matrix.Put(request.Context(), entry.TenantID, overlay); err != nil {
+		http.Error(writer, "matrix unavailable", http.StatusInternalServerError)
+		return
+	}
+	devices, err := process.catalog.ListDevices(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	payload, err := matrix.CommandPayload(overlay)
+	if err != nil {
+		http.Error(writer, "matrix unavailable", http.StatusInternalServerError)
+		return
+	}
+	expires := time.Now().Add(24 * time.Hour)
+	queued := 0
+	for _, device := range devices {
+		if _, err := process.queue.Enqueue(request.Context(), commands.Item{
+			TenantID:       entry.TenantID,
+			DeviceID:       device.ID,
+			Kind:           "update_capability_matrix",
+			IdempotencyKey: "matrix:" + overlay.Version + ":" + device.ID,
+			Payload:        payload,
+			ExpiresAt:      expires,
+		}); err != nil {
+			http.Error(writer, "command queue unavailable", http.StatusInternalServerError)
+			return
+		}
+		queued++
+	}
+	detail, _ := json.Marshal(map[string]any{"version": overlay.Version, "sha256": overlay.SHA256, "devices": queued})
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "gateway",
+		Action: "update_capability_matrix",
+		Target: overlay.Version,
+		Detail: detail,
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"version": overlay.Version,
+		"sha256":  overlay.SHA256,
+		"queued":  queued,
+	})
 }
 
 func (process *process) sse(writer http.ResponseWriter, request *http.Request) {
