@@ -69,3 +69,13 @@ test("the login redirect refuses a destination off this site", () => {
   assert.equal(safeNext("/inbox"), "/inbox");
   assert.equal(safeNext(null), "/");
 });
+
+// Gating the sign-in endpoint sends the login request to the login page, and
+// there is then no way to ever obtain a session.
+test("the sign-in and sign-out endpoints are reachable without a session", () => {
+  assert.equal(isPublicPath("/api/auth/login"), true);
+  assert.equal(isPublicPath("/api/auth/logout"), true);
+  // Everything else under /api stays gated.
+  assert.equal(isPublicPath("/api/devices"), false);
+  assert.equal(isPublicPath("/api"), false);
+});

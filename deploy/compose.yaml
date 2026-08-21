@@ -127,7 +127,12 @@ services:
       gateway:
         condition: service_healthy
     networks:
+      # backend is internal, and Docker silently ignores published ports for a
+      # container attached only to an internal network. The console has to be
+      # reachable from the host, so it joins edge as well — the same reason the
+      # gateway does.
       - backend
+      - edge
 
 networks:
   backend:

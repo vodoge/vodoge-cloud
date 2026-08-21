@@ -9,8 +9,20 @@
 
 export const SESSION_COOKIE = "vodoge_session";
 
-/** Paths reachable without a session. */
-const PUBLIC_PATHS = ["/login", "/unknown-tenant", "/not-a-tenant"];
+/**
+ * Paths reachable without a session.
+ *
+ * The sign-in endpoint has to be here: gating it sends the login request itself
+ * to the login page, and there is then no way to ever obtain a session. Sign-out
+ * is here for the same reason — it must work when the session is already gone.
+ */
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/unknown-tenant",
+  "/not-a-tenant",
+];
 
 export type CookieAttributes = {
   name: string;
