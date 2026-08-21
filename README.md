@@ -4,6 +4,26 @@ VoDoge Cloud is the multi-tenant control plane for VoDoge Edge devices. It is
 the authoritative home for tenant data, device commands, messaging history,
 rules, audit records, and the browser console.
 
+## Where this actually runs
+
+There is exactly **one** cloud host today, and **one** edge deployment. Nothing
+else exists — no fleet, no staging tier, no second region.
+
+| Role | Host | Notes |
+| --- | --- | --- |
+| Cloud control plane (this repo) | `43.108.53.126` | Gateway + console + PostgreSQL + Redis, via Compose |
+| Edge agent | `192.168.6.83:2222` | Local VMware VM, EC20 modems attached |
+| Base domain | `vodoge.com` | |
+| First tenant | `a.vodoge.com` | That tenant is us |
+
+The Compose project is isolated from the host's pre-existing PostgreSQL 16,
+ports `80`/`443`, and the existing `vodoge.com` Caddy route — see
+[`deploy/README.md`](deploy/README.md).
+
+`region` is a column on `tenants` and a field in the device certificate. It is
+**not** a second database or a second site. Docs that say "regional data plane"
+describe a split that could happen later, not current infrastructure.
+
 ## Current scope
 
 The first implementation slices establish the contracts that the edge and cloud

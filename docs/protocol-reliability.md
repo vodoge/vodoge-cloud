@@ -6,6 +6,13 @@ MessagePack over an edge-initiated WSS connection, but WebSocket delivery is
 not treated as durable delivery. PostgreSQL and the edge SQLite database are
 the respective sources of truth; Redis is only a wake-up and routing hint.
 
+> **On "regional data plane".** `region` is a column on `tenants` and a field in
+> the device certificate. It is not a second database or a second site: today
+> there is exactly **one** cloud host (`43.108.53.126`) running one PostgreSQL,
+> and **one** edge VM. The term marks where a regional split *could* happen
+> later; it does not describe current infrastructure. See
+> `deploy/README.md` for what is actually deployed.
+
 ## Terms and invariants
 
 | Term | Meaning |
