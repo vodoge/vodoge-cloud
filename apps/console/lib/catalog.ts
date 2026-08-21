@@ -75,8 +75,12 @@ async function getCatalog(
     cache: "no-store",
     signal: AbortSignal.timeout(2500),
   });
+  // 404 here is not "no data": these endpoints answer 200 with an empty list
+  // when a tenant has nothing. It means the gateway could not resolve the host
+  // to a tenant at all, and rendering that as an empty console hides a
+  // misconfiguration behind a page that looks like it worked.
   if (response.status === 404) {
-    return {};
+    throw new UnauthorizedError(`catalog ${path} could not resolve the tenant`);
   }
   // 401 and 403 are the session having expired or not belonging here. They are
   // not "no data": treating them as empty would show a signed-out operator a

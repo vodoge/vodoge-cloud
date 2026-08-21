@@ -114,3 +114,15 @@ test("a refused session is an error, not an empty list", async () => {
     );
   }
 });
+
+// These endpoints answer 200 with an empty list when a tenant has nothing, so
+// a 404 means the host did not resolve to a tenant. Rendering that as an empty
+// console hides a misconfiguration behind a page that looks like it worked.
+test("an unresolved tenant is an error, not an empty list", async () => {
+  const fetchImpl = (async () =>
+    new Response("unknown tenant", { status: 404 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => fetchDevices("a.vodoge.com", "tok", fetchImpl),
+    UnauthorizedError,
+  );
+});

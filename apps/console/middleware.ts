@@ -66,5 +66,12 @@ function rewriteUnknown(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // PWA assets are excluded, not merely made public. The browser fetches the
+  // manifest and service worker outside any page context, so gating them sends
+  // a redirect where a file is expected; the offline page in particular has to
+  // work when there is no session and no network. Skipping them here also
+  // avoids a tenant lookup — a gateway round trip — for every static asset.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|icon.svg|icon-maskable.svg).*)",
+  ],
 };
