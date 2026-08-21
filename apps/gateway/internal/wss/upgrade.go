@@ -2,6 +2,7 @@ package wss
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -54,7 +55,15 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	conn.SetReadLimit(MaxFrameBytes)
-	_ = server.ServeDevice(device, conn)
+	// A device session that ends on a rejected Resume used to close the socket
+	// with no trace at all, which made edge-side failures undiagnosable.
+	if err := server.ServeDevice(device, conn); err != nil {
+		slog.Warn("device session ended",
+			"tenant_id", device.TenantID,
+			"device_id", device.DeviceID,
+			"region", device.Region,
+			"error", err)
+	}
 }
 
 func acceptsSubprotocol(request *http.Request) bool {

@@ -66,6 +66,21 @@ def resolve(schema: dict, defs: dict) -> dict:
     return schema
 
 
+def resolve_wire(schema: dict, defs: dict) -> dict:
+    """Resolve to the schema that carries the wire type.
+
+    A nullable field is written `anyOf: [<ref>, {"type": "null"}]`, so the
+    x-vodoge-wire-type marker sits one level in. Looking only at the top level
+    silently drops the u64-decimal serializer and emits a bare JSON number.
+    """
+    resolved = resolve(schema, defs)
+    if "anyOf" in resolved:
+        non_null = [item for item in resolved["anyOf"] if item.get("type") != "null"]
+        if len(resolved["anyOf"]) == 2 and len(non_null) == 1:
+            return resolve_wire(non_null[0], defs)
+    return resolved
+
+
 def rust_type(schema: dict, defs: dict) -> str:
     if is_u64_decimal(schema):
         return "u64"
@@ -318,9 +333,7 @@ def emit_rust(schema: dict) -> str:
             if optional:
                 ty = f"Option<{ty}>"
             attrs = [f'rename = "{field}"']
-            resolved = spec
-            if "$ref" in spec:
-                resolved = defs[spec["$ref"].split("/")[-1]]
+            resolved = resolve_wire(spec, defs)
             if is_u64_decimal(spec) or is_u64_decimal(resolved):
                 if ty.startswith("Option<"):
                     attrs.append("default")
