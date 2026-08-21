@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
@@ -180,7 +182,7 @@ func TestCatalogRoutesAreTenantScoped(t *testing.T) {
 		t.Fatal("store tenant b")
 	}
 
-	proc := newProcess("", nil, tenants, nil, nil)
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
 	proc.catalog = &catalog.Memory{
 		Devices: map[string][]catalog.Device{
 			"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}},
@@ -233,6 +235,7 @@ func TestCatalogRoutesAreTenantScoped(t *testing.T) {
 	fwd := httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
 	fwd.Host = "127.0.0.1:18080"
 	fwd.Header.Set("X-Forwarded-Host", "a.vodoge.com")
+	authorize(fwd)
 	handler.ServeHTTP(forwarded, fwd)
 	if forwarded.Code != http.StatusOK {
 		t.Fatalf("forwarded host status = %d body=%s", forwarded.Code, forwarded.Body.String())
@@ -245,7 +248,7 @@ func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	tenants := directory.New(nil)
 	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
 	_ = tenants.Cache.Store(region.Entry{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"})
-	proc := newProcess("", nil, tenants, nil, nil)
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
 	proc.catalog = &catalog.Memory{
 		Devices: map[string][]catalog.Device{
 			"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}},
@@ -254,7 +257,7 @@ func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	}
 	handler := proc.handler()
 
-	req := httptest.NewRequest(http.MethodPut, "http://a.vodoge.com/v1/capability-matrix", strings.NewReader(`{"matrix":{"version":"hot-1","rule":[]}}`))
+	req := authorize(httptest.NewRequest(http.MethodPut, "http://a.vodoge.com/v1/capability-matrix", strings.NewReader(`{"matrix":{"version":"hot-1","rule":[]}}`)))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
@@ -285,7 +288,7 @@ func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	}
 
 	missing := httptest.NewRecorder()
-	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/capability-matrix", nil))
+	handler.ServeHTTP(missing, authorize(httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/capability-matrix", nil)))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("tenant b matrix status = %d", missing.Code)
 	}
@@ -297,10 +300,10 @@ func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
 	tenants := directory.New(nil)
 	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
 	_ = tenants.Cache.Store(region.Entry{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"})
-	proc := newProcess("", nil, tenants, nil, nil)
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
 	handler := proc.handler()
 
-	create := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/enrollment-codes", strings.NewReader(`{"ttl_hours":2}`))
+	create := authorize(httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/enrollment-codes", strings.NewReader(`{"ttl_hours":2}`)))
 	create.Header.Set("Content-Type", "application/json")
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, create)
@@ -317,7 +320,7 @@ func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
 		t.Fatalf("tenant b saw tenant a codes: %#v", other)
 	}
 
-	ruleReq := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/rules", strings.NewReader(`{"name":"otp","matcher":{"body":"PIN[:\\s]+(\\d{4})"},"enabled":true}`))
+	ruleReq := authorize(httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/rules", strings.NewReader(`{"name":"otp","matcher":{"body":"PIN[:\\s]+(\\d{4})"},"enabled":true}`)))
 	ruleReq.Header.Set("Content-Type", "application/json")
 	ruleRes := httptest.NewRecorder()
 	handler.ServeHTTP(ruleRes, ruleReq)
@@ -330,9 +333,59 @@ func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
 	}
 }
 
+// testSessions authenticates the fixtures without a database.
+//
+// A token is "session-<tenantID>", so a test can present the wrong tenant's
+// token on purpose and watch it be refused.
+type testSessions struct{}
+
+func (testSessions) Session(_ context.Context, fingerprint []byte) (auth.Session, bool, error) {
+	for _, tenantID := range []string{"t-a", "t-b"} {
+		if string(auth.Fingerprint("session-"+tenantID)) == string(fingerprint) {
+			return auth.Session{
+				UserID:    "user-" + tenantID,
+				TenantID:  tenantID,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, true, nil
+		}
+	}
+	return auth.Session{}, false, nil
+}
+
+func (testSessions) CreateSession(context.Context, []byte, auth.Session) error { return nil }
+func (testSessions) DeleteSession(context.Context, []byte) error               { return nil }
+
+// signedIn installs the fixture session store so tenant-scoped routes can be
+// reached at all.
+func signedIn(proc *process) *process {
+	proc.authSessions = testSessions{}
+	return proc
+}
+
+// bearerFor returns the fixture token for the tenant behind a host label.
+func bearerFor(host string) string {
+	label, _, found := strings.Cut(host, ".")
+	if !found {
+		return ""
+	}
+	return "Bearer session-t-" + label
+}
+
+// authorize attaches the fixture credential for the request's own host.
+func authorize(request *http.Request) *http.Request {
+	host := request.Host
+	if forwarded := request.Header.Get("X-Forwarded-Host"); forwarded != "" {
+		host = forwarded
+	}
+	if token := bearerFor(host); token != "" {
+		request.Header.Set("Authorization", token)
+	}
+	return request
+}
+
 func getJSON(t *testing.T, handler http.Handler, rawURL string) map[string]any {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, rawURL, nil)
+	request := authorize(httptest.NewRequest(http.MethodGet, rawURL, nil))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -361,3 +414,140 @@ func stringSlice(value any, field string) []string {
 	}
 	return out
 }
+
+// tenantFixture is two tenants with one device each, the shape every
+// cross-tenant check needs.
+func tenantFixture(t *testing.T) *process {
+	t.Helper()
+	tenants := directory.New(nil)
+	for _, entry := range []region.Entry{
+		{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"},
+		{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"},
+	} {
+		if !tenants.Cache.Store(entry) {
+			t.Fatalf("store tenant %s", entry.Slug)
+		}
+	}
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{
+			"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}},
+			"t-b": {{ID: "d-b", Name: "lab-b", State: "offline"}},
+		},
+	}
+	return proc
+}
+
+// Until this change the Host header alone decided the tenant, so anything that
+// could reach the port could read any tenant's devices.
+func TestTenantDataRequiresASession(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/devices", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s, want 401", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "d-a") {
+		t.Fatal("device data was served without a session")
+	}
+}
+
+// The other half of the boundary: a real session must not become a key to every
+// tenant just by changing which host it is presented to.
+func TestASessionCannotReadAnotherTenant(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	request := httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/devices", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s, want 403", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "d-b") {
+		t.Fatal("tenant b data was served to a tenant a session")
+	}
+}
+
+// A forged X-Forwarded-Host is the same attack through the header the console
+// legitimately sets.
+func TestAForwardedHostCannotRetargetASession(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	request := httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
+	request.Host = "127.0.0.1:18080"
+	request.Header.Set("X-Forwarded-Host", "b.vodoge.com")
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+}
+
+// An unknown subdomain stays unknown even for a caller holding a real session,
+// so a valid credential cannot be used to enumerate which tenants exist.
+func TestAnUnknownHostIsNotFoundEvenWithASession(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	request := httptest.NewRequest(http.MethodGet, "http://missing.vodoge.com/v1/devices", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
+	}
+}
+
+// A gateway started without a session store must refuse rather than quietly
+// fall back to trusting the Host header, which is what it used to do.
+func TestWithoutASessionStoreTenantDataIsRefused(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	proc.authSessions = nil
+	handler := proc.handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/devices", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "d-a") {
+		t.Fatal("device data was served with no way to authenticate")
+	}
+}
+
+// An expired session is refused the same way an unknown one is, so a leaked
+// cookie stops working on its own.
+func TestAnExpiredSessionIsRefused(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	proc.authSessions = expiredSessions{}
+	handler := proc.handler()
+	request := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/devices", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", response.Code)
+	}
+}
+
+type expiredSessions struct{}
+
+func (expiredSessions) Session(context.Context, []byte) (auth.Session, bool, error) {
+	return auth.Session{
+		UserID:    "user-t-a",
+		TenantID:  "t-a",
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}, true, nil
+}
+
+func (expiredSessions) CreateSession(context.Context, []byte, auth.Session) error { return nil }
+func (expiredSessions) DeleteSession(context.Context, []byte) error               { return nil }

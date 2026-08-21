@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchDevices, fetchMessages, fetchSessions, parseDevice, parseMessage } from "./catalog.ts";
+import {
+  fetchDevices,
+  fetchMessages,
+  fetchSessions,
+  parseDevice,
+  parseMessage,
+  UnauthorizedError,
+} from "./catalog.ts";
 
 test("parseDevice ignores malformed rows", () => {
   assert.equal(parseDevice(null), null);
@@ -71,9 +78,9 @@ test("catalog fetches send X-Forwarded-Host and stay tenant-scoped", async () =>
     });
   };
 
-  const devices = await fetchDevices("a.vodoge.com", fetchImpl);
-  const messages = await fetchMessages("a.vodoge.com", fetchImpl);
-  const sessions = await fetchSessions("a.vodoge.com", fetchImpl);
+  const devices = await fetchDevices("a.vodoge.com", "tok", fetchImpl);
+  const messages = await fetchMessages("a.vodoge.com", "tok", fetchImpl);
+  const sessions = await fetchSessions("a.vodoge.com", "tok", fetchImpl);
   assert.equal(devices[0]?.id, "d1");
   assert.equal(messages[0]?.body, "hello");
   assert.equal(sessions[0]?.peer, "10086");
@@ -81,4 +88,29 @@ test("catalog fetches send X-Forwarded-Host and stay tenant-scoped", async () =>
     calls.map((url) => url.split("/v1/")[1]),
     ["devices", "messages", "sessions"],
   );
+});
+
+test("catalog requests carry the session token", async () => {
+  const seen: Array<Record<string, string>> = [];
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    seen.push((init?.headers ?? {}) as Record<string, string>);
+    return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  await fetchDevices("a.vodoge.com", "tok-a", fetchImpl);
+  assert.equal(seen[0]?.authorization, "Bearer tok-a");
+  assert.equal(seen[0]?.["x-forwarded-host"], "a.vodoge.com");
+});
+
+// Treating a refused session as "no data" would show a signed-out operator an
+// empty console that looks like the real thing.
+test("a refused session is an error, not an empty list", async () => {
+  for (const status of [401, 403]) {
+    const fetchImpl = (async () =>
+      new Response("sign in required", { status })) as unknown as typeof fetch;
+    await assert.rejects(
+      () => fetchDevices("a.vodoge.com", undefined, fetchImpl),
+      UnauthorizedError,
+    );
+  }
 });

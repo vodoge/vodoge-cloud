@@ -1,19 +1,20 @@
 import { LiveReload } from "@/components/live-reload";
 import { SendSmsForm } from "@/components/send-sms";
 import { fetchDevices, fetchMessages, type MessageRow } from "@/lib/catalog";
-import { requestHost } from "@/lib/tenant-headers";
+import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 
 export default async function InboxPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
+  const token = await sessionToken();
   let messages: MessageRow[] = [];
   let devices: { id: string; name: string }[] = [];
   let loadError = false;
   try {
-    messages = await fetchMessages(host);
-    devices = (await fetchDevices(host)).map((device) => ({ id: device.id, name: device.name }));
+    messages = await fetchMessages(host, token);
+    devices = (await fetchDevices(host, token)).map((device) => ({ id: device.id, name: device.name }));
   } catch {
     loadError = true;
   }

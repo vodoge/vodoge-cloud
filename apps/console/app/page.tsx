@@ -1,16 +1,17 @@
 import { LiveReload } from "@/components/live-reload";
 import { fetchDevices, type DeviceRow } from "@/lib/catalog";
-import { requestHost } from "@/lib/tenant-headers";
+import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 
 export default async function DevicesPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
+  const token = await sessionToken();
   let devices: DeviceRow[] = [];
   let loadError = false;
   try {
-    devices = await fetchDevices(host);
+    devices = await fetchDevices(host, token);
   } catch {
     loadError = true;
   }

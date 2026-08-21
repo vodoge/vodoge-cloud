@@ -1,4 +1,5 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { SESSION_COOKIE } from "./session";
 import { TENANT_HEADER, isTenantRegion, type Tenant } from "./tenant";
 
 export { TENANT_HEADER };
@@ -27,4 +28,15 @@ export async function requestHost(): Promise<string> {
     return forwarded.split(",")[0]?.trim() ?? "";
   }
   return requestHeaders.get("host") ?? "";
+}
+
+/**
+ * Session token for the current request.
+ *
+ * Read here rather than in the catalog client so the token is visible at every
+ * call site, and so the client stays testable without a Next.js request scope.
+ */
+export async function sessionToken(): Promise<string | undefined> {
+  const store = await cookies();
+  return store.get(SESSION_COOKIE)?.value;
 }

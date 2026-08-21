@@ -61,14 +61,18 @@
   "audit.colAction": "动作",
   "audit.colTarget": "对象",
   "login.title": "登录",
-  "login.desc": "控制台登录入口（占位）。",
-  "login.username": "用户名",
+  "login.desc": "登录本租户控制台。",
+  "login.username": "邮箱",
   "login.password": "密码",
   "login.submit": "登录",
-  "login.stub": "账号登录尚未接入。此页不会提交凭证。",
+  "login.stub": "会话有效期 12 小时。在一个租户登录不会获得另一个租户的访问权。",
   "login.backToDevices": "返回设备列表",
   "apex.title": "不是租户站点",
   "apex.body": "vodoge.com 是父域，不是租户。请使用 {slug}.{domain}，例如 a.vodoge.com。",
   "notFound.title": "未找到租户",
-  "notFound.body": "该主机名没有对应的租户。未知子域不会回落到默认租户。"
+  "notFound.body": "该主机名没有对应的租户。未知子域不会回落到默认租户。",
+  "login.error": "邮箱或密码不正确。",
+  "login.unavailable": "登录服务不可用，请稍后再试。",
+  "login.working": "登录中…",
+  "nav.logout": "退出登录"
 }

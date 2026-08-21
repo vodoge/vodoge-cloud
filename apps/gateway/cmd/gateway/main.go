@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
@@ -69,6 +71,15 @@ func main() {
 		proc.audit = audit.SQL{DB: sqlStore.DB}
 		proc.rules = rules.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
+		authStore := auth.SQL{DB: sqlStore.DB}
+		proc.authSessions = authStore
+		proc.users = authStore
+		proc.hasher = auth.Bcrypt{}
+		// resolve_session already ignores expired rows, so this is housekeeping
+		// rather than a boundary; without it the table only ever grows.
+		auth.StartSessionPurge(context.Background(), authStore, time.Hour, func(err error) {
+			slog.Warn("session purge failed", "error", err)
+		})
 		lifecycle := commands.SQLLifecycle{DB: sqlStore.DB}
 		proc.session.Commands = commands.SQLPending{DB: sqlStore.DB}
 		proc.session.Receipts = lifecycle
@@ -153,6 +164,11 @@ type process struct {
 	audit   audit.Log
 	rules   rules.Store
 	codes   enroll.CodeStore
+	// authSessions is nil until a database is configured. Endpoints refuse
+	// rather than fall back to trusting the Host header.
+	authSessions auth.SessionStore
+	users        auth.UserStore
+	hasher       auth.PasswordHasher
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -195,6 +211,12 @@ func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
+	// Sign-in has no session yet, and tenant lookup is what the console uses to
+	// decide whether a subdomain exists at all. Both stay open; neither returns
+	// tenant data.
+	mux.HandleFunc("POST /v1/auth/login", process.login)
+	mux.HandleFunc("POST /v1/auth/logout", process.logout)
+	mux.HandleFunc("GET /v1/auth/session", process.currentSession)
 	mux.HandleFunc("GET /v1/tenant", process.tenants.ServeHost)
 	mux.Handle("GET /v1/tenants/{slug}", process.tenants)
 	if process.enroll != nil {
@@ -218,7 +240,93 @@ func (process *process) handler() http.Handler {
 	return securityHeaders(mux)
 }
 
-func (process *process) tenantFromRequest(request *http.Request) (region.Entry, bool) {
+// login exchanges a credential for a session token.
+//
+// The tenant comes from the Host, which scopes the attempt rather than granting
+// anything: the password still has to match a user inside that tenant.
+func (process *process) login(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.hostTenant(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	if process.users == nil || process.authSessions == nil || process.hasher == nil {
+		http.Error(writer, "authentication is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(request.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(writer, "invalid request", http.StatusBadRequest)
+		return
+	}
+	token, session, err := auth.SignIn(
+		request.Context(), process.users, process.authSessions, process.hasher,
+		entry.TenantID, body.Email, body.Password, time.Now(), auth.DefaultSessionTTL,
+	)
+	switch {
+	case errors.Is(err, auth.ErrBadCredentials), errors.Is(err, auth.ErrUserDisabled):
+		// One message for both. Which of the two it was tells an attacker
+		// whether the address is registered.
+		_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+			Actor:  strings.ToLower(strings.TrimSpace(body.Email)),
+			Action: "auth.login.failed",
+		})
+		http.Error(writer, "email or password is incorrect", http.StatusUnauthorized)
+		return
+	case err != nil:
+		slog.Warn("sign-in failed", "tenant_id", entry.TenantID, "error", err)
+		http.Error(writer, "authentication unavailable", http.StatusInternalServerError)
+		return
+	}
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  session.UserID,
+		Action: "auth.login",
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"token":      token,
+		"expires_at": session.ExpiresAt.UTC().Format(time.RFC3339),
+		"tenant_id":  session.TenantID,
+		"user_id":    session.UserID,
+	})
+}
+
+// logout drops the presented session. It does not require the session to be
+// valid: the caller wants it gone either way.
+func (process *process) logout(writer http.ResponseWriter, request *http.Request) {
+	if process.authSessions != nil {
+		if err := auth.SignOut(request.Context(), process.authSessions, request.Header.Get("Authorization")); err != nil {
+			slog.Warn("sign-out failed", "error", err)
+		}
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// currentSession lets the console check a cookie without fetching tenant data.
+func (process *process) currentSession(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"tenant_id": entry.TenantID,
+		"slug":      entry.Slug,
+		"region":    entry.Region,
+	})
+}
+
+// hostTenant resolves the tenant a request was addressed to.
+//
+// This grants nothing. It says which tenant the caller is *asking about*, and
+// the answer is only trustworthy once a session has been checked against it.
+func (process *process) hostTenant(request *http.Request) (region.Entry, bool) {
 	slug, ok := directory.SlugFromHost(request.Header.Get("X-Forwarded-Host"), process.tenants.BaseDomain)
 	if !ok {
 		slug, ok = directory.SlugFromHost(request.Host, process.tenants.BaseDomain)
@@ -233,10 +341,57 @@ func (process *process) tenantFromRequest(request *http.Request) (region.Entry, 
 	return entry, true
 }
 
-func (process *process) devices(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+// tenantFromRequest authenticates the caller and returns the tenant it may act
+// for, writing the failure response itself.
+//
+// Every tenant-scoped endpoint already called this name, so making this the
+// authenticated path closes them all at once and leaves no version of the
+// lookup that skips the check. The tenant returned is the session's, not the
+// host's: the host is only cross-checked, so a valid session for one tenant
+// cannot read another by changing a header.
+func (process *process) tenantFromRequest(
+	writer http.ResponseWriter,
+	request *http.Request,
+) (region.Entry, bool) {
+	entry, ok := process.hostTenant(request)
 	if !ok {
 		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return region.Entry{}, false
+	}
+	if process.authSessions == nil {
+		// Refuse rather than fall back to host-only trust. A gateway started
+		// without a session store must not serve tenant data at all.
+		http.Error(writer, "authentication is unavailable", http.StatusServiceUnavailable)
+		return region.Entry{}, false
+	}
+	session, err := auth.Authenticate(
+		request.Context(),
+		process.authSessions,
+		request.Header.Get("Authorization"),
+		entry.TenantID,
+		time.Now(),
+	)
+	switch {
+	case errors.Is(err, auth.ErrNoCredential), errors.Is(err, auth.ErrInvalidSession):
+		http.Error(writer, "sign in required", http.StatusUnauthorized)
+		return region.Entry{}, false
+	case errors.Is(err, auth.ErrTenantMismatch):
+		// Deliberately not "not found": the caller proved an identity, it just
+		// does not belong here, and hiding that makes the failure unreadable.
+		http.Error(writer, "session belongs to another tenant", http.StatusForbidden)
+		return region.Entry{}, false
+	case err != nil:
+		slog.Warn("session lookup failed", "tenant_id", entry.TenantID, "error", err)
+		http.Error(writer, "authentication unavailable", http.StatusInternalServerError)
+		return region.Entry{}, false
+	}
+	_ = session
+	return entry, true
+}
+
+func (process *process) devices(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
 		return
 	}
 	list, err := process.catalog.ListDevices(request.Context(), entry.TenantID)
@@ -249,9 +404,8 @@ func (process *process) devices(writer http.ResponseWriter, request *http.Reques
 }
 
 func (process *process) messages(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	list, err := process.catalog.ListMessages(request.Context(), entry.TenantID)
@@ -264,9 +418,8 @@ func (process *process) messages(writer http.ResponseWriter, request *http.Reque
 }
 
 func (process *process) sessions(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	list, err := process.catalog.ListSessions(request.Context(), entry.TenantID)
@@ -279,9 +432,8 @@ func (process *process) sessions(writer http.ResponseWriter, request *http.Reque
 }
 
 func (process *process) getMatrix(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	overlay, found, err := process.matrix.Get(request.Context(), entry.TenantID)
@@ -298,9 +450,8 @@ func (process *process) getMatrix(writer http.ResponseWriter, request *http.Requ
 }
 
 func (process *process) putMatrix(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	var body struct {
@@ -362,9 +513,8 @@ func (process *process) putMatrix(writer http.ResponseWriter, request *http.Requ
 }
 
 func (process *process) enqueueCommand(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	var body struct {
@@ -430,9 +580,8 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 }
 
 func (process *process) listAudit(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	events, err := process.audit.List(request.Context(), entry.TenantID)
@@ -445,9 +594,8 @@ func (process *process) listAudit(writer http.ResponseWriter, request *http.Requ
 }
 
 func (process *process) listRules(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	list, err := process.rules.List(request.Context(), entry.TenantID)
@@ -460,9 +608,8 @@ func (process *process) listRules(writer http.ResponseWriter, request *http.Requ
 }
 
 func (process *process) createRule(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	var body struct {
@@ -502,9 +649,8 @@ func (process *process) createRule(writer http.ResponseWriter, request *http.Req
 }
 
 func (process *process) listEnrollmentCodes(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	list, err := process.codes.List(request.Context(), entry.TenantID)
@@ -517,9 +663,8 @@ func (process *process) listEnrollmentCodes(writer http.ResponseWriter, request 
 }
 
 func (process *process) createEnrollmentCode(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(request)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	var body struct {

@@ -1,16 +1,17 @@
 import { LiveReload } from "@/components/live-reload";
 import { fetchSessions, type SessionRow } from "@/lib/catalog";
-import { requestHost } from "@/lib/tenant-headers";
+import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 
 export default async function SessionsPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
+  const token = await sessionToken();
   let sessions: SessionRow[] = [];
   let loadError = false;
   try {
-    sessions = await fetchSessions(host);
+    sessions = await fetchSessions(host, token);
   } catch {
     loadError = true;
   }

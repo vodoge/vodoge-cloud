@@ -1,4 +1,8 @@
+import { bearerHeader } from "./session.ts";
 import { gatewayBaseUrl } from "./tenant.ts";
+
+/** The gateway refused the session rather than having nothing to show. */
+export class UnauthorizedError extends Error {}
 
 export type DeviceRow = {
   id: string;
@@ -26,37 +30,59 @@ export type SessionRow = {
   deviceId: string;
 };
 
-export async function fetchDevices(host: string, fetchImpl: typeof fetch = fetch): Promise<DeviceRow[]> {
-  const body = await getCatalog(host, "/v1/devices", fetchImpl);
+export async function fetchDevices(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<DeviceRow[]> {
+  const body = await getCatalog(host, "/v1/devices", token, fetchImpl);
   return arrayOf(body.devices).map(parseDevice).filter((row): row is DeviceRow => row !== null);
 }
 
-export async function fetchMessages(host: string, fetchImpl: typeof fetch = fetch): Promise<MessageRow[]> {
-  const body = await getCatalog(host, "/v1/messages", fetchImpl);
+export async function fetchMessages(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<MessageRow[]> {
+  const body = await getCatalog(host, "/v1/messages", token, fetchImpl);
   return arrayOf(body.messages).map(parseMessage).filter((row): row is MessageRow => row !== null);
 }
 
-export async function fetchSessions(host: string, fetchImpl: typeof fetch = fetch): Promise<SessionRow[]> {
-  const body = await getCatalog(host, "/v1/sessions", fetchImpl);
+export async function fetchSessions(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SessionRow[]> {
+  const body = await getCatalog(host, "/v1/sessions", token, fetchImpl);
   return arrayOf(body.sessions).map(parseSession).filter((row): row is SessionRow => row !== null);
 }
 
 async function getCatalog(
   host: string,
   path: string,
+  token: string | undefined,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
   const url = `${gatewayBaseUrl()}${path}`;
   const response = await fetchImpl(url, {
     headers: {
       accept: "application/json",
+      // The gateway takes the tenant from the session and only cross-checks
+      // this host, so the header alone no longer opens anything.
       "x-forwarded-host": host,
+      ...bearerHeader(token),
     },
     cache: "no-store",
     signal: AbortSignal.timeout(2500),
   });
   if (response.status === 404) {
     return {};
+  }
+  // 401 and 403 are the session having expired or not belonging here. They are
+  // not "no data": treating them as empty would show a signed-out operator a
+  // convincing but wrong empty console.
+  if (response.status === 401 || response.status === 403) {
+    throw new UnauthorizedError(`catalog ${path} rejected the session`);
   }
   if (!response.ok) {
     throw new Error(`catalog ${path} failed: ${response.status}`);

@@ -61,14 +61,18 @@
   "audit.colAction": "Action",
   "audit.colTarget": "Target",
   "login.title": "Log in",
-  "login.desc": "Console sign-in (stub).",
-  "login.username": "Username",
+  "login.desc": "Sign in to the console for this tenant.",
+  "login.username": "Email",
   "login.password": "Password",
   "login.submit": "Log in",
-  "login.stub": "Account login is not wired yet. This page does not submit credentials.",
+  "login.stub": "Sessions last 12 hours. Signing in on one tenant does not grant access to another.",
   "login.backToDevices": "Back to devices",
   "apex.title": "Not a tenant site",
   "apex.body": "vodoge.com is the parent domain, not a tenant. Use {slug}.{domain}, for example a.vodoge.com.",
   "notFound.title": "Tenant not found",
-  "notFound.body": "This hostname does not map to a tenant. Unknown subdomains never fall back to a default tenant."
+  "notFound.body": "This hostname does not map to a tenant. Unknown subdomains never fall back to a default tenant.",
+  "login.error": "Email or password is incorrect.",
+  "login.unavailable": "Sign-in is unavailable. Try again shortly.",
+  "login.working": "Signing in…",
+  "nav.logout": "Log out"
 }

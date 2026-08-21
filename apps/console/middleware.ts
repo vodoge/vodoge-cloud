@@ -5,6 +5,7 @@ import {
   decideTenantRoute,
   requestHost,
 } from "./lib/host";
+import { isPublicPath, loginRedirect, SESSION_COOKIE } from "./lib/session";
 import { TENANT_HEADER, getSharedDirectory } from "./lib/tenant";
 
 export async function middleware(request: NextRequest) {
@@ -34,6 +35,19 @@ export async function middleware(request: NextRequest) {
 
   if (decideTenantRoute(classification, tenant) !== "tenant" || !tenant) {
     return rewriteUnknown(request);
+  }
+
+  // The gateway is what decides whether a session is valid. This only keeps a
+  // signed-out visitor from loading a page that would fail every request on it,
+  // so a missing cookie is a redirect rather than a decision about access.
+  const pathname = request.nextUrl.pathname;
+  if (!isPublicPath(pathname) && !request.cookies.get(SESSION_COOKIE)?.value) {
+    const url = request.nextUrl.clone();
+    const target = loginRedirect(pathname);
+    const [path, query] = target.split("?");
+    url.pathname = path ?? "/login";
+    url.search = query ? `?${query}` : "";
+    return NextResponse.redirect(url);
   }
 
   const headers = new Headers(request.headers);
