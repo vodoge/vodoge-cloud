@@ -50,19 +50,26 @@ type ReceiptHandler interface {
 	RecordReceipt(tenantID string, receipt dispatch.Receipt, now time.Time) error
 }
 
+// ResultHandler records a sequenced CommandResult from the edge.
+type ResultHandler interface {
+	RecordResult(tenantID string, result dispatch.CommandResult) error
+}
+
 // Server holds live connections and the uplink journal.
 //
 // Wakeups is optional. Redis is a routing hint only; a nil or failing publisher
 // must not prevent Accept or UplinkAck.
 type Server struct {
-	Region   string
-	Hub      *session.Hub
-	Journal  ingress.Store
-	Commands PendingCommands
-	Receipts ReceiptHandler
-	Wakeups  wakeup.Publisher
-	Events   *events.Bus
-	Now      func() time.Time
+	Region      string
+	Hub         *session.Hub
+	Journal     ingress.Store
+	Commands    PendingCommands
+	Receipts    ReceiptHandler
+	Results     ResultHandler
+	AfterInsert func(tenantID, deviceID, kind string, payload []byte)
+	Wakeups     wakeup.Publisher
+	Events      *events.Bus
+	Now         func() time.Time
 }
 
 func (server *Server) now() time.Time {
@@ -220,7 +227,26 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			}, server.now()); err != nil {
 				return err
 			}
+			if envelope.Kind == contract.MessageKindCommandResult && server.Results != nil {
+				var payload contract.CommandResultPayload
+				if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+					return fmt.Errorf("command result: %w", err)
+				}
+				if err := server.Results.RecordResult(device.TenantID, dispatch.CommandResult{
+					CommandID:   payload.CmdID,
+					Status:      dispatch.ResultStatus(payload.Status),
+					CompletedAt: time.UnixMilli(payload.CompletedAt),
+					Attempts:    int(payload.Attempts),
+					ReasonCode:  stringValue(payload.ReasonCode),
+					Reason:      stringValue(payload.Reason),
+				}); err != nil {
+					return err
+				}
+			}
 			if result.Status == ingress.StatusInserted {
+				if server.AfterInsert != nil {
+					server.AfterInsert(device.TenantID, device.DeviceID, string(envelope.Kind), envelope.Payload)
+				}
 				server.hintEvent(wakeup.Event{
 					TenantID:   device.TenantID,
 					DeviceID:   device.DeviceID,
@@ -343,6 +369,16 @@ func toContractRanges(ranges []ingress.Range) []contract.SequenceRange {
 		})
 	}
 	return out
+}
+
+// stringValue 解引用可空字符串。名字必须体现「取值」——
+// 它曾叫 stringPtr，与测试里「取地址」的同名 helper 语义相反且冲突，
+// 导致整个包的测试无法编译。
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func kindEnvelopeID(kind contract.MessageKind, now time.Time) string {
