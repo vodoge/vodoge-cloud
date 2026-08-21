@@ -68,6 +68,12 @@ func main() {
 		proc.queue = commands.SQL{DB: sqlStore.DB}
 		proc.audit = audit.SQL{DB: sqlStore.DB}
 		proc.rules = rules.SQL{DB: sqlStore.DB}
+		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
+		lifecycle := commands.SQLLifecycle{DB: sqlStore.DB}
+		proc.session.Commands = commands.SQLPending{DB: sqlStore.DB}
+		proc.session.Receipts = lifecycle
+		proc.session.Results = lifecycle
+		proc.session.AfterInsert = proc.afterInsert
 	}
 
 	handler := proc.handler()
@@ -146,6 +152,7 @@ type process struct {
 	queue   commands.Queue
 	audit   audit.Log
 	rules   rules.Store
+	codes   enroll.CodeStore
 }
 
 func newProcess(region string, store ingress.Store, tenants *directory.Resolver, wakeups wakeup.Publisher, enrollment *enroll.Handler) *process {
@@ -176,6 +183,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
+		codes:   &enroll.MemoryCodes{},
 	}
 }
 
@@ -204,6 +212,9 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("POST /v1/commands", process.enqueueCommand)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
+	mux.HandleFunc("POST /v1/rules", process.createRule)
+	mux.HandleFunc("GET /v1/enrollment-codes", process.listEnrollmentCodes)
+	mux.HandleFunc("POST /v1/enrollment-codes", process.createEnrollmentCode)
 	return securityHeaders(mux)
 }
 
@@ -374,24 +385,33 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 	if kind == "" {
 		kind = "send_sms"
 	}
-	payload, err := json.Marshal(map[string]any{
-		"kind": "SendSms",
-		"to":   body.To,
-		"body": body.Text,
-	})
-	if err != nil {
-		http.Error(writer, "invalid command", http.StatusBadRequest)
+	var payload []byte
+	var err error
+	switch kind {
+	case "send_sms":
+		payload, err = json.Marshal(map[string]any{
+			"kind": "SendSms",
+			"to":   body.To,
+			"body": body.Text,
+		})
+	case "restart_modem":
+		payload, err = json.Marshal(map[string]any{
+			"kind":       "RestartModem",
+			"modem_imei": body.To,
+		})
+	default:
+		http.Error(writer, "unsupported command kind", http.StatusBadRequest)
 		return
 	}
-	if kind != "send_sms" {
-		http.Error(writer, "unsupported command kind", http.StatusBadRequest)
+	if err != nil {
+		http.Error(writer, "invalid command", http.StatusBadRequest)
 		return
 	}
 	id, err := process.queue.Enqueue(request.Context(), commands.Item{
 		TenantID:       entry.TenantID,
 		DeviceID:       body.DeviceID,
-		Kind:           "send_sms",
-		IdempotencyKey: "sms:" + body.DeviceID + ":" + body.To + ":" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		Kind:           kind,
+		IdempotencyKey: kind + ":" + body.DeviceID + ":" + fmt.Sprintf("%d", time.Now().UnixNano()),
 		Payload:        payload,
 		ExpiresAt:      time.Now().Add(10 * time.Minute),
 	})
@@ -401,7 +421,7 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 	}
 	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
 		Actor:  "console",
-		Action: "send_sms",
+		Action: kind,
 		Target: body.DeviceID,
 		Detail: payload,
 	})
@@ -437,6 +457,124 @@ func (process *process) listRules(writer http.ResponseWriter, request *http.Requ
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"rules": list})
+}
+
+func (process *process) createRule(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Name    string          `json:"name"`
+		Matcher json.RawMessage `json:"matcher"`
+		Action  json.RawMessage `json:"action"`
+		Enabled *bool           `json:"enabled"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		http.Error(writer, "invalid rule", http.StatusBadRequest)
+		return
+	}
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	rule, err := process.rules.Create(request.Context(), entry.TenantID, rules.Rule{
+		Name:    body.Name,
+		Matcher: body.Matcher,
+		Action:  body.Action,
+		Enabled: enabled,
+	})
+	if err != nil {
+		http.Error(writer, "rules unavailable", http.StatusInternalServerError)
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"id": rule.ID, "name": rule.Name})
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "create_rule",
+		Target: rule.ID,
+		Detail: detail,
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(writer).Encode(rule)
+}
+
+func (process *process) listEnrollmentCodes(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	list, err := process.codes.List(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "enrollment unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"codes": list})
+}
+
+func (process *process) createEnrollmentCode(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(request)
+	if !ok {
+		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		TTLHours int `json:"ttl_hours"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&body)
+	ttl := time.Duration(body.TTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	code, err := process.codes.Create(request.Context(), entry.TenantID, ttl)
+	if err != nil {
+		http.Error(writer, "enrollment unavailable", http.StatusInternalServerError)
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"code": code.Code, "expires_at": code.ExpiresAt})
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "create_enrollment_code",
+		Target: code.ID,
+		Detail: detail,
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(writer).Encode(code)
+}
+
+func (process *process) afterInsert(tenantID, _deviceID, kind string, payload []byte) {
+	if kind != "SmsReceived" {
+		return
+	}
+	var sms struct {
+		Peer string `json:"peer"`
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(payload, &sms); err != nil || strings.TrimSpace(sms.Body) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	list, err := process.rules.List(ctx, tenantID)
+	if err != nil {
+		return
+	}
+	code, ok := rules.ExtractWith(sms.Body, rules.PatternsFrom(list))
+	if !ok {
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"peer": sms.Peer, "code": code})
+	_ = process.audit.Append(ctx, tenantID, audit.Event{
+		Actor:  "gateway",
+		Action: "otp_extracted",
+		Target: sms.Peer,
+		Detail: detail,
+	})
 }
 
 func (process *process) sse(writer http.ResponseWriter, request *http.Request) {

@@ -291,6 +291,45 @@ func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	}
 }
 
+func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"})
+	proc := newProcess("", nil, tenants, nil, nil)
+	handler := proc.handler()
+
+	create := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/enrollment-codes", strings.NewReader(`{"ttl_hours":2}`))
+	create.Header.Set("Content-Type", "application/json")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create code status = %d body=%s", created.Code, created.Body.String())
+	}
+
+	listed := getJSON(t, handler, "http://a.vodoge.com/v1/enrollment-codes")
+	if got := stringSlice(listed["codes"], "code"); len(got) != 1 {
+		t.Fatalf("tenant a codes = %#v", listed)
+	}
+	other := getJSON(t, handler, "http://b.vodoge.com/v1/enrollment-codes")
+	if got := stringSlice(other["codes"], "code"); len(got) != 0 {
+		t.Fatalf("tenant b saw tenant a codes: %#v", other)
+	}
+
+	ruleReq := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/rules", strings.NewReader(`{"name":"otp","matcher":{"body":"PIN[:\\s]+(\\d{4})"},"enabled":true}`))
+	ruleReq.Header.Set("Content-Type", "application/json")
+	ruleRes := httptest.NewRecorder()
+	handler.ServeHTTP(ruleRes, ruleReq)
+	if ruleRes.Code != http.StatusCreated {
+		t.Fatalf("create rule status = %d body=%s", ruleRes.Code, ruleRes.Body.String())
+	}
+	rulesBody := getJSON(t, handler, "http://a.vodoge.com/v1/rules")
+	if got := stringSlice(rulesBody["rules"], "name"); len(got) != 1 || got[0] != "otp" {
+		t.Fatalf("tenant a rules = %#v", rulesBody)
+	}
+}
+
 func getJSON(t *testing.T, handler http.Handler, rawURL string) map[string]any {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, rawURL, nil)

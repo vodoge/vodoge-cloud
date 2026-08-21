@@ -2,6 +2,7 @@
 package rules
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -35,4 +36,26 @@ func ExtractWith(body string, extra []*regexp.Regexp) (string, bool) {
 		return match[1], true
 	}
 	return "", false
+}
+
+// PatternsFrom compiles enabled tenant matcher.body regular expressions.
+func PatternsFrom(rules []Rule) []*regexp.Regexp {
+	var extras []*regexp.Regexp
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		var matcher struct {
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(rule.Matcher, &matcher); err != nil || strings.TrimSpace(matcher.Body) == "" {
+			continue
+		}
+		pattern, err := regexp.Compile(matcher.Body)
+		if err != nil {
+			continue
+		}
+		extras = append(extras, pattern)
+	}
+	return extras
 }
