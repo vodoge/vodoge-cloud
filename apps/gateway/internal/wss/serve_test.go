@@ -505,3 +505,67 @@ func advancingClock(start time.Time) func() time.Time {
 
 // seqPointer is the sequenced-envelope helper the other tests inline.
 func seqPointer(value string) *string { return &value }
+
+// A CommandDeliver's payload has to reach the device as an object.
+//
+// `type Command json.RawMessage` is a defined type and does not inherit
+// RawMessage's MarshalJSON, so encoding/json fell back to the []byte rule and
+// sent every command as a base64 string. Every device rejected every command
+// it was ever given, and since nothing read that log the commands just stayed
+// queued.
+func TestACommandReachesTheDeviceAsAnObject(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{TenantID: "t", DeviceID: "dev-1", Region: "cn"}
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	conn := newMemoryConn(mustEnvelope(t, contract.Envelope{
+		V: contract.ProtocolVersion, Kind: contract.MessageKindResume,
+		ID: "11111111-1111-4111-8111-111111111111", Ts: now.UnixMilli(),
+		DeviceID: device.DeviceID,
+		Payload: mustJSON(t, contract.ResumePayload{
+			ConnectionID: "conn-1", LastAssignedSeq: "0", LastAckedSeq: "0",
+			PendingGapIds: []string{}, CapabilityMatrixVersion: "1",
+		}),
+	}))
+	server := &Server{
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		Commands: staticPending{items: []dispatch.PendingCommand{{
+			Attempt: 1,
+			Command: dispatch.Command{
+				TenantID: device.TenantID, ID: "cmd-1", DeviceID: device.DeviceID,
+				Kind:     "run_at_command",
+				Payload:  []byte(`{"kind":"RunAtCommand","modem_imei":"867018069509705","command":"AT+CSQ"}`),
+				IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+			},
+		}}},
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v", err)
+	}
+
+	var delivered []byte
+	for i := 0; i < conn.nwrites(); i++ {
+		if decodeWritten(t, conn.written(i)).Kind == contract.MessageKindCommandDeliver {
+			delivered = conn.written(i)
+		}
+	}
+	if delivered == nil {
+		t.Fatal("no command was delivered")
+	}
+
+	// The command must be a nested object. A base64 string here is what the
+	// devices were actually receiving.
+	var frame struct {
+		Payload struct {
+			Command map[string]any `json:"command"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(delivered, &frame); err != nil {
+		t.Fatalf("the command did not arrive as an object: %v\nframe: %s", err, delivered)
+	}
+	if frame.Payload.Command["kind"] != "RunAtCommand" {
+		t.Fatalf("command = %#v, want the kind preserved", frame.Payload.Command)
+	}
+}

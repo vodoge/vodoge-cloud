@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/tenant"
 )
 
@@ -160,12 +162,30 @@ func parseDecimal(raw string) (uint64, error) {
 	return value, nil
 }
 
+// ErrMalformed marks a record this database can never store, however many
+// times it is offered — a field that does not fit its column's type, or a
+// constraint the value violates by construction.
+//
+// It exists so the uplink can tell "try again" from "this will never work".
+// Treating the second as the first is how one bad envelope from one device
+// becomes a permanent reconnect loop: the session dies, the edge replays the
+// same record, and nothing else that device has to say ever gets through.
+var ErrMalformed = errors.New("record cannot be stored")
+
 func mapSQLError(err error) error {
 	if err == nil {
 		return nil
 	}
 	if strings.Contains(err.Error(), "sequence conflict") {
 		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	// PostgreSQL class 22 is data exception and class 23 is integrity
+	// constraint violation. Both mean the value is wrong, not that the
+	// database is unwell, and no amount of retrying changes either.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) &&
+		(strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23")) {
+		return fmt.Errorf("%w: %v", ErrMalformed, err)
 	}
 	return err
 }

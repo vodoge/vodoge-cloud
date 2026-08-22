@@ -19,6 +19,7 @@ const (
 	CommandsTotal    = "vodoge_commands_enqueued_total"
 	ViolationsTotal  = "vodoge_contract_violations_total"
 	RateLimitedTotal = "vodoge_requests_rate_limited_total"
+	IngressRejected  = "vodoge_ingress_rejected_total"
 )
 
 // Declare registers every metric this process reports.
@@ -29,6 +30,7 @@ func Declare(registry *Registry) {
 	registry.Count(CommandsTotal, "Commands enqueued, by kind.")
 	registry.Count(ViolationsTotal, "Payloads that violated the contract, by kind.")
 	registry.Count(RateLimitedTotal, "Requests refused by a rate limit, by route.")
+	registry.Count(IngressRejected, "Uplink records dropped as unstorable, by kind.")
 	registry.Gauge(SessionsActive, "Device sessions currently connected.")
 }
 

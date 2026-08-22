@@ -551,7 +551,15 @@ def emit_go(schema: dict) -> str:
         lines.append("")
 
     lines += [
-        "type Command json.RawMessage",
+        "// Command is the payload of a CommandDeliver, passed through untouched.",
+        "//",
+        "// An alias, not a defined type. `type Command json.RawMessage` does not",
+        "// inherit RawMessage's MarshalJSON, so encoding/json fell back to the",
+        "// []byte rule and emitted the command as a base64 string. Every device",
+        "// rejected every command it was ever sent with \"expected internally",
+        "// tagged enum Command\", and since nothing read that log the commands",
+        "// simply stayed queued.",
+        "type Command = json.RawMessage",
         "",
         "// FieldConstraint is one enum-constrained field inside a payload.",
         "//",

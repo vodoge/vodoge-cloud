@@ -295,6 +295,39 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 				Kind:       string(envelope.Kind),
 				Payload:    append([]byte(nil), envelope.Payload...),
 			})
+			// A record the database can never store is acknowledged and
+			// dropped rather than ending the session.
+			//
+			// Ending it means the device reconnects, replays the same record,
+			// and dies again — a permanent loop in which nothing else that
+			// device has to say gets through either. An edge sending a
+			// non-UUID envelope id did exactly that, every six seconds, and
+			// the only symptom anyone would see is a device that looks
+			// perpetually offline.
+			//
+			// Losing one structurally invalid record is the smaller harm, and
+			// it is counted and logged so it is not silent.
+			if errors.Is(err, ingress.ErrMalformed) {
+				if server.Metrics != nil {
+					server.Metrics.Add("vodoge_ingress_rejected_total", 1,
+						"kind", string(envelope.Kind))
+				}
+				slog.Warn("dropping a record this database cannot store",
+					"tenant_id", device.TenantID, "device_id", device.DeviceID,
+					"kind", string(envelope.Kind), "envelope_id", envelope.ID,
+					"seq", seq, "error", err)
+				if err := writeEnvelope(conn, device.DeviceID, contract.MessageKindUplinkAck,
+					contract.UplinkAckPayload{
+						ConnectionID:     connectionID,
+						CommittedThrough: formatSeq(seq),
+						MissingRanges:    []contract.SequenceRange{},
+						MoreMissing:      false,
+						MaxInFlight:      32,
+					}, server.now()); err != nil {
+					return err
+				}
+				continue
+			}
 			if err != nil {
 				return err
 			}
