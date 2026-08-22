@@ -14,12 +14,47 @@ import {
 test("parseDevice ignores malformed rows", () => {
   assert.equal(parseDevice(null), null);
   assert.equal(parseDevice({ id: "d1" }), null);
+  // A device that has never resumed reports no build and no backlog. Null
+  // rather than a zero or an empty string: "not reported" and "on version
+  // nothing, zero queued" are different claims, and only one of them is true.
   assert.deepEqual(parseDevice({ id: "d1", name: "lab", state: "online", last_seen: 12 }), {
     id: "d1",
     name: "lab",
     state: "online",
     lastSeen: 12,
+    edgeVersion: null,
+    matrixVersion: null,
+    queueRecords: null,
+    queueBytes: null,
+    resumedAt: null,
   });
+
+  assert.deepEqual(
+    parseDevice({
+      id: "d1",
+      name: "lab",
+      state: "online",
+      last_seen: 12,
+      edge_version: "0.1.0",
+      matrix_version: "2026-08-20",
+      queue_records: 0,
+      queue_bytes: 0,
+      resumed_at: 99,
+    }),
+    {
+      id: "d1",
+      name: "lab",
+      state: "online",
+      lastSeen: 12,
+      edgeVersion: "0.1.0",
+      matrixVersion: "2026-08-20",
+      // A drained queue is zero, and must survive as zero rather than
+      // becoming null on the way through.
+      queueRecords: 0,
+      queueBytes: 0,
+      resumedAt: 99,
+    },
+  );
 });
 
 test("parseMessage requires the catalog fields", () => {

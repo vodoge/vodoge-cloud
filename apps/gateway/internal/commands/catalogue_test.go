@@ -116,6 +116,10 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		request.Command = "AT+CSQ"
 		request.Code = "*101#"
 		request.TargetICCID = "89852351225042214201"
+		request.Version = "0.2.0"
+		request.URL = "https://releases.example.com/vodoge-edge"
+		request.SHA256 = strings.Repeat("a", 64)
+		request.Signature = strings.Repeat("s", 32)
 
 		_, payload, err := BuildPayload(request)
 		if err != nil {
@@ -156,6 +160,8 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	readOnly := map[string]bool{"modem_report": true, "list_esim_profiles": true}
 	// rotate_ip drops the data session, so it belongs with the disruptive
 	// actions even though it reads as a small thing.
+	// rotate_ip drops the data session, so it belongs with the disruptive
+	// actions even though it reads as a small thing.
 	for _, kind := range Kinds() {
 		spec, _ := Lookup(kind)
 		if readOnly[kind] && spec.Mutating {
@@ -164,5 +170,41 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 		if !readOnly[kind] && !spec.Mutating {
 			t.Fatalf("%s changes the device but is not marked mutating", kind)
 		}
+	}
+}
+
+
+// A self-update points a fleet at a binary it will execute. Every field is
+// checked, because the failure mode is every device installing the wrong
+// thing at once.
+func TestSelfUpdateRefusesAnythingUnverifiable(t *testing.T) {
+	t.Parallel()
+
+	good := Request{
+		DeviceID: "d", Kind: "self_update", Version: "0.2.0",
+		URL:       "https://releases.example.com/vodoge-edge",
+		SHA256:    strings.Repeat("a", 64),
+		Signature: strings.Repeat("s", 32),
+	}
+	if _, _, err := BuildPayload(good); err != nil {
+		t.Fatalf("a complete request was refused: %v", err)
+	}
+
+	cases := map[string]func(*Request){
+		"no version":       func(r *Request) { r.Version = "" },
+		"plain http":       func(r *Request) { r.URL = "http://releases.example.com/x" },
+		"digest too short": func(r *Request) { r.SHA256 = "abc" },
+		"digest not hex":   func(r *Request) { r.SHA256 = strings.Repeat("z", 64) },
+		"no signature":     func(r *Request) { r.Signature = "" },
+	}
+	for name, break_ := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			request := good
+			break_(&request)
+			if _, _, err := BuildPayload(request); err == nil {
+				t.Fatal("expected a rejection")
+			}
+		})
 	}
 }

@@ -100,6 +100,7 @@ func main() {
 		// shows are different concerns that happen to share one event.
 		proc.session.Results = settlingResults{inner: lifecycle, inbox: proc.inbox}
 		proc.session.AfterInsert = proc.afterInsert
+		proc.session.ResumeReport = proc.recordResume
 	}
 
 	handler := proc.handler()
@@ -913,6 +914,22 @@ func (handler settlingResults) RecordResult(
 			"tenant_id", tenantID, "command_id", result.CommandID, "error", err)
 	}
 	return nil
+}
+
+// recordResume stores what a device said about itself when it connected.
+//
+// Best effort and off the connection's critical path in spirit: a device that
+// reconnects must not be refused because its version could not be written
+// down.
+func (process *process) recordResume(tenantID, deviceID string, report wss.DeviceReport) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := process.catalog.RecordResume(ctx, tenantID, deviceID,
+		report.EdgeVersion, report.MatrixVersion,
+		report.QueueRecords, report.QueueBytes); err != nil {
+		slog.Warn("device resume not recorded",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+	}
 }
 
 // tenantKey limits by tenant, falling back to the client address when the

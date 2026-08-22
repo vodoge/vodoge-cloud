@@ -74,6 +74,19 @@ export default async function DevicesPage() {
                         label={t(`state.${device.state}`, locale)}
                       />
                     </td>
+                    <td className="mono faint">{device.edgeVersion ?? "—"}</td>
+                    <td className="mono">
+                      {/* A backlog is the number worth seeing at a glance:
+                          a device that is online and behind looks healthy
+                          everywhere else. */}
+                      {device.queueRecords === null ? (
+                        "—"
+                      ) : device.queueRecords > 0 ? (
+                        <span className="badge badge-warn">{device.queueRecords}</span>
+                      ) : (
+                        <span className="faint">0</span>
+                      )}
+                    </td>
                     <td className="mono faint">
                       {device.lastSeen
                         ? new Date(device.lastSeen).toISOString().replace("T", " ").slice(0, 19)

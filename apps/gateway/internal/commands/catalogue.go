@@ -60,6 +60,12 @@ type Request struct {
 
 	// SwitchEsimProfile
 	TargetICCID string `json:"target_iccid"`
+
+	// SelfUpdate
+	Version   string `json:"version"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
+	Signature string `json:"signature"`
 }
 
 // ErrInvalid is returned for a request the caller can fix.
@@ -71,7 +77,8 @@ var (
 	imeiPattern  = regexp.MustCompile(`^[0-9]{15}$`)
 	iccidPattern = regexp.MustCompile(`^[0-9]{19,20}$`)
 	phonePattern = regexp.MustCompile(`^\+?[0-9]{1,15}$`)
-	plmnPattern  = regexp.MustCompile(`^[0-9]{3}-[0-9]{2,3}$`)
+	plmnPattern   = regexp.MustCompile(`^[0-9]{3}-[0-9]{2,3}$`)
+	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 var catalogue = map[string]Spec{
@@ -193,6 +200,33 @@ var catalogue = map[string]Spec{
 		Kind: "list_esim_profiles", ContractKind: "ListEsimProfiles", NeedsModem: true,
 		Build: func(request Request) (map[string]any, error) {
 			return map[string]any{"kind": "ListEsimProfiles", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
+	"self_update": {
+		Kind: "self_update", ContractKind: "SelfUpdate", Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			// Every field is checked here because the failure mode is a fleet
+			// that downloads and installs the wrong thing. The edge verifies
+			// the digest and signature before staging, but a malformed
+			// request should never get as far as a device.
+			if strings.TrimSpace(request.Version) == "" {
+				return nil, ErrInvalid{"version is required"}
+			}
+			if !strings.HasPrefix(request.URL, "https://") {
+				// Plain HTTP for a binary a fleet will execute is not a
+				// configuration mistake worth supporting.
+				return nil, ErrInvalid{"url must be https"}
+			}
+			if !sha256Pattern.MatchString(request.SHA256) {
+				return nil, ErrInvalid{"sha256 must be 64 hex characters"}
+			}
+			if len(request.Signature) < 16 {
+				return nil, ErrInvalid{"signature is required"}
+			}
+			return map[string]any{
+				"kind": "SelfUpdate", "version": request.Version, "url": request.URL,
+				"sha256": request.SHA256, "signature": request.Signature,
+			}, nil
 		},
 	},
 	"rotate_ip": {

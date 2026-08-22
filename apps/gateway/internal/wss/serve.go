@@ -71,7 +71,23 @@ type Server struct {
 	AfterInsert func(tenantID, deviceID, kind string, payload []byte)
 	Wakeups     wakeup.Publisher
 	Events      *events.Bus
-	Now         func() time.Time
+	// ResumeReport records what a device says about itself when it connects:
+	// which build it is running and how far behind its queue is. Optional, so
+	// a gateway without a database still serves.
+	ResumeReport func(tenantID, deviceID string, report DeviceReport)
+	Now          func() time.Time
+}
+
+// DeviceReport is what a device tells the gateway about itself on Resume.
+//
+// It arrives on every reconnect and was previously read only to decide what to
+// replay, then discarded — so the two questions an operator asks about a fleet,
+// what is on the old build and what is backing up, had no answer anywhere.
+type DeviceReport struct {
+	EdgeVersion   string
+	MatrixVersion string
+	QueueRecords  int64
+	QueueBytes    int64
 }
 
 func (server *Server) now() time.Time {
@@ -146,6 +162,14 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 		return err
 	}
 	server.hintPresence(device.DeviceID)
+	if server.ResumeReport != nil {
+		server.ResumeReport(device.TenantID, device.DeviceID, DeviceReport{
+			EdgeVersion:   stringValue(resume.EdgeVersion),
+			MatrixVersion: resume.CapabilityMatrixVersion,
+			QueueRecords:  int64Value(resume.QueueRecords),
+			QueueBytes:    int64Value(resume.QueueBytes),
+		})
+	}
 
 	if err := server.deliverPending(device, conn, now); err != nil {
 		return err
@@ -439,4 +463,15 @@ func detailsJSON(details any) []byte {
 		return nil
 	}
 	return encoded
+}
+
+// int64Value reads an optional count, where absent means zero.
+//
+// Absent and zero are the same thing for a queue depth: a device that did not
+// report one has nothing to report.
+func int64Value(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

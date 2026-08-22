@@ -280,5 +280,7 @@
   "device.delete": "删除设备",
   "device.deleteNote": "删除设备会连同它的全部日志、短信和命令一起删掉，不可恢复。",
   "device.confirmDelete": "输入设备名以确认删除：{name}",
-  "device.adminFailed": "保存失败。"
+  "device.adminFailed": "保存失败。",
+  "devices.colVersion": "版本",
+  "devices.colQueue": "积压"
 }

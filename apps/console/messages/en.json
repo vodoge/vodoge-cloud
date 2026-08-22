@@ -280,5 +280,7 @@
   "device.delete": "Remove device",
   "device.deleteNote": "Removing a device deletes its entire journal, messages and commands. None of it can be recovered.",
   "device.confirmDelete": "Type the device name to confirm removal: {name}",
-  "device.adminFailed": "That could not be saved."
+  "device.adminFailed": "That could not be saved.",
+  "devices.colVersion": "Build",
+  "devices.colQueue": "Backlog"
 }

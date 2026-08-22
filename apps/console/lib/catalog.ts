@@ -9,6 +9,11 @@ export type DeviceRow = {
   name: string;
   state: string;
   lastSeen: number | null;
+  edgeVersion: string | null;
+  matrixVersion: string | null;
+  queueRecords: number | null;
+  queueBytes: number | null;
+  resumedAt: number | null;
 };
 
 export type MessageRow = {
@@ -487,6 +492,11 @@ export function parseDevice(value: unknown): DeviceRow | null {
     name,
     state,
     lastSeen: asNumber(record.last_seen),
+    edgeVersion: asString(record.edge_version),
+    matrixVersion: asString(record.matrix_version),
+    queueRecords: asNumber(record.queue_records),
+    queueBytes: asNumber(record.queue_bytes),
+    resumedAt: asNumber(record.resumed_at),
   };
 }
 

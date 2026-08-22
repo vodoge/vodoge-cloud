@@ -18,6 +18,12 @@ type Device struct {
 	Name     string `json:"name"`
 	State    string `json:"state"`
 	LastSeen *int64 `json:"last_seen"`
+	// What the device says about itself on every reconnect.
+	EdgeVersion   *string `json:"edge_version,omitempty"`
+	MatrixVersion *string `json:"matrix_version,omitempty"`
+	QueueRecords  *int64  `json:"queue_records,omitempty"`
+	QueueBytes    *int64  `json:"queue_bytes,omitempty"`
+	ResumedAt     *int64  `json:"resumed_at,omitempty"`
 }
 
 // Message is one SMS row in the tenant inbox.
@@ -50,6 +56,9 @@ type Store interface {
 	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
 	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
 	RenameDevice(ctx context.Context, tenantID, deviceID, name string) error
+	// RecordResume stores what a device reported when it connected.
+	RecordResume(ctx context.Context, tenantID, deviceID, edgeVersion, matrixVersion string,
+		queueRecords, queueBytes int64) error
 	// DeleteDevice removes a device and reports whether it existed.
 	DeleteDevice(ctx context.Context, tenantID, deviceID string) (bool, error)
 }
@@ -135,6 +144,12 @@ func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error)
 
 func (Empty) RenameDevice(context.Context, string, string, string) error { return nil }
 
+func (Empty) RecordResume(
+	context.Context, string, string, string, string, int64, int64,
+) error {
+	return nil
+}
+
 func (Empty) DeleteDevice(context.Context, string, string) (bool, error) { return false, nil }
 
 func (Empty) ListModems(context.Context, string) ([]Modem, error) {
@@ -153,6 +168,31 @@ type Memory struct {
 	Modems   map[string][]Modem
 	Commands map[string][]CommandRow
 	Events   map[string][]EventRow
+}
+
+// RecordResume stores what a device reported when it connected.
+func (store *Memory) RecordResume(
+	_ context.Context,
+	tenantID, deviceID, edgeVersion, matrixVersion string,
+	queueRecords, queueBytes int64,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for i, device := range store.Devices[tenantID] {
+		if device.ID != deviceID {
+			continue
+		}
+		if edgeVersion != "" {
+			store.Devices[tenantID][i].EdgeVersion = &edgeVersion
+		}
+		if matrixVersion != "" {
+			store.Devices[tenantID][i].MatrixVersion = &matrixVersion
+		}
+		records, bytes := queueRecords, queueBytes
+		store.Devices[tenantID][i].QueueRecords = &records
+		store.Devices[tenantID][i].QueueBytes = &bytes
+	}
+	return nil
 }
 
 // RenameDevice changes a device's label.
@@ -289,6 +329,20 @@ type SQL struct {
 }
 
 // ListModems returns the tenant's modules, most recently seen first.
+// RecordResume stores what a device reported when it connected.
+func (store SQL) RecordResume(
+	ctx context.Context,
+	tenantID, deviceID, edgeVersion, matrixVersion string,
+	queueRecords, queueBytes int64,
+) error {
+	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`SELECT app.record_device_resume($1::uuid, $2::uuid, $3, $4, $5, $6)`,
+			tenantID, deviceID, edgeVersion, matrixVersion, queueRecords, queueBytes)
+		return err
+	})
+}
+
 // RenameDevice changes the label a device is known by.
 //
 // Only the name. Everything else about a device — its IMEI, its region, what
@@ -532,7 +586,8 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			         WHEN last_seen_at > now() - interval '2 minutes' THEN 'online'
 			         ELSE 'offline'
 			       END,
-			       last_seen_at
+			       last_seen_at,
+			       edge_version, matrix_version, queue_records, queue_bytes, resumed_at
 			  FROM app.devices
 			 ORDER BY name`)
 		if err != nil {
@@ -541,13 +596,30 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 		defer rows.Close()
 		for rows.Next() {
 			var item Device
-			var lastSeen sql.NullTime
-			if err := rows.Scan(&item.ID, &item.Name, &item.State, &lastSeen); err != nil {
+			var lastSeen, resumed sql.NullTime
+			var edgeVersion, matrixVersion sql.NullString
+			var queueRecords, queueBytes sql.NullInt64
+			if err := rows.Scan(&item.ID, &item.Name, &item.State, &lastSeen,
+				&edgeVersion, &matrixVersion, &queueRecords, &queueBytes, &resumed); err != nil {
 				return err
 			}
 			if lastSeen.Valid {
 				ms := lastSeen.Time.UnixMilli()
 				item.LastSeen = &ms
+			}
+			item.EdgeVersion = nullableString(edgeVersion)
+			item.MatrixVersion = nullableString(matrixVersion)
+			if queueRecords.Valid {
+				value := queueRecords.Int64
+				item.QueueRecords = &value
+			}
+			if queueBytes.Valid {
+				value := queueBytes.Int64
+				item.QueueBytes = &value
+			}
+			if resumed.Valid {
+				ms := resumed.Time.UnixMilli()
+				item.ResumedAt = &ms
 			}
 			devices = append(devices, item)
 		}
