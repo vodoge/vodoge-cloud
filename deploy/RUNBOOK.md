@@ -110,6 +110,38 @@ ever put in front of this, that has to change deliberately — until then a
 caller setting the header would be choosing their own bucket, which is the
 same as having no limit.
 
+## What is on the internet
+
+Caddy owns 80 and 443 on this host and runs in the **TREK** compose project, so
+VoDoge publishes no public listener of its own.
+
+| Hostname | Serves |
+| --- | --- |
+| `vodoge.com` | the console |
+| `a.vodoge.com` | the console, with `/v1/*` going to the gateway |
+| `:444` | the device uplink, mTLS, published directly by the gateway |
+
+`plugins.vodoge.com` was removed along with the plugin system.
+
+Caddy reaches the services **by container name**, which is why the console and
+gateway join `trek_default` as an external network called `ingress`. Pointing
+Caddy at the docker bridge address instead does not work, and fails in the most
+misleading way available: a port published to `127.0.0.1` is reachable from the
+host's loopback and not from a bridge address, so both hostnames answered 502
+for as long as that configuration stood while every check run on the host
+itself passed. Everything in this runbook that curls `127.0.0.1` was — and
+still is — testing the service, not the way anyone reaches it.
+
+The site blocks are copied into `deploy/caddy-vodoge.snippet` for reference;
+the live file is `/opt/trek/Caddyfile`. After editing it:
+
+```sh
+docker exec trek-caddy caddy validate --config /etc/caddy/Caddyfile
+docker exec trek-caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+`reload` does not interrupt TREK, which is served by the same process.
+
 ## Networks
 
 `backend` is `internal: true`. **Docker silently ignores published ports for a

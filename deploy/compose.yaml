@@ -104,6 +104,8 @@ services:
     networks:
       - backend
       - edge
+      # And ingress, so Caddy can reach it by container name.
+      - ingress
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
       interval: 10s
@@ -133,12 +135,26 @@ services:
       # gateway does.
       - backend
       - edge
+      # And ingress, so Caddy can reach it by container name.
+      - ingress
 
 networks:
   backend:
     internal: true
   edge:
     driver: bridge
+  # The reverse proxy that owns 80/443 on this host runs in TREK's compose
+  # project, so reaching it means joining its network.
+  #
+  # The alternative was to publish the console and gateway on the docker bridge
+  # address and have Caddy dial that. It does not work and fails confusingly:
+  # a port published to 127.0.0.1 is reachable from the host's loopback and not
+  # from a bridge address, so Caddy answered 502 for both hostnames while every
+  # check run on the host itself passed. Sharing a network removes the host's
+  # networking from the path entirely — Caddy resolves the container by name.
+  ingress:
+    external: true
+    name: trek_default
 
 volumes:
   postgres-data:

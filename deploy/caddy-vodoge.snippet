@@ -1,0 +1,43 @@
+# The Caddy site blocks that put VoDoge on the internet.
+#
+# Kept here for reference only. The live file is /opt/trek/Caddyfile on the
+# deployment: Caddy owns 80/443 for this whole host and belongs to the TREK
+# compose project, which is why VoDoge's own compose has no public listener.
+#
+# The proxy targets are container names, not addresses. Pointing them at the
+# docker bridge address does not work and fails confusingly — a port published
+# to 127.0.0.1 is reachable from the host's loopback and not from a bridge
+# address, so both hostnames answered 502 while every check run on the host
+# itself passed.
+
+# VoDoge SaaS console + gateway. TREK site above is unchanged.
+vodoge.com {
+	tls {
+		protocols tls1.3
+	}
+	reverse_proxy vodoge-cloud-console-1:3000
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/vodoge-access.log {
+			roll_size 10MB
+			roll_keep 3
+		}
+	}
+}
+
+a.vodoge.com {
+	tls {
+		protocols tls1.3
+	}
+	handle /v1/* {
+		reverse_proxy vodoge-cloud-gateway-1:8080
+	}
+	handle {
+		reverse_proxy vodoge-cloud-console-1:3000
+	}
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/vodoge-a-access.log {
+			roll_size 10MB
+			roll_keep 3
+		}
