@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
-import { fetchDevices, fetchModems, type DeviceRow, type ModemRow } from "@/lib/catalog";
+import { CardPolicies } from "@/components/card-policies";
+import {
+  fetchCardPolicies,
+  fetchDevices,
+  fetchModems,
+  type CardPolicyRow,
+  type DeviceRow,
+  type ModemRow,
+} from "@/lib/catalog";
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
 import {t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -13,11 +21,13 @@ export default async function DevicesPage() {
 
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
+  let policies: CardPolicyRow[] = [];
   let loadError = false;
   try {
-    [devices, modems] = await Promise.all([
+    [devices, modems, policies] = await Promise.all([
       fetchDevices(host, token),
       fetchModems(host, token),
+      fetchCardPolicies(host, token),
     ]);
   } catch {
     loadError = true;
@@ -139,6 +149,37 @@ export default async function DevicesPage() {
               </table>
             </div>
           )}
+        </Card>
+      </div>
+
+      <div style={{ marginTop: "var(--s5)" }}>
+        <Card title={t("cards.title", locale)} note={t("cards.note", locale)}>
+          <CardPolicies
+            policies={policies}
+            // Only cards the fleet has actually reported. A policy for a card
+            // that does not exist matches nothing on any device and says so
+            // nowhere.
+            knownCards={modems
+              .filter((modem) => modem.iccid)
+              .map((modem) => ({
+                iccid: modem.iccid!,
+                label: `${modem.iccid} — ${modem.imei}`,
+              }))}
+            labels={{
+              none: t("cards.none", locale),
+              colIccid: t("cards.colIccid", locale),
+              colCellular: t("cards.colCellular", locale),
+              colVertical: t("cards.colVertical", locale),
+              colApn: t("cards.colApn", locale),
+              on: t("cards.on", locale),
+              off: t("cards.off", locale),
+              add: t("cards.add", locale),
+              addFor: t("cards.addFor", locale),
+              remove: t("cards.remove", locale),
+              failed: t("cards.failed", locale),
+              confirmRemove: t("cards.confirmRemove", locale),
+            }}
+          />
         </Card>
       </div>
     </>

@@ -27,6 +27,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
@@ -79,6 +80,7 @@ func main() {
 		proc.config = settings.SQL{DB: sqlStore.DB}
 		proc.proxies = proxy.SQL{DB: sqlStore.DB}
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
+		proc.cards = cards.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -180,6 +182,7 @@ type process struct {
 	config   settings.Store
 	proxies  proxy.Store
 	inbox    messaging.Store
+	cards    cards.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -218,6 +221,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		config:  &settings.Memory{},
 		proxies: &proxy.Memory{},
 		inbox:   &messaging.Memory{},
+		cards:   &cards.Memory{},
 		codes:   &enroll.MemoryCodes{},
 	}
 }
@@ -276,6 +280,7 @@ func (process *process) handler() http.Handler {
 		ratelimit.Guard(passwordChange, ratelimit.ClientKey, process.changePassword))
 	process.registerProxyRoutes(mux)
 	process.registerMessagingRoutes(mux)
+	process.registerCardRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)

@@ -245,5 +245,19 @@
   "inbox.statusSent": "sent",
   "inbox.statusFailed": "failed",
   "inbox.statusReceived": "received",
-  "inbox.colLast": "Latest"
+  "inbox.colLast": "Latest",
+  "cards.title": "Card policies",
+  "cards.note": "pushed to every device",
+  "cards.none": "No card policies set. Cards without one use the device's defaults.",
+  "cards.colIccid": "ICCID",
+  "cards.colCellular": "Cellular",
+  "cards.colVertical": "Vertical",
+  "cards.colApn": "APN",
+  "cards.on": "allowed",
+  "cards.off": "blocked",
+  "cards.add": "Add policy",
+  "cards.addFor": "Card",
+  "cards.remove": "Remove",
+  "cards.failed": "That could not be saved.",
+  "cards.confirmRemove": "Remove this card's policy?"
 }

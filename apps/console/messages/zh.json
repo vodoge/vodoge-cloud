@@ -245,5 +245,19 @@
   "inbox.statusSent": "已发送",
   "inbox.statusFailed": "失败",
   "inbox.statusReceived": "已接收",
-  "inbox.colLast": "最新"
+  "inbox.colLast": "最新",
+  "cards.title": "卡策略",
+  "cards.note": "下发到所有设备",
+  "cards.none": "还没有卡策略。没有策略的卡按设备默认走。",
+  "cards.colIccid": "ICCID",
+  "cards.colCellular": "蜂窝数据",
+  "cards.colVertical": "业务线",
+  "cards.colApn": "APN",
+  "cards.on": "允许",
+  "cards.off": "禁止",
+  "cards.add": "添加策略",
+  "cards.addFor": "卡",
+  "cards.remove": "删除",
+  "cards.failed": "保存失败。",
+  "cards.confirmRemove": "删除这张卡的策略？"
 }

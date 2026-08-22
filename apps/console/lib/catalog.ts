@@ -294,6 +294,34 @@ export async function fetchThread(
   });
 }
 
+export type CardPolicyRow = {
+  iccid: string;
+  cellularEnabled: boolean;
+  vertical: string;
+  apn: string | null;
+  note: string;
+  updatedAt: number;
+};
+
+export async function fetchCardPolicies(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CardPolicyRow[]> {
+  const body = await getCatalog(host, "/v1/cards/policies", token, fetchImpl);
+  return arrayOf(body.policies).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      iccid: asString(row.iccid) ?? "",
+      cellularEnabled: row.cellular_enabled === true,
+      vertical: asString(row.vertical) ?? "cn",
+      apn: asString(row.apn),
+      note: asString(row.note) ?? "",
+      updatedAt: asNumber(row.updated_at) ?? 0,
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 
