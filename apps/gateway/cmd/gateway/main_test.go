@@ -768,10 +768,9 @@ type recordingNotifier struct{ events []notify.Event }
 
 func (r *recordingNotifier) Notify(event notify.Event) { r.events = append(r.events, event) }
 
-// A device that stops sending frames is the one case nothing else catches: a
-// superseded session is closed at Bind and a clean close ends itself, so
-// without this the tenant's first hint is an empty console.
-func TestReapingAnIdleSessionNotifiesTheTenant(t *testing.T) {
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestReapingClosesAnIdleSessionAndNotifiesNothing(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
@@ -785,13 +784,59 @@ func TestReapingAnIdleSessionNotifiesTheTenant(t *testing.T) {
 		Close:        func() { closed = true },
 	})
 
-	alerts := &recordingNotifier{}
-	if reaped := reapIdleSessions(hub, alerts, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 1 {
+	if reaped := reapIdleSessions(hub, quietLogger(), now); reaped != 1 {
 		t.Fatalf("reaped = %d, want 1", reaped)
 	}
 	if !closed {
 		t.Error("the reaped connection was not closed")
 	}
+	if _, bound := hub.Lookup("device-1"); bound {
+		t.Error("the reaped connection is still bound")
+	}
+}
+
+func TestASessionStillWithinTheIdleTimeoutIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	hub := session.NewHub()
+	hub.Bind(session.Connection{
+		ID:           "connection-1",
+		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1"},
+		LastPacketAt: now.Add(-session.IdleTimeout + time.Second),
+		Close:        func() { t.Error("a live connection was closed") },
+	})
+
+	if reaped := reapIdleSessions(hub, quietLogger(), now); reaped != 0 {
+		t.Fatalf("reaped = %d, want 0", reaped)
+	}
+}
+
+// The drill that motivated all of this: block the uplink, and the session ends
+// on a read timeout long before anything sweeps. The absence is what has to be
+// measured, not the reaping.
+func TestADeviceThatStaysAwayIsReportedOffline(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	hub := session.NewHub()
+	absent := newAbsentDevices()
+	alerts := &recordingNotifier{}
+
+	absent.Left(identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}, start)
+
+	if raised := absent.Report(hub, alerts, quietLogger(), start.Add(offlineGrace-time.Second)); raised != 0 {
+		t.Fatalf("raised = %d before the grace period elapsed, want 0", raised)
+	}
+	if raised := absent.Report(hub, alerts, quietLogger(), start.Add(offlineGrace)); raised != 1 {
+		t.Fatalf("raised = %d at the grace period, want 1", raised)
+	}
+	// Still gone a long time later, but already reported: silence, not a
+	// notification every 45 seconds for as long as the device is switched off.
+	if raised := absent.Report(hub, alerts, quietLogger(), start.Add(time.Hour)); raised != 0 {
+		t.Fatalf("raised = %d on a later tick, want 0", raised)
+	}
+
 	if len(alerts.events) != 1 {
 		t.Fatalf("notifications = %d, want 1", len(alerts.events))
 	}
@@ -807,49 +852,57 @@ func TestReapingAnIdleSessionNotifiesTheTenant(t *testing.T) {
 	}
 }
 
-// The sweep runs every 45 seconds against every bound connection, so a device
-// that is merely between heartbeats must produce no notification at all.
-// Getting this wrong would page someone twice a minute per device.
-func TestASessionStillWithinTheIdleTimeoutIsLeftAlone(t *testing.T) {
+// Deploying the edge ends a session and the device is back in seconds. That
+// must be silent, or the notification is worthless.
+func TestADeviceThatComesStraightBackIsNotReported(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
+	start := time.Now()
 	hub := session.NewHub()
-	hub.Bind(session.Connection{
-		ID:           "connection-1",
-		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1"},
-		LastPacketAt: now.Add(-session.IdleTimeout + time.Second),
-		Close:        func() { t.Error("a live connection was closed") },
-	})
-
+	absent := newAbsentDevices()
 	alerts := &recordingNotifier{}
-	if reaped := reapIdleSessions(hub, alerts, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 0 {
-		t.Fatalf("reaped = %d, want 0", reaped)
+
+	device := identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}
+	absent.Left(device, start)
+	hub.Bind(session.Connection{ID: "connection-2", Device: device, LastPacketAt: start.Add(20 * time.Second)})
+
+	if raised := absent.Report(hub, alerts, quietLogger(), start.Add(offlineGrace*2)); raised != 0 {
+		t.Fatalf("raised = %d for a device that reconnected, want 0", raised)
 	}
 	if len(alerts.events) != 0 {
 		t.Fatalf("notifications = %d, want 0", len(alerts.events))
 	}
 }
 
-// A gateway without a dispatcher still serves, so the reaper must not depend on
-// one being present.
-func TestReapingWithoutANotifierStillClosesTheConnection(t *testing.T) {
+// A device flapping through short sessions is away the whole time. Resetting
+// the clock on each attempt would let it flap forever without ever being
+// reported.
+func TestFlappingDoesNotResetTheAbsenceClock(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
+	start := time.Now()
 	hub := session.NewHub()
-	closed := false
-	hub.Bind(session.Connection{
-		ID:           "connection-1",
-		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1"},
-		LastPacketAt: now.Add(-2 * session.IdleTimeout),
-		Close:        func() { closed = true },
-	})
+	absent := newAbsentDevices()
+	alerts := &recordingNotifier{}
 
-	if reaped := reapIdleSessions(hub, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 1 {
-		t.Fatalf("reaped = %d, want 1", reaped)
+	device := identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}
+	absent.Left(device, start)
+	absent.Left(device, start.Add(30*time.Second))
+	absent.Left(device, start.Add(60*time.Second))
+
+	if raised := absent.Report(hub, alerts, quietLogger(), start.Add(offlineGrace)); raised != 1 {
+		t.Fatalf("raised = %d, want 1 measured from the first departure", raised)
 	}
-	if !closed {
-		t.Error("the reaped connection was not closed")
+}
+
+// A gateway without a dispatcher still serves.
+func TestReportingWithoutANotifierDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	absent := newAbsentDevices()
+	absent.Left(identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}, start)
+	if raised := absent.Report(session.NewHub(), nil, quietLogger(), start.Add(offlineGrace)); raised != 1 {
+		t.Fatalf("raised = %d, want 1", raised)
 	}
 }

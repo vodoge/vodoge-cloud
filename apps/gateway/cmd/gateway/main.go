@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
@@ -159,7 +161,7 @@ func main() {
 		}()
 	}
 
-	// Reap sessions that stopped speaking.
+	// Reap sessions that stopped speaking, and report devices that stayed away.
 	//
 	// Hub.SweepIdle existed and was tested from the beginning, and nothing ever
 	// called it: a connection the device abandoned without a clean close stayed
@@ -168,13 +170,23 @@ func main() {
 	// without reconnecting -- lost power, lost route, NAT rebind -- supersedes
 	// nothing, so this is the only thing that ends it.
 	//
+	// The two are separate jobs sharing a ticker. Reaping frees a connection
+	// the device abandoned in place; reporting answers the different question
+	// of whether anyone should be told, which cannot be decided at the moment a
+	// session ends because almost every session that ends is replaced within
+	// seconds.
+	//
 	// Half the idle timeout, so a connection is reaped within one timeout of
 	// going quiet rather than up to two.
+	absent := newAbsentDevices()
+	proc.session.OnSessionEnd = absent.Left
 	go func() {
 		ticker := time.NewTicker(session.IdleTimeout / 2)
 		defer ticker.Stop()
 		for range ticker.C {
-			reapIdleSessions(proc.session.Hub, proc.notify, logger, time.Now())
+			now := time.Now()
+			reapIdleSessions(proc.session.Hub, logger, now)
+			absent.Report(proc.session.Hub, proc.notify, logger, now)
 		}
 	}()
 
@@ -204,39 +216,116 @@ type notifier interface {
 	Notify(notify.Event)
 }
 
-// reapIdleSessions unbinds sessions that stopped speaking, and tells the tenant
-// that one of their devices went quiet.
+// offlineGrace is how long a device may be disconnected before it is called
+// offline.
 //
-// Notifying from here rather than from the socket's error path is the whole
-// point. A connection ending is normal and constant: the edge restarts, a NAT
-// rebinds, a container is replaced, and the device is back within seconds —
-// alerting on that trains people to ignore the alert. Silence past IdleTimeout
-// is different, because a device that vanished without a clean close supersedes
-// nothing and will never come back on its own.
+// Sessions end all the time and mean nothing on their own: deploying the edge
+// ends one, and it is back inside twenty seconds. What distinguishes a device
+// that is gone is that it does not come back. A grace period is the whole
+// mechanism, and making it shorter to report faster only buys false alarms.
+const offlineGrace = 90 * time.Second
+
+// absentDevices remembers devices whose session ended and watches for their
+// return.
 //
-// Detection therefore lands somewhere between IdleTimeout and IdleTimeout plus
-// the sweep period, so with the current 90s timeout a dead device is reported
-// 90 to 135 seconds after its last frame, not within 90.
+// This exists because the obvious trigger does not fire. Reaping idle sessions
+// looked like the place to notice a device had gone, but the socket read
+// deadline gets there first: a blocked uplink surfaces as an i/o timeout in
+// about a minute, ServeDevice returns, and the connection is unbound long
+// before SweepIdle would have looked at it. The sweep only ever sees a
+// connection that went silent without erroring, which a read deadline makes
+// rare. Confirmed by drill: blocking the uplink produced "device session
+// ended ... i/o timeout" at 58 seconds and no reaping at all.
+type absentDevices struct {
+	mu   sync.Mutex
+	away map[string]absence
+}
+
+type absence struct {
+	tenantID string
+	since    time.Time
+	told     bool
+}
+
+func newAbsentDevices() *absentDevices {
+	return &absentDevices{away: make(map[string]absence)}
+}
+
+// Left records that a device's session ended. Repeats keep the first time, so
+// a device flapping through several short sessions is still measured from when
+// it first went away rather than having its clock reset on every attempt.
+func (devices *absentDevices) Left(device identity.Device, at time.Time) {
+	if devices == nil {
+		return
+	}
+	devices.mu.Lock()
+	defer devices.mu.Unlock()
+	if _, seen := devices.away[device.DeviceID]; seen {
+		return
+	}
+	devices.away[device.DeviceID] = absence{tenantID: device.TenantID, since: at}
+}
+
+// Report notifies about devices that have stayed away past the grace period,
+// and forgets the ones that came back.
 //
-// Returns how many were reaped, for tests.
-func reapIdleSessions(hub *session.Hub, alerts notifier, logger *slog.Logger, now time.Time) int {
-	expired := hub.SweepIdle(now)
-	for _, connection := range expired {
-		silent := now.Sub(connection.LastPacketAt).Round(time.Second)
-		logger.Info("reaping an idle device session",
-			"device_id", connection.Device.DeviceID,
-			"connection_id", connection.ID,
-			"silent_for", silent.String())
+// Returns how many notifications it raised, for tests.
+func (devices *absentDevices) Report(
+	hub *session.Hub,
+	alerts notifier,
+	logger *slog.Logger,
+	now time.Time,
+) int {
+	if devices == nil {
+		return 0
+	}
+	devices.mu.Lock()
+	defer devices.mu.Unlock()
+
+	raised := 0
+	for deviceID, away := range devices.away {
+		if _, bound := hub.Lookup(deviceID); bound {
+			delete(devices.away, deviceID)
+			continue
+		}
+		if away.told || now.Sub(away.since) < offlineGrace {
+			continue
+		}
+		gone := now.Sub(away.since).Round(time.Second)
+		logger.Info("device has not come back",
+			"device_id", deviceID, "away_for", gone.String())
 		if alerts != nil {
 			alerts.Notify(notify.Event{
 				Kind:     notify.KindDeviceOffline,
-				TenantID: connection.Device.TenantID,
+				TenantID: away.tenantID,
 				Title:    "设备离线",
-				Body: "设备 " + connection.Device.DeviceID + " 已经 " + silent.String() +
-					" 没有上报。在控制台的设备页查看。",
+				Body: "设备 " + deviceID + " 已经 " + gone.String() +
+					" 没有连上来。在控制台的设备页查看。",
 				At: now,
 			})
 		}
+		away.told = true
+		devices.away[deviceID] = away
+		raised++
+	}
+	return raised
+}
+
+// reapIdleSessions unbinds sessions that stopped speaking.
+//
+// It does not notify. Closing the socket makes ServeDevice return, which fires
+// OnSessionEnd, which is where absence is measured from — so raising an event
+// here as well would mean two notifications for one departure, arriving a
+// grace period apart.
+//
+// Returns how many were reaped, for tests.
+func reapIdleSessions(hub *session.Hub, logger *slog.Logger, now time.Time) int {
+	expired := hub.SweepIdle(now)
+	for _, connection := range expired {
+		logger.Info("reaping an idle device session",
+			"device_id", connection.Device.DeviceID,
+			"connection_id", connection.ID,
+			"silent_for", now.Sub(connection.LastPacketAt).Round(time.Second).String())
 		if connection.Close != nil {
 			connection.Close()
 		}

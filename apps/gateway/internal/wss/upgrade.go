@@ -57,7 +57,11 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 	conn.SetReadLimit(MaxFrameBytes)
 	// A device session that ends on a rejected Resume used to close the socket
 	// with no trace at all, which made edge-side failures undiagnosable.
-	if err := server.ServeDevice(device, conn); err != nil {
+	err = server.ServeDevice(device, conn)
+	if server.OnSessionEnd != nil {
+		server.OnSessionEnd(device, server.now())
+	}
+	if err != nil {
 		slog.Warn("device session ended",
 			"tenant_id", device.TenantID,
 			"device_id", device.DeviceID,

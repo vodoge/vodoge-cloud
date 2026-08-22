@@ -75,6 +75,13 @@ type Server struct {
 	// which build it is running and how far behind its queue is. Optional, so
 	// a gateway without a database still serves.
 	ResumeReport func(tenantID, deviceID string, report DeviceReport)
+	// OnSessionEnd fires when a device's session finishes, for any reason.
+	//
+	// Sessions end constantly and harmlessly, so this is not "the device is
+	// offline" — it is the only moment at which anything learns the device
+	// stopped being connected, which is what someone watching for a real
+	// absence has to start counting from. Optional.
+	OnSessionEnd func(device identity.Device, at time.Time)
 	// Metrics is optional; a gateway without one still serves.
 	Metrics interface {
 		Add(name string, delta int64, labels ...string)
