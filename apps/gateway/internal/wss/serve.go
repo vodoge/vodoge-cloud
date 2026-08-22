@@ -82,6 +82,10 @@ type Server struct {
 	// stopped being connected, which is what someone watching for a real
 	// absence has to start counting from. Optional.
 	OnSessionEnd func(device identity.Device, at time.Time)
+	// OnContractViolation fires for a payload whose values are outside the
+	// schema. Called per offending payload, so anything that turns these into
+	// notifications has to decide for itself how often to speak. Optional.
+	OnContractViolation func(device identity.Device, kind string, found []string, at time.Time)
 	// Metrics is optional; a gateway without one still serves.
 	Metrics interface {
 		Add(name string, delta int64, labels ...string)
@@ -303,6 +307,9 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 					"device_id", device.DeviceID,
 					"kind", string(envelope.Kind),
 					"violations", strings.Join(found, "; "))
+				if server.OnContractViolation != nil {
+					server.OnContractViolation(device, string(envelope.Kind), found, server.now())
+				}
 			}
 			if server.Metrics != nil {
 				server.Metrics.Add("vodoge_ingress_records_total", 1,

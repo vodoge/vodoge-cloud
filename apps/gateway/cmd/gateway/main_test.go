@@ -906,3 +906,80 @@ func TestReportingWithoutANotifierDoesNotPanic(t *testing.T) {
 		t.Fatalf("raised = %d, want 1", raised)
 	}
 }
+
+// A wrong enum value is a property of the build, not of one payload, so the
+// same fault arrives every few seconds per modem. Reporting each one turns a
+// single regression into hundreds of notifications an hour.
+func TestTheSameContractViolationIsReportedOncePerCooldown(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	offences := newContractViolations()
+	alerts := &recordingNotifier{}
+	device := identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}
+
+	if !offences.Raise(alerts, device, "device_state", []string{"state=weird"}, start) {
+		t.Fatal("the first violation was not reported")
+	}
+	for _, after := range []time.Duration{time.Second, time.Minute, violationCooldown - time.Second} {
+		if offences.Raise(alerts, device, "device_state", []string{"state=weird"}, start.Add(after)) {
+			t.Fatalf("the same violation was reported again after %s", after)
+		}
+	}
+	if offences.Raise(alerts, device, "device_state", []string{"state=weird"}, start.Add(violationCooldown)); len(alerts.events) != 2 {
+		t.Fatalf("notifications = %d, want 2 once the cooldown elapsed", len(alerts.events))
+	}
+
+	event := alerts.events[0]
+	if event.Kind != notify.KindContractViolation {
+		t.Errorf("kind = %q, want %q", event.Kind, notify.KindContractViolation)
+	}
+	if event.TenantID != "tenant-1" {
+		t.Errorf("tenant_id = %q, want tenant-1", event.TenantID)
+	}
+	if !strings.Contains(event.Body, "state=weird") {
+		t.Errorf("body = %q, want it to name the offending field", event.Body)
+	}
+}
+
+// Swallowing a second, different fault inside the first one's cooldown would
+// make this worse than having no notification at all.
+func TestADifferentViolationIsNotSwallowedByTheCooldown(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	offences := newContractViolations()
+	alerts := &recordingNotifier{}
+	device := identity.Device{TenantID: "tenant-1", DeviceID: "device-1"}
+
+	offences.Raise(alerts, device, "device_state", []string{"state=weird"}, start)
+	for _, other := range []struct {
+		name  string
+		kind  string
+		found []string
+	}{
+		{"a different field", "device_state", []string{"bearer=weird"}},
+		{"a different kind", "sms_received", []string{"state=weird"}},
+	} {
+		if !offences.Raise(alerts, device, other.kind, other.found, start.Add(time.Second)) {
+			t.Errorf("%s was swallowed by the first violation's cooldown", other.name)
+		}
+	}
+}
+
+// Two tenants sharing a gateway must not silence each other.
+func TestOneTenantsViolationDoesNotSilenceAnothers(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	offences := newContractViolations()
+	alerts := &recordingNotifier{}
+
+	offences.Raise(alerts, identity.Device{TenantID: "tenant-1", DeviceID: "d1"}, "device_state", []string{"state=weird"}, start)
+	if !offences.Raise(alerts, identity.Device{TenantID: "tenant-2", DeviceID: "d2"}, "device_state", []string{"state=weird"}, start.Add(time.Second)) {
+		t.Fatal("tenant-2 was silenced by tenant-1's cooldown")
+	}
+	if alerts.events[1].TenantID != "tenant-2" {
+		t.Errorf("second notification went to %q, want tenant-2", alerts.events[1].TenantID)
+	}
+}

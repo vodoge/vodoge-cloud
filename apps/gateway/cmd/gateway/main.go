@@ -180,6 +180,12 @@ func main() {
 	// going quiet rather than up to two.
 	absent := newAbsentDevices()
 	proc.session.OnSessionEnd = absent.Left
+	offences := newContractViolations()
+	proc.session.OnContractViolation = func(
+		device identity.Device, kind string, found []string, at time.Time,
+	) {
+		offences.Raise(proc.notify, device, kind, found, at)
+	}
 	go func() {
 		ticker := time.NewTicker(session.IdleTimeout / 2)
 		defer ticker.Stop()
@@ -224,6 +230,68 @@ type notifier interface {
 // that is gone is that it does not come back. A grace period is the whole
 // mechanism, and making it shorter to report faster only buys false alarms.
 const offlineGrace = 90 * time.Second
+
+// violationCooldown is how long one distinct contract violation stays quiet
+// after being reported.
+//
+// A violation is not one event. Whatever makes a payload wrong — an edge build
+// with a new enum value, a field that changed shape — makes every payload of
+// that kind wrong, and device_state alone arrives every eight seconds per
+// modem. Reporting each one would push several hundred notifications an hour
+// describing a single fault, which is indistinguishable from a denial of
+// service against whatever the tenant pointed the webhook at.
+const violationCooldown = time.Hour
+
+// contractViolations reports schema violations at most once per hour each.
+//
+// Keyed by tenant, message kind and the exact set of offending fields, so a
+// second, different violation is not swallowed by the first one's cooldown --
+// which is the failure mode that would make this worse than no notification at
+// all.
+type contractViolations struct {
+	mu   sync.Mutex
+	told map[string]time.Time
+}
+
+func newContractViolations() *contractViolations {
+	return &contractViolations{told: make(map[string]time.Time)}
+}
+
+// Raise reports a violation unless the same one was reported recently.
+// Returns whether it notified, for tests.
+func (violations *contractViolations) Raise(
+	alerts notifier,
+	device identity.Device,
+	kind string,
+	found []string,
+	at time.Time,
+) bool {
+	if violations == nil {
+		return false
+	}
+	key := device.TenantID + "|" + kind + "|" + strings.Join(found, ";")
+
+	violations.mu.Lock()
+	if last, seen := violations.told[key]; seen && at.Sub(last) < violationCooldown {
+		violations.mu.Unlock()
+		return false
+	}
+	violations.told[key] = at
+	violations.mu.Unlock()
+
+	if alerts == nil {
+		return false
+	}
+	alerts.Notify(notify.Event{
+		Kind:     notify.KindContractViolation,
+		TenantID: device.TenantID,
+		Title:    "设备上报不符合契约",
+		Body: "设备 " + device.DeviceID + " 的 " + kind + " 报文有字段超出 schema：" +
+			strings.Join(found, "；") + "。同一问题一小时内只提醒一次。",
+		At: at,
+	})
+	return true
+}
 
 // absentDevices remembers devices whose session ended and watches for their
 // return.
