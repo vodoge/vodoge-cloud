@@ -30,6 +30,44 @@ export type SessionRow = {
   deviceId: string;
 };
 
+export type RuleRow = { id: string; name: string; enabled: boolean };
+export type AuditRow = { actor: string; action: string; target: string };
+
+/**
+ * Rules and audit went through their own hand-rolled fetch, which meant they
+ * carried no session and read a rejection as an empty list. Both now go through
+ * the same client as everything else so neither can drift again.
+ */
+export async function fetchRules(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RuleRow[]> {
+  const body = await getCatalog(host, "/v1/rules", token, fetchImpl);
+  return arrayOf(body.rules).filter(isRule);
+}
+
+export async function fetchAudit(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AuditRow[]> {
+  const body = await getCatalog(host, "/v1/audit", token, fetchImpl);
+  return arrayOf(body.events).filter(isAuditEvent);
+}
+
+function isRule(value: unknown): value is RuleRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === "string" && typeof row.name === "string";
+}
+
+function isAuditEvent(value: unknown): value is AuditRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.action === "string";
+}
+
 export async function fetchDevices(
   host: string,
   token: string | undefined,

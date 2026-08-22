@@ -101,5 +101,16 @@
   "state.online": "Online",
   "state.offline": "Offline",
   "state.unknown": "Unknown",
-  "common.never": "Never"
+  "common.never": "Never",
+  "sessions.colLastBody": "Last message",
+  "sessions.colLastReceived": "Last received",
+  "rules.colId": "Rule ID",
+  "rules.on": "Enabled",
+  "rules.off": "Disabled",
+  "empty.sessions.title": "No conversations yet",
+  "empty.sessions.desc": "A conversation appears once a device exchanges a message with a peer.",
+  "empty.rules.title": "No rules yet",
+  "empty.rules.desc": "Rules extract codes from incoming messages and forward them onward.",
+  "empty.audit.title": "Nothing recorded yet",
+  "empty.audit.desc": "Sign-ins and tenant changes are written here as they happen."
 }

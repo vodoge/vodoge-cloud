@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  fetchAudit,
   fetchDevices,
+  fetchRules,
   fetchMessages,
   fetchSessions,
   parseDevice,
@@ -125,4 +127,46 @@ test("an unresolved tenant is an error, not an empty list", async () => {
     () => fetchDevices("a.vodoge.com", "tok", fetchImpl),
     UnauthorizedError,
   );
+});
+
+// Rules and audit used to build their own request, which carried no session and
+// read a rejection as an empty list. Routing them through the same client is
+// what stops that from coming back.
+test("rules and audit carry the session like everything else", async () => {
+  const seen: Array<Record<string, string>> = [];
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    seen.push((init?.headers ?? {}) as Record<string, string>);
+    return new Response(JSON.stringify({ rules: [], events: [] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  await fetchRules("a.vodoge.com", "tok-a", fetchImpl);
+  await fetchAudit("a.vodoge.com", "tok-a", fetchImpl);
+  assert.equal(seen.length, 2);
+  for (const headers of seen) {
+    assert.equal(headers.authorization, "Bearer tok-a");
+  }
+});
+
+test("a rejected rules request is an error, not an empty list", async () => {
+  const fetchImpl = (async () =>
+    new Response("sign in required", { status: 401 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => fetchRules("a.vodoge.com", undefined, fetchImpl),
+    UnauthorizedError,
+  );
+});
+
+test("malformed rule and audit rows are dropped rather than rendered", async () => {
+  const fetchImpl = (async (url: string) =>
+    new Response(
+      JSON.stringify(
+        String(url).includes("/v1/rules")
+          ? { rules: [{ id: "r1", name: "otp", enabled: true }, { id: 7 }, null] }
+          : { events: [{ actor: "a", action: "auth.login", target: "" }, {}, "x"] },
+      ),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+
+  assert.equal((await fetchRules("a.vodoge.com", "t", fetchImpl)).length, 1);
+  assert.equal((await fetchAudit("a.vodoge.com", "t", fetchImpl)).length, 1);
 });

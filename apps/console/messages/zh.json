@@ -101,5 +101,16 @@
   "state.online": "在线",
   "state.offline": "离线",
   "state.unknown": "未知",
-  "common.never": "从未"
+  "common.never": "从未",
+  "sessions.colLastBody": "最近内容",
+  "sessions.colLastReceived": "最近时间",
+  "rules.colId": "规则 ID",
+  "rules.on": "已启用",
+  "rules.off": "已停用",
+  "empty.sessions.title": "还没有会话",
+  "empty.sessions.desc": "设备与某个对端往来一条短信后，这里会出现一条会话。",
+  "empty.rules.title": "还没有规则",
+  "empty.rules.desc": "规则从来信中提取验证码并按配置转发出去。",
+  "empty.audit.title": "还没有记录",
+  "empty.audit.desc": "登录和租户变更发生时会即时写入这里。"
 }
