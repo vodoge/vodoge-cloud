@@ -123,6 +123,7 @@ export default async function DevicePage({
               reset_modem_usb: t("cmd.reset_modem_usb", locale),
               scan_operators: t("cmd.scan_operators", locale),
               set_radio: t("cmd.set_radio", locale),
+              rotate_ip: t("cmd.rotate_ip", locale),
               run_at_command: t("cmd.run_at_command", locale),
               send_ussd: t("cmd.send_ussd", locale),
               select_operator: t("cmd.select_operator", locale),

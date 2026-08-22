@@ -38,7 +38,13 @@ const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknow
  * identical buttons side by side.
  */
 const READ_ONLY = ["modem_report", "list_esim_profiles"] as const;
-const DISRUPTIVE = ["restart_modem", "reset_modem_usb", "scan_operators", "set_radio"] as const;
+const DISRUPTIVE = [
+  "restart_modem",
+  "reset_modem_usb",
+  "scan_operators",
+  "rotate_ip",
+  "set_radio",
+] as const;
 
 export function DeviceConsole({
   deviceId,

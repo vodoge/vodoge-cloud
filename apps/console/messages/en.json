@@ -228,5 +228,9 @@
   "proxy.colUp": "Sent",
   "proxy.colDown": "Received",
   "proxy.colConns": "Connections",
-  "proxy.loadError": "Proxy configuration could not be loaded."
+  "proxy.loadError": "Proxy configuration could not be loaded.",
+  "cmd.rotate_ip": "New IP address",
+  "proxy.countryRules": "Country rules",
+  "proxy.noCountryRules": "No country rules configured.",
+  "proxy.colCountry": "Country"
 }

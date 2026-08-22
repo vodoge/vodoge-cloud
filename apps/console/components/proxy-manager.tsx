@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
+import type { CountryRuleRow, ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
 
 type Labels = Record<string, string>;
 
@@ -17,11 +17,13 @@ type Labels = Record<string, string>;
 export function ProxyManager({
   upstreams,
   instances,
+  countryRules,
   devices,
   labels,
 }: {
   upstreams: UpstreamRow[];
   instances: ProxyInstanceRow[];
+  countryRules: CountryRuleRow[];
   devices: { id: string; name: string }[];
   labels: Labels;
 }) {
@@ -63,6 +65,13 @@ export function ProxyManager({
         instances={instances}
         upstreams={upstreams}
         devices={devices}
+        busy={busy}
+        labels={labels}
+        call={call}
+      />
+      <CountryRuleList
+        rules={countryRules}
+        upstreams={upstreams}
         busy={busy}
         labels={labels}
         call={call}
@@ -403,6 +412,119 @@ function InstanceList({
           </select>
         </label>
         <button type="submit" disabled={busy || devices.length === 0}>
+          {labels.add}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+/**
+ * Which upstream a card from a given country should chain through.
+ *
+ * Keyed by country rather than by network because that is what an operator
+ * reasons about — "traffic on Hong Kong cards goes out via the HK exit" — and
+ * because a country has many networks whose answer is the same. The edge maps
+ * a card's MCC to a country before consulting this.
+ */
+function CountryRuleList({
+  rules,
+  upstreams,
+  busy,
+  labels,
+  call,
+}: {
+  rules: CountryRuleRow[];
+  upstreams: UpstreamRow[];
+  busy: boolean;
+  labels: Labels;
+  call: Call;
+}) {
+  const [code, setCode] = useState("");
+  const [upstreamId, setUpstreamId] = useState("");
+
+  return (
+    <section className="stack">
+      <h3 className="section-title">{labels.countryRules}</h3>
+
+      {rules.length === 0 ? (
+        <p className="faint">{labels.noCountryRules}</p>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{labels.colCountry}</th>
+                <th>{labels.colUpstream}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((rule) => (
+                <tr key={rule.countryCode}>
+                  <td className="mono">{rule.countryCode}</td>
+                  <td>
+                    {upstreams.find((upstream) => upstream.id === rule.upstreamId)?.name ?? (
+                      <span className="faint">{labels.direct}</span>
+                    )}
+                  </td>
+                  <td className="row-actions">
+                    <button
+                      type="button"
+                      className="risk"
+                      disabled={busy}
+                      onClick={() =>
+                        void call(`/v1/proxy/country-rules/${rule.countryCode}`, {
+                          method: "DELETE",
+                        })
+                      }
+                    >
+                      {labels.remove}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <form
+        className="inline-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void call(`/v1/proxy/country-rules/${code.toUpperCase()}`, {
+            method: "PUT",
+            body: JSON.stringify({ upstream_id: upstreamId }),
+          }).then((ok) => {
+            if (ok) setCode("");
+          });
+        }}
+      >
+        <label className="field">
+          <span>{labels.colCountry}</span>
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            placeholder="HK"
+            maxLength={2}
+            pattern="[A-Za-z]{2}"
+            spellCheck={false}
+            required
+          />
+        </label>
+        <label className="field">
+          <span>{labels.colUpstream}</span>
+          <select value={upstreamId} onChange={(event) => setUpstreamId(event.target.value)}>
+            <option value="">{labels.direct}</option>
+            {upstreams.map((upstream) => (
+              <option key={upstream.id} value={upstream.id}>
+                {upstream.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" disabled={busy || code.length !== 2}>
           {labels.add}
         </button>
       </form>

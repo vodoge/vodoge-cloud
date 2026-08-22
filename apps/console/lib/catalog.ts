@@ -204,6 +204,26 @@ export async function fetchTraffic(
   });
 }
 
+export type CountryRuleRow = {
+  countryCode: string;
+  upstreamId: string;
+};
+
+export async function fetchCountryRules(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CountryRuleRow[]> {
+  const body = await getCatalog(host, "/v1/proxy/country-rules", token, fetchImpl);
+  return arrayOf(body.country_rules).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      countryCode: asString(row.country_code) ?? "",
+      upstreamId: asString(row.upstream_id) ?? "",
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

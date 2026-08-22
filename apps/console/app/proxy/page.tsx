@@ -1,10 +1,12 @@
 import { ProxyManager } from "@/components/proxy-manager";
 import { Card, EmptyState } from "@/components/ui";
 import {
+  fetchCountryRules,
   fetchDevices,
   fetchProxyInstances,
   fetchTraffic,
   fetchUpstreams,
+  type CountryRuleRow,
   type DeviceRow,
   type ProxyInstanceRow,
   type TrafficPoint,
@@ -23,13 +25,15 @@ export default async function ProxyPage() {
   let instances: ProxyInstanceRow[] = [];
   let devices: DeviceRow[] = [];
   let traffic: TrafficPoint[] = [];
+  let countryRules: CountryRuleRow[] = [];
   let loadError = false;
   try {
-    [upstreams, instances, devices, traffic] = await Promise.all([
+    [upstreams, instances, devices, traffic, countryRules] = await Promise.all([
       fetchUpstreams(host, token),
       fetchProxyInstances(host, token),
       fetchDevices(host, token),
       fetchTraffic(host, token),
+      fetchCountryRules(host, token),
     ]);
   } catch {
     loadError = true;
@@ -57,6 +61,7 @@ export default async function ProxyPage() {
           <ProxyManager
             upstreams={upstreams}
             instances={instances}
+            countryRules={countryRules}
             devices={devices.map((device) => ({ id: device.id, name: device.name }))}
             labels={labels(locale)}
           />
@@ -125,6 +130,7 @@ function labels(locale: Locale): Record<string, string> {
     "colName", "colAddress", "colProbe", "colListen", "colModem", "colUpstream",
     "add", "remove", "start", "stop", "restart", "direct", "device", "port",
     "username", "password", "probeFrom", "neverProbed", "failed", "confirmRemove",
+    "countryRules", "noCountryRules", "colCountry",
   ];
   return Object.fromEntries(keys.map((key) => [key, t(`proxy.${key}`, locale)]));
 }

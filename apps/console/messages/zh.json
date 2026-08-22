@@ -228,5 +228,9 @@
   "proxy.colUp": "发送",
   "proxy.colDown": "接收",
   "proxy.colConns": "连接数",
-  "proxy.loadError": "代理配置加载失败。"
+  "proxy.loadError": "代理配置加载失败。",
+  "cmd.rotate_ip": "更换 IP",
+  "proxy.countryRules": "国家规则",
+  "proxy.noCountryRules": "还没有配置国家规则。",
+  "proxy.colCountry": "国家"
 }
