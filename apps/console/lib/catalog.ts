@@ -224,6 +224,76 @@ export async function fetchCountryRules(
   });
 }
 
+export type ThreadRow = {
+  peer: string;
+  deviceId: string;
+  messages: number;
+  unsent: number;
+  lastBody: string;
+  lastAt: number;
+  lastInbound: boolean;
+};
+
+export type ThreadMessage = {
+  id: string;
+  deviceId: string;
+  direction: string;
+  peer: string;
+  body: string;
+  bearer: string;
+  status: string;
+  receivedAt: number;
+  failureReason: string | null;
+};
+
+export async function fetchThreads(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ThreadRow[]> {
+  const body = await getCatalog(host, "/v1/messages/threads", token, fetchImpl);
+  return arrayOf(body.threads).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      peer: asString(row.peer) ?? "",
+      deviceId: asString(row.device_id) ?? "",
+      messages: asNumber(row.messages) ?? 0,
+      unsent: asNumber(row.unsent) ?? 0,
+      lastBody: asString(row.last_body) ?? "",
+      lastAt: asNumber(row.last_at) ?? 0,
+      lastInbound: row.last_inbound === true,
+    };
+  });
+}
+
+export async function fetchThread(
+  host: string,
+  token: string | undefined,
+  peer: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ThreadMessage[]> {
+  const body = await getCatalog(
+    host,
+    `/v1/messages/thread?peer=${encodeURIComponent(peer)}`,
+    token,
+    fetchImpl,
+  );
+  return arrayOf(body.messages).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      id: asString(row.id) ?? "",
+      deviceId: asString(row.device_id) ?? "",
+      direction: asString(row.direction) ?? "",
+      peer: asString(row.peer) ?? "",
+      body: asString(row.body) ?? "",
+      bearer: asString(row.bearer) ?? "",
+      status: asString(row.status) ?? "",
+      receivedAt: asNumber(row.received_at) ?? 0,
+      failureReason: asString(row.failure_reason),
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

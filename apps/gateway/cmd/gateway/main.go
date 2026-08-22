@@ -31,10 +31,12 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ratelimit"
@@ -76,6 +78,7 @@ func main() {
 		proc.rules = rules.SQL{DB: sqlStore.DB}
 		proc.config = settings.SQL{DB: sqlStore.DB}
 		proc.proxies = proxy.SQL{DB: sqlStore.DB}
+		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -89,7 +92,11 @@ func main() {
 		lifecycle := commands.SQLLifecycle{DB: sqlStore.DB}
 		proc.session.Commands = commands.SQLPending{DB: sqlStore.DB}
 		proc.session.Receipts = lifecycle
-		proc.session.Results = lifecycle
+		// A send's result is also the answer to "did the message arrive", so
+		// it updates the conversation as well as the command. Wrapped rather
+		// than folded into SQLLifecycle: what a command did and what a message
+		// shows are different concerns that happen to share one event.
+		proc.session.Results = settlingResults{inner: lifecycle, inbox: proc.inbox}
 		proc.session.AfterInsert = proc.afterInsert
 	}
 
@@ -170,8 +177,9 @@ type process struct {
 	audit   audit.Log
 	rules   rules.Store
 	codes   enroll.CodeStore
-	config  settings.Store
-	proxies proxy.Store
+	config   settings.Store
+	proxies  proxy.Store
+	inbox    messaging.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -209,6 +217,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		rules:   &rules.Memory{},
 		config:  &settings.Memory{},
 		proxies: &proxy.Memory{},
+		inbox:   &messaging.Memory{},
 		codes:   &enroll.MemoryCodes{},
 	}
 }
@@ -266,6 +275,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/password",
 		ratelimit.Guard(passwordChange, ratelimit.ClientKey, process.changePassword))
 	process.registerProxyRoutes(mux)
+	process.registerMessagingRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)
@@ -648,6 +658,25 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 		Target: body.DeviceID,
 		Detail: payload,
 	})
+	// A sent message belongs in the conversation immediately, with an honest
+	// `queued` status. Waiting for the device would mean it vanishing for
+	// however long the device takes to answer — or forever, if it never does.
+	if spec.Kind == "send_sms" && process.inbox != nil {
+		commandID := id
+		if err := process.inbox.RecordOutbound(request.Context(), entry.TenantID,
+			messaging.Message{
+				DeviceID:  body.DeviceID,
+				Peer:      body.To,
+				Body:      body.Body,
+				CommandID: &commandID,
+			}); err != nil {
+			// Not fatal: the message is queued either way, and refusing the
+			// send because the conversation could not be updated would be
+			// the wrong trade.
+			slog.Warn("outbound message not recorded",
+				"tenant_id", entry.TenantID, "command_id", id, "error", err)
+		}
+	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"id": id, "status": "queued"})
 }
@@ -792,6 +821,47 @@ func (process *process) listCommands(writer http.ResponseWriter, request *http.R
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"commands": list})
+}
+
+// settlingResults records a command result and, when it settles a send,
+// updates the message in the conversation.
+type settlingResults struct {
+	inner interface {
+		RecordResult(tenantID string, result dispatch.CommandResult) error
+	}
+	inbox messaging.Store
+}
+
+func (handler settlingResults) RecordResult(
+	tenantID string,
+	result dispatch.CommandResult,
+) error {
+	// The command record comes first: it is the durable one, and a message
+	// left saying `queued` is a far smaller problem than a command whose
+	// outcome was lost.
+	if err := handler.inner.RecordResult(tenantID, result); err != nil {
+		return err
+	}
+	if handler.inbox == nil {
+		return nil
+	}
+	status := "sent"
+	if result.Status != dispatch.ResultSucceeded {
+		status = "failed"
+	}
+	reason := result.Reason
+	if reason == "" {
+		reason = result.ReasonCode
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Every command kind is offered; only one has a message waiting on it, and
+	// the update matches nothing for the rest.
+	if err := handler.inbox.SettleOutbound(ctx, tenantID, result.CommandID, status, reason); err != nil {
+		slog.Warn("outbound message not settled",
+			"tenant_id", tenantID, "command_id", result.CommandID, "error", err)
+	}
+	return nil
 }
 
 // tenantKey limits by tenant, falling back to the client address when the

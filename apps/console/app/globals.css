@@ -916,3 +916,65 @@ form {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* ── Conversation ───────────────────────────────────────────────────────── */
+
+.conversation {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* Direction is carried by alignment as well as colour, so it survives a
+   monochrome screen and colour-blind vision. */
+.msg {
+  max-width: min(42rem, 82%);
+  padding: var(--s3);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+}
+
+.msg-in {
+  align-self: flex-start;
+  background: var(--surface);
+  border-bottom-left-radius: var(--radius);
+}
+
+.msg-out {
+  align-self: flex-end;
+  background: var(--accent-wash);
+  border-bottom-right-radius: var(--radius);
+}
+
+.msg-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg-meta {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+  font-size: var(--text-xs);
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover:not(:disabled) {
+  color: var(--bad);
+}

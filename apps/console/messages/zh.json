@@ -232,5 +232,18 @@
   "cmd.rotate_ip": "更换 IP",
   "proxy.countryRules": "国家规则",
   "proxy.noCountryRules": "还没有配置国家规则。",
-  "proxy.colCountry": "国家"
+  "proxy.colCountry": "国家",
+  "inbox.threads": "会话",
+  "inbox.threadsNote": "最近的在前",
+  "inbox.noThreads": "还没有会话。",
+  "inbox.messages": "条消息",
+  "inbox.unsent": "未送出",
+  "inbox.remove": "删除",
+  "inbox.deleteThread": "删除整个会话",
+  "inbox.confirmDeleteThread": "确定删除整个会话？不可恢复。",
+  "inbox.statusQueued": "排队中",
+  "inbox.statusSent": "已发送",
+  "inbox.statusFailed": "失败",
+  "inbox.statusReceived": "已接收",
+  "inbox.colLast": "最新"
 }

@@ -232,5 +232,18 @@
   "cmd.rotate_ip": "New IP address",
   "proxy.countryRules": "Country rules",
   "proxy.noCountryRules": "No country rules configured.",
-  "proxy.colCountry": "Country"
+  "proxy.colCountry": "Country",
+  "inbox.threads": "Conversations",
+  "inbox.threadsNote": "most recent first",
+  "inbox.noThreads": "No conversations yet.",
+  "inbox.messages": "messages",
+  "inbox.unsent": "unsent",
+  "inbox.remove": "Delete",
+  "inbox.deleteThread": "Delete conversation",
+  "inbox.confirmDeleteThread": "Delete this entire conversation? This cannot be undone.",
+  "inbox.statusQueued": "queued",
+  "inbox.statusSent": "sent",
+  "inbox.statusFailed": "failed",
+  "inbox.statusReceived": "received",
+  "inbox.colLast": "Latest"
 }

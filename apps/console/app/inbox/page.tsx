@@ -1,7 +1,8 @@
 import { LiveReload } from "@/components/live-reload";
 import { SendSmsForm } from "@/components/send-sms";
 import { Card, EmptyState } from "@/components/ui";
-import { fetchDevices, fetchMessages, type MessageRow } from "@/lib/catalog";
+import Link from "next/link";
+import { fetchDevices, fetchThreads, type ThreadRow } from "@/lib/catalog";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -10,11 +11,11 @@ export default async function InboxPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
-  let messages: MessageRow[] = [];
+  let threads: ThreadRow[] = [];
   let devices: { id: string; name: string }[] = [];
   let loadError = false;
   try {
-    messages = await fetchMessages(host, token);
+    threads = await fetchThreads(host, token);
     devices = (await fetchDevices(host, token)).map((device) => ({
       id: device.id,
       name: device.name,
@@ -22,10 +23,6 @@ export default async function InboxPage() {
   } catch {
     loadError = true;
   }
-
-  // Newest first. A message list ordered by arrival makes the reader scroll to
-  // find what just happened, which is the only thing they usually want.
-  const ordered = [...messages].sort((left, right) => right.receivedAt - left.receivedAt);
 
   return (
     <>
@@ -55,11 +52,11 @@ export default async function InboxPage() {
 
         <Card
           className="card-span-all"
-          title={t("inbox.title", locale)}
-          note={t("overview.recentNote", locale)}
+          title={t("inbox.threads", locale)}
+          note={t("inbox.threadsNote", locale)}
           bodyless
         >
-          {ordered.length === 0 ? (
+          {threads.length === 0 ? (
             <EmptyState
               title={t("empty.messages.title", locale)}
               desc={t("empty.messages.desc", locale)}
@@ -70,26 +67,35 @@ export default async function InboxPage() {
                 <thead>
                   <tr>
                     <th>{t("inbox.colPeer", locale)}</th>
-                    <th>{t("inbox.colBody", locale)}</th>
-                    <th>{t("inbox.colBearer", locale)}</th>
-                    <th>{t("inbox.colDevice", locale)}</th>
+                    <th>{t("inbox.colLast", locale)}</th>
+                    <th>{t("inbox.messages", locale)}</th>
                     <th>{t("inbox.colReceived", locale)}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ordered.map((message) => (
-                    <tr key={message.id}>
-                      <td className="mono">{message.peer}</td>
-                      <td>{message.body}</td>
-                      <td>
-                        <span className="badge badge-info">{message.bearer}</span>
+                  {threads.map((thread) => (
+                    <tr key={thread.peer}>
+                      <td className="mono">
+                        <Link href={`/inbox/${encodeURIComponent(thread.peer)}`}>
+                          {thread.peer}
+                        </Link>
                       </td>
-                      <td className="mono faint">{message.deviceId}</td>
+                      <td>
+                        {/* Which way the last message went is what says
+                            whether this conversation is waiting on you. */}
+                        <span className="faint">{thread.lastInbound ? "← " : "→ "}</span>
+                        {thread.lastBody}
+                      </td>
+                      <td>
+                        {thread.messages}
+                        {thread.unsent > 0 ? (
+                          <span className="badge badge-warn" style={{ marginLeft: "var(--s2)" }}>
+                            {thread.unsent} {t("inbox.unsent", locale)}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="mono faint">
-                        {new Date(message.receivedAt)
-                          .toISOString()
-                          .replace("T", " ")
-                          .slice(0, 19)}
+                        {new Date(thread.lastAt).toISOString().replace("T", " ").slice(0, 19)}
                       </td>
                     </tr>
                   ))}
