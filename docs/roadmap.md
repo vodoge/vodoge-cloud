@@ -1,7 +1,11 @@
 # 路线图
 
-目标与分阶段计划。决策依据见 [decisions.md](decisions.md)，
-与旧版 VoDoge、开源项目 VoCat 的逐条功能对照见同名 artifact。
+目标与分阶段计划。
+
+- 决策依据：[decisions.md](decisions.md)
+- 与旧版 VoDoge、开源项目 VoCat 的逐条功能对照：[feature-matrix.md](feature-matrix.md)
+- **可直接开工的任务分解（含环境、构建发布步骤、踩过的坑）：
+  [execution-plan.md](execution-plan.md)** —— 接手的人从这里开始
 
 ---
 

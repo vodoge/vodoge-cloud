@@ -54,8 +54,17 @@ apps/console/       Next.js tenant console (Host routing + zh/en i18n)
 apps/gateway/       Go long-connection gateway foundation
 packages/contract/  Versioned edge-cloud protocol schema
 packages/db/        PostgreSQL migrations and SQL checks (shared tables + RLS)
-docs/                Protocol and delivery semantics
+docs/               Protocol semantics, roadmap, and the handoff plan
 ```
+
+## Picking up the work
+
+Start at **[docs/execution-plan.md](docs/execution-plan.md)**. It carries the
+environment, the build-and-deploy steps for each component, the traps that have
+already bitten someone, and the phased task list with real acceptance criteria.
+
+[docs/feature-matrix.md](docs/feature-matrix.md) says what exists today,
+line by line, against the previous single-machine product and against VoCat.
 
 ## Checks
 
