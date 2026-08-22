@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
 import { fetchDevices, fetchModems, type DeviceRow, type ModemRow } from "@/lib/catalog";
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
@@ -53,7 +54,9 @@ export default async function DevicesPage() {
               <tbody>
                 {devices.map((device) => (
                   <tr key={device.id}>
-                    <td>{device.name}</td>
+                    <td>
+                      <Link href={`/devices/${device.id}`}>{device.name}</Link>
+                    </td>
                     <td className="mono faint">{device.id}</td>
                     <td>
                       <StateBadge

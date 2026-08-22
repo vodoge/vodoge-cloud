@@ -408,3 +408,79 @@ func decodeWritten(t *testing.T, frame []byte) contract.Envelope {
 }
 
 func stringPtr(value string) *string { return &value }
+
+// A command issued to a device that is already connected used to sit in the
+// queue until the link happened to drop, because pending commands were
+// delivered only at Resume. For a healthy device that is hours. The heartbeat
+// is the one thing that reliably happens on an idle session, so it is where
+// new work gets noticed.
+func TestAHeartbeatDeliversWorkQueuedDuringTheSession(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{TenantID: "t", DeviceID: "dev-1", Region: "cn"}
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+	// A session that resumes with nothing queued, then heartbeats.
+	pending := &appearingPending{}
+	conn := newMemoryConn(
+		mustEnvelope(t, contract.Envelope{
+			V: contract.ProtocolVersion, Kind: contract.MessageKindResume,
+			ID: "11111111-1111-4111-8111-111111111111", Ts: now.UnixMilli(),
+			DeviceID: device.DeviceID,
+			Payload: mustJSON(t, contract.ResumePayload{
+				ConnectionID: "conn-1", LastAssignedSeq: "0", LastAckedSeq: "0",
+				PendingGapIds: []string{}, CapabilityMatrixVersion: "1",
+			}),
+		}),
+		mustEnvelope(t, contract.Envelope{
+			V: contract.ProtocolVersion, Kind: contract.MessageKindPing,
+			ID: "22222222-2222-4222-8222-222222222222", Ts: now.UnixMilli(),
+			DeviceID: device.DeviceID,
+			Payload:  mustJSON(t, contract.PingPayload{ConnectionID: "conn-1"}),
+		}),
+	)
+	server := &Server{
+		Hub:      session.NewHub(),
+		Journal:  ingress.NewJournal(),
+		Now:      func() time.Time { return now },
+		Commands: pending,
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v", err)
+	}
+
+	var delivered bool
+	for i := 0; i < conn.nwrites(); i++ {
+		if decodeWritten(t, conn.written(i)).Kind == contract.MessageKindCommandDeliver {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Fatal("a command queued mid-session was never delivered")
+	}
+}
+
+// Answers nothing on the first ask and one command afterwards, standing in for
+// a console issuing a command while the session is already up.
+type appearingPending struct {
+	asked int
+}
+
+func (p *appearingPending) PendingForDevice(
+	tenantID, deviceID string,
+	now time.Time,
+) []dispatch.PendingCommand {
+	p.asked++
+	if p.asked == 1 {
+		return nil
+	}
+	return []dispatch.PendingCommand{{
+		Attempt: 1,
+		Command: dispatch.Command{
+			TenantID: tenantID, ID: "cmd-late", DeviceID: deviceID,
+			Kind:     "modem_report",
+			Payload:  []byte(`{"kind":"ModemReport","modem_imei":"867018069514820"}`),
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		},
+	}}
+}

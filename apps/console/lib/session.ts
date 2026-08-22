@@ -90,6 +90,32 @@ export function bearerHeader(token: string | undefined): Record<string, string> 
 }
 
 /**
+ * The Authorization header a proxied gateway call needs, if any.
+ *
+ * The session cookie is httpOnly, so a browser calling /v1/* cannot present it
+ * as the bearer credential the gateway requires — every such request was
+ * answered 401, which is why the console could render data fetched on the
+ * server but could not perform a single action from the page. The middleware
+ * attaches it on the way through, which keeps the token out of client
+ * JavaScript.
+ *
+ * Only gateway paths get it. A token on a request to a console page would be
+ * pointless, and widening the rule is how a credential ends up somewhere
+ * nobody expected it.
+ */
+export function gatewayAuthHeader(
+  pathname: string,
+  token: string | undefined,
+): Record<string, string> {
+  if (!pathname.startsWith(`${GATEWAY_PREFIX}/`)) {
+    return {};
+  }
+  return bearerHeader(token);
+}
+
+const GATEWAY_PREFIX = "/v1";
+
+/**
  * Where to send someone who needs to sign in first.
  *
  * The destination is kept so they land where they were headed, but only when it

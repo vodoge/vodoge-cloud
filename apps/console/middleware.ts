@@ -5,7 +5,12 @@ import {
   decideTenantRoute,
   requestHost,
 } from "./lib/host";
-import { isPublicPath, loginRedirect, SESSION_COOKIE } from "./lib/session";
+import {
+  gatewayAuthHeader,
+  isPublicPath,
+  loginRedirect,
+  SESSION_COOKIE,
+} from "./lib/session";
 import { TENANT_HEADER, getSharedDirectory } from "./lib/tenant";
 
 export async function middleware(request: NextRequest) {
@@ -51,6 +56,11 @@ export async function middleware(request: NextRequest) {
   }
 
   const headers = new Headers(request.headers);
+  for (const [name, value] of Object.entries(
+    gatewayAuthHeader(request.nextUrl.pathname, request.cookies.get(SESSION_COOKIE)?.value),
+  )) {
+    headers.set(name, value);
+  }
   headers.set(TENANT_HEADER.id, tenant.tenant_id);
   headers.set(TENANT_HEADER.slug, tenant.slug);
   headers.set(TENANT_HEADER.region, tenant.region);

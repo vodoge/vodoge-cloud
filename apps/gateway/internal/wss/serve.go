@@ -183,6 +183,16 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			}, server.now()); err != nil {
 				return err
 			}
+			// Pending commands used to be delivered only at Resume, so one
+			// issued to a device that was already connected waited for the
+			// next reconnect — hours, for a healthy device. The heartbeat is
+			// the one thing that reliably happens on an idle session, which
+			// makes it the natural place to notice new work; latency is
+			// bounded by the edge's heartbeat interval rather than by
+			// whenever the link happens to drop.
+			if err := server.deliverPending(device, conn, server.now()); err != nil {
+				return err
+			}
 		case contract.MessageKindCommandReceipt:
 			if server.Receipts == nil {
 				break

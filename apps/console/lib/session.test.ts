@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   bearerHeader,
   clearedSessionCookie,
+  gatewayAuthHeader,
   isPublicPath,
   loginRedirect,
   safeNext,
@@ -78,4 +79,29 @@ test("the sign-in and sign-out endpoints are reachable without a session", () =>
   // Everything else under /api stays gated.
   assert.equal(isPublicPath("/api/devices"), false);
   assert.equal(isPublicPath("/api"), false);
+});
+
+test("a gateway call carries the session as a bearer credential", () => {
+  // Without this the console could render server-fetched data but every action
+  // taken from a page — send an SMS, run a diagnostic — was answered 401,
+  // because the cookie is httpOnly and the gateway wants a bearer token.
+  assert.deepEqual(gatewayAuthHeader("/v1/commands", "tok"), {
+    authorization: "Bearer tok",
+  });
+  assert.deepEqual(gatewayAuthHeader("/v1/devices", "  tok  "), {
+    authorization: "Bearer tok",
+  });
+});
+
+test("nothing else gets the credential", () => {
+  assert.deepEqual(gatewayAuthHeader("/devices", "tok"), {});
+  assert.deepEqual(gatewayAuthHeader("/login", "tok"), {});
+  // A path that merely starts with the same letters is not the gateway.
+  assert.deepEqual(gatewayAuthHeader("/v1x/commands", "tok"), {});
+  assert.deepEqual(gatewayAuthHeader("/v1", "tok"), {});
+});
+
+test("no session means no header rather than an empty one", () => {
+  assert.deepEqual(gatewayAuthHeader("/v1/commands", undefined), {});
+  assert.deepEqual(gatewayAuthHeader("/v1/commands", "   "), {});
 });
