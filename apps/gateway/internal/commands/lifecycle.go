@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
@@ -23,7 +24,11 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var pending []dispatch.PendingCommand
-	_ = tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+	// The error is reported, not discarded. Discarding it is why the command
+	// relay silently did nothing on every deployment: the query failed on a
+	// missing grant, returned no rows, and a queued command that is never
+	// delivered looks exactly like one waiting for a device to reconnect.
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT c.id::text,
 			       c.device_id::text,
@@ -63,6 +68,11 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 		}
 		return rows.Err()
 	})
+	if err != nil {
+		slog.Warn("pending commands could not be read",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+		return nil
+	}
 	return pending
 }
 

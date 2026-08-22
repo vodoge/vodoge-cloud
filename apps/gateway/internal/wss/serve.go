@@ -187,6 +187,22 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 		return err
 	}
 
+	// Pending commands were delivered only at Resume, so one issued to a
+	// device that was already connected waited for the link to drop — hours,
+	// for a healthy device.
+	//
+	// Hooking it to the heartbeat was the first attempt and did not work: a
+	// device that polls its modems every eight seconds is never idle long
+	// enough to send one, so the commands sat queued while the session was
+	// perfectly healthy. It hangs off any inbound traffic now, which covers
+	// both a busy device and a quiet one.
+	//
+	// Rate limited because the check is a database query and a busy device
+	// sends far more often than a command arrives. Five seconds bounds the
+	// delay to less than an operator notices while keeping the query rare.
+	const pendingEvery = 5 * time.Second
+	lastPendingCheck := now
+
 	for {
 		if err := conn.SetReadDeadline(server.now().Add(session.IdleTimeout)); err != nil {
 			return err
@@ -202,6 +218,13 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			return errors.New("connection superseded")
 		}
 		server.hintPresence(device.DeviceID)
+
+		if seen := server.now(); seen.Sub(lastPendingCheck) >= pendingEvery {
+			lastPendingCheck = seen
+			if err := server.deliverPending(device, conn, seen); err != nil {
+				return err
+			}
+		}
 
 		switch envelope.Kind {
 		case contract.MessageKindPing:
@@ -219,16 +242,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			}, server.now()); err != nil {
 				return err
 			}
-			// Pending commands used to be delivered only at Resume, so one
-			// issued to a device that was already connected waited for the
-			// next reconnect — hours, for a healthy device. The heartbeat is
-			// the one thing that reliably happens on an idle session, which
-			// makes it the natural place to notice new work; latency is
-			// bounded by the edge's heartbeat interval rather than by
-			// whenever the link happens to drop.
-			if err := server.deliverPending(device, conn, server.now()); err != nil {
-				return err
-			}
+
 		case contract.MessageKindCommandReceipt:
 			if server.Receipts == nil {
 				break
@@ -353,7 +367,15 @@ func (server *Server) deliverPending(device identity.Device, conn FrameConn, now
 	if server.Commands == nil {
 		return nil
 	}
-	for _, pending := range server.Commands.PendingForDevice(device.TenantID, device.DeviceID, now) {
+	pendingList := server.Commands.PendingForDevice(device.TenantID, device.DeviceID, now)
+	if len(pendingList) > 0 {
+		// Logged because this path was silently doing nothing on every
+		// deployment for want of one grant, and the only way anyone would
+		// have known is a command that stayed queued.
+		slog.Info("delivering queued commands",
+			"device_id", device.DeviceID, "count", len(pendingList))
+	}
+	for _, pending := range pendingList {
 		if pending.Command.Expired(now) {
 			continue
 		}

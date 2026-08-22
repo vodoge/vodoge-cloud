@@ -411,10 +411,14 @@ func stringPtr(value string) *string { return &value }
 
 // A command issued to a device that is already connected used to sit in the
 // queue until the link happened to drop, because pending commands were
-// delivered only at Resume. For a healthy device that is hours. The heartbeat
-// is the one thing that reliably happens on an idle session, so it is where
-// new work gets noticed.
-func TestAHeartbeatDeliversWorkQueuedDuringTheSession(t *testing.T) {
+// delivered only at Resume.
+//
+// Hooking it to the heartbeat was the first fix and did not work: a device
+// that polls its modems every eight seconds never goes idle long enough to
+// send one, so the commands sat queued while the session was healthy. Any
+// inbound envelope triggers the check now — here, an uplink record rather
+// than a Ping, which is what a busy device actually sends.
+func TestTrafficFromABusyDeviceDeliversQueuedWork(t *testing.T) {
 	t.Parallel()
 
 	device := identity.Device{TenantID: "t", DeviceID: "dev-1", Region: "cn"}
@@ -442,7 +446,9 @@ func TestAHeartbeatDeliversWorkQueuedDuringTheSession(t *testing.T) {
 	server := &Server{
 		Hub:      session.NewHub(),
 		Journal:  ingress.NewJournal(),
-		Now:      func() time.Time { return now },
+		// The pending check is rate limited to five seconds, so the clock has
+		// to move past that between the resume and the envelope.
+		Now:      advancingClock(now),
 		Commands: pending,
 	}
 	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
@@ -484,3 +490,18 @@ func (p *appearingPending) PendingForDevice(
 		},
 	}}
 }
+
+
+// advancingClock returns a clock that moves ten seconds each time it is read,
+// so the rate-limited pending check is past its interval by the time the
+// second envelope arrives.
+func advancingClock(start time.Time) func() time.Time {
+	current := start
+	return func() time.Time {
+		current = current.Add(10 * time.Second)
+		return current
+	}
+}
+
+// seqPointer is the sequenced-envelope helper the other tests inline.
+func seqPointer(value string) *string { return &value }

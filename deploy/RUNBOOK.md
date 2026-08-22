@@ -290,6 +290,35 @@ Binding needs `CAP_NET_RAW` for `SO_BINDTODEVICE`. If every listener reports a
 bind failure naming the interface, check the service's capabilities before
 looking anywhere else.
 
+## The command relay
+
+Commands are queued by the console and handed to a device when it is
+connected. Two things about that path are worth knowing, because both were
+broken and neither announced itself.
+
+**Grants.** `PendingForDevice` joins `app.command_outbox` for the attempt
+count. `vodoge_app` had no SELECT on that table, the query failed every time,
+and the caller discarded the error — so every command ever issued sat in
+`queued` forever while the device stayed connected and healthy. A queued
+command looks exactly like one waiting for a device that has not reconnected,
+which is why it went unnoticed. Fixed in 0027; the error is reported now.
+
+**When delivery happens.** Originally only at Resume, so a command issued to a
+connected device waited for the link to drop — hours, for a healthy device.
+Hooking it to the heartbeat did not work either: a device polling its modems
+every eight seconds never goes idle long enough to send one. It now runs off
+any inbound envelope, rate limited to once every five seconds.
+
+To check whether commands are reaching a device:
+
+```sh
+docker logs vodoge-cloud-gateway-1 --since 5m | grep "delivering queued commands"
+docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -tAc   "SELECT count(*) FROM app.command_receipts"
+```
+
+Deliveries logged with no receipts arriving means the gateway is sending and
+the edge is not answering — the problem is on the device, not here.
+
 ## Metrics
 
 `GET /metrics` on the gateway, Prometheus text format, no client library —
