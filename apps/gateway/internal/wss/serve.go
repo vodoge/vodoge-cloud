@@ -219,15 +219,15 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			if err != nil {
 				return err
 			}
-			// Reported, not rejected: see deviceStateViolations. A silent
-			// accept is what let three wrong enum values reach the console.
-			if envelope.Kind == contract.MessageKindDeviceState {
-				if violations := deviceStateViolations(envelope.Payload); len(violations) > 0 {
-					slog.Warn("device state violates the contract",
-						"tenant_id", device.TenantID,
-						"device_id", device.DeviceID,
-						"violations", strings.Join(violations, "; "))
-				}
+			// Reported, not rejected: see violations. A silent accept is what
+			// let four wrong enum values reach storage across two message
+			// kinds, none of which anything noticed until a column read wrong.
+			if found := violations(envelope.Kind, envelope.Payload); len(found) > 0 {
+				slog.Warn("payload violates the contract",
+					"tenant_id", device.TenantID,
+					"device_id", device.DeviceID,
+					"kind", string(envelope.Kind),
+					"violations", strings.Join(found, "; "))
 			}
 			result, err := server.Journal.Accept(ingress.Record{
 				TenantID:   device.TenantID,

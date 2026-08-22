@@ -357,3 +357,50 @@ type ProtocolErrorPayload struct {
 }
 
 type Command json.RawMessage
+
+// FieldConstraint is one enum-constrained field inside a payload.
+//
+// Path uses dots for objects and `[]` for arrays, e.g. `modems[].state`.
+type FieldConstraint struct {
+	Path string
+	Enum []string
+}
+
+// PayloadConstraints lists, per message kind, every field the schema
+// constrains to a fixed set of values.
+//
+// Generated rather than written by hand: the hand-written version of this
+// check knew about three fields, and those three were only discovered after
+// twenty thousand envelopes had been stored with values outside the enum.
+// A field added to the schema is covered here without anyone remembering to
+// extend it.
+var PayloadConstraints = map[MessageKind][]FieldConstraint{
+	MessageKindUplinkGap: {
+		{Path: "reason", Enum: []string{"queue_capacity", "storage_corruption", "operator_purge"}},
+	},
+	MessageKindCommandReceipt: {
+		{Path: "status", Enum: []string{"accepted", "duplicate", "retry_later"}},
+	},
+	MessageKindSmsReceived: {
+		{Path: "bearer", Enum: []string{"cs", "ims", "nas", "unknown"}},
+		{Path: "encoding", Enum: []string{"gsm7", "ucs2", "8bit", "unknown"}},
+	},
+	MessageKindDeviceState: {
+		{Path: "modems[].state", Enum: []string{"online", "offline", "recovering", "unknown"}},
+		{Path: "modems[].registration", Enum: []string{"registered", "searching", "denied", "unregistered", "unknown"}},
+		{Path: "modems[].capability.sms_mo", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
+		{Path: "modems[].capability.sms_mt", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
+	},
+	MessageKindCommandResult: {
+		{Path: "status", Enum: []string{"succeeded", "failed", "unknown", "expired", "cancelled"}},
+	},
+	MessageKindEsimInventory: {
+		{Path: "profiles[].state", Enum: []string{"enabled", "disabled", "deleted", "unknown"}},
+	},
+	MessageKindAlert: {
+		{Path: "level", Enum: []string{"info", "warning", "error", "critical"}},
+	},
+	MessageKindProtocolError: {
+		{Path: "code", Enum: []string{"invalid_envelope", "frame_too_large", "unsupported_version", "wrong_direction", "device_id_mismatch", "sequence_conflict", "sequence_state_invalid", "connection_superseded", "rate_limited"}},
+	},
+}
