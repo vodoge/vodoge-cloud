@@ -29,6 +29,31 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 	// missing grant, returned no rows, and a queued command that is never
 	// delivered looks exactly like one waiting for a device to reconnect.
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		// Retire this device's lapsed commands before reading the rest.
+		//
+		// The SELECT below filters on expires_at, so a lapsed command was
+		// already undeliverable -- but nothing ever moved it off 'queued', and
+		// the console reports that status as waiting for the device. Seventeen
+		// commands issued while the uplink was down were still reported as
+		// pending hours after they expired.
+		//
+		// Resume is the trigger because it is the only tenant-scoped path that
+		// runs on its own: app.tenants is under FORCE row-level security keyed
+		// to the current tenant, so nothing can enumerate tenants to sweep them
+		// globally. A device that never reconnects keeps its stale rows until
+		// it does.
+		var expired int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT app.expire_overdue_commands($1::uuid, $2::uuid, $3)`,
+			tenantID, deviceID, now,
+		).Scan(&expired); err != nil {
+			return err
+		}
+		if expired > 0 {
+			slog.Info("retired commands that outlived their expiry",
+				"tenant_id", tenantID, "device_id", deviceID, "count", expired)
+		}
+
 		rows, err := tx.QueryContext(ctx, `
 			SELECT c.id::text,
 			       c.device_id::text,
