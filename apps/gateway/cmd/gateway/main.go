@@ -27,8 +27,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
-	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
@@ -37,14 +37,15 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
-	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/observe"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
-	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/observe"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ratelimit"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
-	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
@@ -80,6 +81,11 @@ func main() {
 		proc.rules = rules.SQL{DB: sqlStore.DB}
 		proc.config = settings.SQL{DB: sqlStore.DB}
 		proc.proxies = proxy.SQL{DB: sqlStore.DB}
+		// Constructed here rather than later: everything wired below captures
+		// it by value, so a dispatcher created after them would leave each one
+		// holding nil and every notification silently unsent.
+		proc.notify = notify.New(proc.config, notify.Registry(), notify.Options{})
+		defer proc.notify.Close()
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.cards = cards.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
@@ -99,7 +105,9 @@ func main() {
 		// it updates the conversation as well as the command. Wrapped rather
 		// than folded into SQLLifecycle: what a command did and what a message
 		// shows are different concerns that happen to share one event.
-		proc.session.Results = settlingResults{inner: lifecycle, inbox: proc.inbox}
+		proc.session.Results = settlingResults{
+			inner: lifecycle, inbox: proc.inbox, notify: proc.notify,
+		}
 		proc.session.AfterInsert = proc.afterInsert
 		proc.session.ResumeReport = proc.recordResume
 	}
@@ -184,10 +192,11 @@ type process struct {
 	rules   rules.Store
 	codes   enroll.CodeStore
 	metrics *observe.Registry
-	config   settings.Store
-	proxies  proxy.Store
-	inbox    messaging.Store
-	cards    cards.Store
+	notify  *notify.Dispatcher
+	config  settings.Store
+	proxies proxy.Store
+	inbox   messaging.Store
+	cards   cards.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -288,6 +297,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/esim/profiles", process.listEsimProfiles)
 	mux.HandleFunc("GET /v1/settings", process.readSettings)
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
+	mux.HandleFunc("POST /v1/settings/notifications/{channel}/test", process.testNotification)
 	mux.HandleFunc("POST /v1/auth/password",
 		ratelimit.Guard(passwordChange, ratelimit.ClientKey, process.changePassword))
 	process.registerProxyRoutes(mux)
@@ -805,6 +815,45 @@ func (process *process) listJournal(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, map[string]any{"events": events, "next_before": next})
 }
 
+// testNotification delivers one message through a single channel and reports
+// what happened.
+//
+// Synchronous, unlike every other notification: the point of the button is
+// that whoever pressed it sees the result, including the failure and why. A
+// queued test that reports success immediately would tell them nothing.
+func (process *process) testNotification(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	if process.notify == nil {
+		http.Error(writer, "notifications are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	channel := request.PathValue("channel")
+	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
+	defer cancel()
+
+	err := process.notify.SendTest(ctx, entry.TenantID, channel)
+	switch {
+	case errors.Is(err, notify.ErrNotConfigured):
+		http.Error(writer,
+			"这个渠道还没有配置好，或者没有启用", http.StatusBadRequest)
+		return
+	case err != nil:
+		// The channel's own error is the useful part — "connection refused"
+		// and "authentication failed" need completely different fixes.
+		http.Error(writer, err.Error(), http.StatusBadGateway)
+		return
+	}
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "settings.notification_tested",
+		Target: channel,
+	})
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 // readSettings returns every section, secrets replaced by a placeholder.
 //
 // The console never receives a webhook secret or an SMTP password: it would
@@ -909,7 +958,8 @@ type settlingResults struct {
 	inner interface {
 		RecordResult(tenantID string, result dispatch.CommandResult) error
 	}
-	inbox messaging.Store
+	inbox  messaging.Store
+	notify *notify.Dispatcher
 }
 
 func (handler settlingResults) RecordResult(
@@ -928,6 +978,12 @@ func (handler settlingResults) RecordResult(
 	status := "sent"
 	if result.Status != dispatch.ResultSucceeded {
 		status = "failed"
+		handler.notify.Notify(notify.Event{
+			Kind:     notify.KindCommandFailed,
+			TenantID: tenantID,
+			Title:    "命令执行失败",
+			Body:     strings.TrimSpace(result.Reason + " " + result.ReasonCode),
+		})
 	}
 	reason := result.Reason
 	if reason == "" {
@@ -1126,6 +1182,17 @@ func (process *process) afterInsert(tenantID, _deviceID, kind string, payload []
 	if err := json.Unmarshal(payload, &sms); err != nil || strings.TrimSpace(sms.Body) == "" {
 		return
 	}
+	// Every inbound message is worth telling someone about, not only the ones
+	// that match an OTP rule. The notification carries who it is from and not
+	// what it says: a message body travelling to whatever third party a tenant
+	// configured, on every message, is a different thing from a nudge to go
+	// and look.
+	process.notify.Notify(notify.Event{
+		Kind:     notify.KindSmsReceived,
+		TenantID: tenantID,
+		Title:    "收到短信 · " + sms.Peer,
+		Body:     "在控制台的收件箱查看。",
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	list, err := process.rules.List(ctx, tenantID)

@@ -985,3 +985,12 @@ form {
   background: var(--accent-wash);
   color: var(--accent-ink);
 }
+
+/* A test button and its result stay together, so a failure reads as belonging
+   to the channel it came from rather than to the form. */
+.test-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}

@@ -72,6 +72,10 @@ export default async function SettingsPage() {
             initial={settings.notifications ?? {}}
             fields={NOTIFICATION_FIELDS}
             labels={labels}
+            // Only the channels the gateway can actually deliver through.
+            // Offering a test for one it cannot send is a button that can
+            // only fail.
+            testable={["webhook", "bark", "email"]}
           />
         </Card>
 
@@ -118,6 +122,9 @@ function fieldLabels(locale: Locale): Record<string, string> {
     changePassword: t("settings.changePassword", locale),
     passwordChanged: t("settings.passwordChanged", locale),
     passwordNote: t("settings.passwordNote", locale),
+    test: t("settings.test", locale),
+    testSent: t("settings.testSent", locale),
+    testFailed: t("settings.testFailed", locale),
   };
   for (const path of paths) {
     labels[path] = t(`f.${path}`, locale);

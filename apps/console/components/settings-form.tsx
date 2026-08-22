@@ -18,11 +18,14 @@ export function SettingsForm({
   initial,
   fields,
   labels,
+  testable = [],
 }: {
   section: Section;
   initial: Record<string, unknown>;
   fields: Field[];
   labels: Labels;
+  /** Channels this section can send a live test through. */
+  testable?: string[];
 }) {
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     Object.fromEntries(fields.map((field) => [field.path, read(initial, field.path)])),
@@ -75,7 +78,55 @@ export function SettingsForm({
           <span className={status === "error" ? "error" : "faint"}>{message}</span>
         ) : null}
       </div>
+
+      {/* A channel is only really configured once something has arrived at the
+          other end. Testing after saving, not before, because the test uses
+          what is stored — including the secret the console never had. */}
+      {testable.length > 0 ? (
+        <div className="button-row">
+          {testable.map((channel) => (
+            <TestButton key={channel} channel={channel} labels={labels} />
+          ))}
+        </div>
+      ) : null}
     </form>
+  );
+}
+
+/**
+ * Sends one real notification through one channel and reports what came back.
+ *
+ * The gateway answers synchronously for exactly this: a queued test that
+ * reported success immediately would tell the person pressing it nothing.
+ */
+function TestButton({ channel, labels }: { channel: string; labels: Labels }) {
+  const [state, setState] = useState<"idle" | "sending" | "ok" | "failed">("idle");
+  const [detail, setDetail] = useState<string | null>(null);
+
+  async function send() {
+    setState("sending");
+    setDetail(null);
+    const response = await fetch(`/v1/settings/notifications/${channel}/test`, {
+      method: "POST",
+    });
+    if (response.ok) {
+      setState("ok");
+      return;
+    }
+    setState("failed");
+    // The channel's own error is the useful half: "connection refused" and
+    // "authentication failed" need completely different fixes.
+    setDetail((await response.text()).trim() || labels.testFailed);
+  }
+
+  return (
+    <span className="test-slot">
+      <button type="button" onClick={() => void send()} disabled={state === "sending"}>
+        {labels.test} · {channel}
+      </button>
+      {state === "ok" ? <span className="badge badge-ok">{labels.testSent}</span> : null}
+      {state === "failed" ? <span className="error">{detail}</span> : null}
+    </span>
   );
 }
 
