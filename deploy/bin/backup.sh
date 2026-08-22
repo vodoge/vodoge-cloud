@@ -48,6 +48,13 @@ KEEP_LOCAL_DAYS=3
 # 里留一条上报失败要好。
 OPS_URL="http://127.0.0.1:${VODOGE_GATEWAY_PORT:-18080}/v1/ops/backup-failed"
 OPS_TOKEN="${VODOGE_OPS_TOKEN:-}"
+# vodoge-backup.service 没有 EnvironmentFile,所以从 .env 里单独取这一个键。
+# 刻意不 source 整个文件:那会把库口令、Redis 口令一并带进这个脚本的环境,
+# 而这个脚本会 exec 别的进程。改 unit 也能解决,但 unit 不在仓库里,下一个人
+# 看这个脚本时不会知道它依赖一份别处的配置。
+if [ -z "$OPS_TOKEN" ] && [ -r "$APP_DIR/deploy/.env" ]; then
+  OPS_TOKEN=$(sed -n 's/^VODOGE_OPS_TOKEN=//p' "$APP_DIR/deploy/.env" | tail -1)
+fi
 last_message=""
 failed_line=""
 
