@@ -4,6 +4,7 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ type Store interface {
 	ListMessages(ctx context.Context, tenantID string) ([]Message, error)
 	ListSessions(ctx context.Context, tenantID string) ([]Session, error)
 	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
+	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
 }
 
 // Modem is one module as the edge last reported it.
@@ -70,6 +72,18 @@ type Modem struct {
 	LastSeen     *int64  `json:"last_seen"`
 }
 
+// CommandRow is one issued command and, once it lands, what came back.
+type CommandRow struct {
+	ID          string          `json:"id"`
+	DeviceID    string          `json:"device_id"`
+	Kind        string          `json:"kind"`
+	Status      string          `json:"status"`
+	IssuedAt    int64           `json:"issued_at"`
+	CompletedAt *int64          `json:"completed_at"`
+	Payload     json.RawMessage `json:"payload"`
+	Result      json.RawMessage `json:"result"`
+}
+
 // Empty is used when PostgreSQL is not configured.
 type Empty struct{}
 
@@ -84,6 +98,10 @@ func (Empty) ListMessages(context.Context, string) ([]Message, error) {
 }
 
 // ListSessions returns no sessions.
+func (Empty) ListCommands(context.Context, string, string, int) ([]CommandRow, error) {
+	return []CommandRow{}, nil
+}
+
 func (Empty) ListModems(context.Context, string) ([]Modem, error) {
 	return []Modem{}, nil
 }
@@ -98,6 +116,29 @@ type Memory struct {
 	Devices  map[string][]Device
 	Messages map[string][]Message
 	Modems   map[string][]Modem
+	Commands map[string][]CommandRow
+}
+
+// ListCommands returns the tenant's commands, filtered to one device when
+// deviceID is given.
+func (store *Memory) ListCommands(
+	_ context.Context,
+	tenantID, deviceID string,
+	limit int,
+) ([]CommandRow, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := []CommandRow{}
+	for _, row := range store.Commands[tenantID] {
+		if deviceID != "" && row.DeviceID != deviceID {
+			continue
+		}
+		out = append(out, row)
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // ListModems returns modems for tenantID, never another tenant's rows.
@@ -142,6 +183,70 @@ type SQL struct {
 }
 
 // ListModems returns the tenant's modules, most recently seen first.
+// ListCommands returns a device's recent commands, newest first, with whatever
+// result has landed. A relayed diagnostic is asynchronous — the console issues
+// it and reads the answer here — so the result column is the point of this
+// query, not an afterthought.
+func (store SQL) ListCommands(
+	ctx context.Context,
+	tenantID, deviceID string,
+	limit int,
+) ([]CommandRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var rows []CommandRow
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		queried, err := tx.QueryContext(ctx, `
+			SELECT id::text,
+			       device_id::text,
+			       kind::text,
+			       status::text,
+			       issued_at,
+			       completed_at,
+			       payload,
+			       result
+			  FROM app.commands
+			 WHERE ($1 = '' OR device_id = $1::uuid)
+			 ORDER BY issued_at DESC
+			 LIMIT $2`, deviceID, limit)
+		if err != nil {
+			return err
+		}
+		defer queried.Close()
+		for queried.Next() {
+			var item CommandRow
+			var issued time.Time
+			var completed sql.NullTime
+			var payload, result []byte
+			if err := queried.Scan(
+				&item.ID, &item.DeviceID, &item.Kind, &item.Status,
+				&issued, &completed, &payload, &result,
+			); err != nil {
+				return err
+			}
+			item.IssuedAt = issued.UnixMilli()
+			if completed.Valid {
+				ms := completed.Time.UnixMilli()
+				item.CompletedAt = &ms
+			}
+			item.Payload = json.RawMessage(payload)
+			if len(result) > 0 {
+				item.Result = json.RawMessage(result)
+			}
+			rows = append(rows, item)
+		}
+		return queried.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []CommandRow{}
+	}
+	return rows, nil
+}
+
 func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, error) {
 	var modems []Modem
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {

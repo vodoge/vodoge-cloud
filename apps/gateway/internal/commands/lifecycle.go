@@ -105,12 +105,19 @@ func (store SQLLifecycle) RecordResult(tenantID string, result dispatch.CommandR
 		return nil
 	}
 	status := string(result.Status)
-	detail, err := json.Marshal(map[string]any{
+	record := map[string]any{
 		"status":      status,
 		"attempts":    result.Attempts,
 		"reason_code": result.ReasonCode,
 		"reason":      result.Reason,
-	})
+	}
+	// A diagnostic's reading is the point of running it, so it is stored
+	// alongside the outcome rather than only logged. Kept as raw JSON: the
+	// shape differs per command and the gateway has no reason to interpret it.
+	if len(result.Details) > 0 {
+		record["details"] = json.RawMessage(result.Details)
+	}
+	detail, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -207,6 +209,16 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			if err != nil {
 				return err
 			}
+			// Reported, not rejected: see deviceStateViolations. A silent
+			// accept is what let three wrong enum values reach the console.
+			if envelope.Kind == contract.MessageKindDeviceState {
+				if violations := deviceStateViolations(envelope.Payload); len(violations) > 0 {
+					slog.Warn("device state violates the contract",
+						"tenant_id", device.TenantID,
+						"device_id", device.DeviceID,
+						"violations", strings.Join(violations, "; "))
+				}
+			}
 			result, err := server.Journal.Accept(ingress.Record{
 				TenantID:   device.TenantID,
 				DeviceID:   device.DeviceID,
@@ -239,6 +251,11 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 					Attempts:    int(payload.Attempts),
 					ReasonCode:  stringValue(payload.ReasonCode),
 					Reason:      stringValue(payload.Reason),
+					// What the diagnostic actually read. Without this a
+					// relayed AT command reports only that it succeeded, and
+					// the response the operator asked for is discarded one
+					// step before it is stored.
+					Details: detailsJSON(payload.Details),
 				}); err != nil {
 					return err
 				}
@@ -394,4 +411,22 @@ func kindEnvelopeID(kind contract.MessageKind, now time.Time) string {
 		suffix = 0
 	}
 	return fmt.Sprintf("00000000-0000-4000-8000-%012d", suffix+uint64(now.UnixMilli()%1_000_000_000000))
+}
+
+// detailsJSON re-encodes a command result's free-form details for storage.
+//
+// Absent details stay absent: an empty JSON object would be indistinguishable
+// from an action that genuinely reported nothing.
+func detailsJSON(details any) []byte {
+	if details == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return nil
+	}
+	if string(encoded) == "null" {
+		return nil
+	}
+	return encoded
 }

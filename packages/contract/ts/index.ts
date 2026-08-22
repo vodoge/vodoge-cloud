@@ -218,6 +218,53 @@ export interface RestartModemCommand {
   modem_imei: Imei;
 }
 
+export interface RunAtCommandCommand {
+  kind: "RunAtCommand";
+  modem_imei: Imei;
+  command: string;
+  timeout_ms?: number;
+}
+
+export interface SendUssdCommand {
+  kind: "SendUssd";
+  modem_imei: Imei;
+  code: string;
+  stage?: "start" | "continue" | "cancel";
+}
+
+export interface SetRadioCommand {
+  kind: "SetRadio";
+  modem_imei: Imei;
+  enabled: boolean;
+}
+
+export interface ScanOperatorsCommand {
+  kind: "ScanOperators";
+  modem_imei: Imei;
+}
+
+export interface SelectOperatorCommand {
+  kind: "SelectOperator";
+  modem_imei: Imei;
+  mode: "automatic" | "manual";
+  plmn?: Plmn;
+}
+
+export interface ModemReportCommand {
+  kind: "ModemReport";
+  modem_imei: Imei;
+}
+
+export interface ResetModemUsbCommand {
+  kind: "ResetModemUsb";
+  modem_imei: Imei;
+}
+
+export interface ListEsimProfilesCommand {
+  kind: "ListEsimProfiles";
+  modem_imei: Imei;
+}
+
 export interface SwitchEsimProfileCommand {
   kind: "SwitchEsimProfile";
   modem_imei: Imei;
@@ -264,6 +311,14 @@ export type Command =
   | SendSmsCommand |
   | RestartModemCommand |
   | SwitchEsimProfileCommand |
+  | ListEsimProfilesCommand |
+  | RunAtCommandCommand |
+  | SendUssdCommand |
+  | SetRadioCommand |
+  | ScanOperatorsCommand |
+  | SelectOperatorCommand |
+  | ModemReportCommand |
+  | ResetModemUsbCommand |
   | UpdateCardPolicyCommand |
   | UpdateCapabilityMatrixCommand |
   | SelfUpdateCommand;

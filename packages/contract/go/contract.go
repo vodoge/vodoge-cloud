@@ -207,6 +207,53 @@ type RestartModemCommand struct {
 	ModemImei string `json:"modem_imei"`
 }
 
+type RunAtCommandCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Command   string `json:"command"`
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+}
+
+type SendUssdCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Code      string  `json:"code"`
+	Stage     *string `json:"stage,omitempty"`
+}
+
+type SetRadioCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type ScanOperatorsCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
+type SelectOperatorCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Mode      string  `json:"mode"`
+	Plmn      *string `json:"plmn,omitempty"`
+}
+
+type ModemReportCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
+type ResetModemUsbCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
+type ListEsimProfilesCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
 type SwitchEsimProfileCommand struct {
 	Kind        string `json:"kind"`
 	ModemImei   string `json:"modem_imei"`

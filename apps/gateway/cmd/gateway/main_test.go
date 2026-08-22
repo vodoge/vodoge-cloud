@@ -591,3 +591,54 @@ func TestModemsAreTenantScopedAndAuthenticated(t *testing.T) {
 		t.Fatal("another tenant's modem was served")
 	}
 }
+
+// Offboarding sets status rather than deleting the tenant, because audit_log
+// has a foreign key to tenants with no cascade. That only stops anything if
+// the boundary reads the status — it did not, so a suspended tenant kept
+// working until every one of its sessions expired on its own.
+func TestASuspendedTenantIsRefused(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	if !proc.tenants.Cache.Store(region.Entry{
+		TenantID: "t-a", Slug: "a", Region: "cn", Status: "suspended",
+	}) {
+		t.Fatal("store suspended tenant")
+	}
+	handler := proc.handler()
+
+	withSession := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/devices", nil)
+	withSession.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, withSession)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "lab-a") {
+		t.Fatal("a suspended tenant's data was served")
+	}
+
+	// And it must not be able to mint a new session either, which is the one
+	// thing offboarding has to stop.
+	body := strings.NewReader(`{"email":"someone@example.com","password":"whatever-it-is"}`)
+	loginRequest := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/auth/login", body)
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, loginRequest)
+	if login.Code != http.StatusForbidden {
+		t.Fatalf("login status = %d, want 403", login.Code)
+	}
+}
+
+// A tenant that is still active must be unaffected by the check above.
+func TestAnActiveTenantIsUnaffected(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	request := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/devices", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+}

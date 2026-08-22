@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -233,6 +234,8 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
 	mux.HandleFunc("PUT /v1/capability-matrix", process.putMatrix)
 	mux.HandleFunc("POST /v1/commands", process.enqueueCommand)
+	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
+	mux.HandleFunc("GET /v1/commands", process.listCommands)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)
@@ -245,10 +248,21 @@ func (process *process) handler() http.Handler {
 //
 // The tenant comes from the Host, which scopes the attempt rather than granting
 // anything: the password still has to match a user inside that tenant.
+// The only tenant status that may transact. `suspended` and `disabled` both
+// stop at the boundary; the difference between them is an operations
+// distinction, not an access one.
+const tenantActive = "active"
+
 func (process *process) login(writer http.ResponseWriter, request *http.Request) {
 	entry, ok := process.hostTenant(request)
 	if !ok {
 		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return
+	}
+	// Same gate as tenantFromRequest: without it an offboarded tenant could
+	// still mint fresh sessions, which is the one thing offboarding must stop.
+	if entry.Status != tenantActive {
+		http.Error(writer, "tenant is not active", http.StatusForbidden)
 		return
 	}
 	if process.users == nil || process.authSessions == nil || process.hasher == nil {
@@ -357,6 +371,14 @@ func (process *process) tenantFromRequest(
 	entry, ok := process.hostTenant(request)
 	if !ok {
 		http.Error(writer, "unknown tenant", http.StatusNotFound)
+		return region.Entry{}, false
+	}
+	// An offboarded tenant kept working until every one of its sessions
+	// expired, because status was resolved and then never read. Checked before
+	// authentication so a suspended tenant cannot be probed for whether a
+	// given credential is valid.
+	if entry.Status != tenantActive {
+		http.Error(writer, "tenant is not active", http.StatusForbidden)
 		return region.Entry{}, false
 	}
 	if process.authSessions == nil {
@@ -535,51 +557,30 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 	if !ok {
 		return
 	}
-	var body struct {
-		DeviceID string `json:"device_id"`
-		To       string `json:"to"`
-		Text     string `json:"body"`
-		Kind     string `json:"kind"`
-	}
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+	var body commands.Request
+	if err := json.NewDecoder(io.LimitReader(request.Body, 64<<10)).Decode(&body); err != nil {
 		http.Error(writer, "invalid command", http.StatusBadRequest)
 		return
 	}
-	if body.DeviceID == "" {
-		http.Error(writer, "device_id is required", http.StatusBadRequest)
-		return
-	}
-	kind := body.Kind
-	if kind == "" {
-		kind = "send_sms"
-	}
-	var payload []byte
-	var err error
-	switch kind {
-	case "send_sms":
-		payload, err = json.Marshal(map[string]any{
-			"kind": "SendSms",
-			"to":   body.To,
-			"body": body.Text,
-		})
-	case "restart_modem":
-		payload, err = json.Marshal(map[string]any{
-			"kind":       "RestartModem",
-			"modem_imei": body.To,
-		})
-	default:
-		http.Error(writer, "unsupported command kind", http.StatusBadRequest)
-		return
-	}
+	spec, payload, err := commands.BuildPayload(body)
 	if err != nil {
+		// The reason is the caller's to fix, so it is returned rather than
+		// flattened into a generic 400.
+		var invalid commands.ErrInvalid
+		if errors.As(err, &invalid) {
+			http.Error(writer, invalid.Reason, http.StatusBadRequest)
+			return
+		}
 		http.Error(writer, "invalid command", http.StatusBadRequest)
 		return
 	}
 	id, err := process.queue.Enqueue(request.Context(), commands.Item{
-		TenantID:       entry.TenantID,
-		DeviceID:       body.DeviceID,
-		Kind:           kind,
-		IdempotencyKey: kind + ":" + body.DeviceID + ":" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		TenantID: entry.TenantID,
+		DeviceID: body.DeviceID,
+		Kind:     spec.Kind,
+		// Two identical commands issued a nanosecond apart are two separate
+		// intentions — a second AT+CSQ is a second reading, not a duplicate.
+		IdempotencyKey: fmt.Sprintf("%s:%s:%d", spec.Kind, body.DeviceID, time.Now().UnixNano()),
 		Payload:        payload,
 		ExpiresAt:      time.Now().Add(10 * time.Minute),
 	})
@@ -589,12 +590,57 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 	}
 	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
 		Actor:  "console",
-		Action: kind,
+		Action: spec.Kind,
 		Target: body.DeviceID,
 		Detail: payload,
 	})
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"id": id, "status": "queued"})
+}
+
+// listCommands is how the console reads a relayed diagnostic's answer. The
+// command is queued, the device runs it, and the result lands here — there is
+// no synchronous path and there should not be one, since a scan takes minutes.
+func (process *process) listCommands(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	deviceID := request.URL.Query().Get("device_id")
+	limit := 50
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	list, err := process.catalog.ListCommands(request.Context(), entry.TenantID, deviceID, limit)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"commands": list})
+}
+
+// commandKinds tells the console what this gateway can dispatch, so the device
+// page renders the actions the deployment actually supports instead of a list
+// compiled into the frontend that can drift from the backend.
+func (process *process) commandKinds(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := process.tenantFromRequest(writer, request); !ok {
+		return
+	}
+	type entry struct {
+		Kind       string `json:"kind"`
+		NeedsModem bool   `json:"needs_modem"`
+		Mutating   bool   `json:"mutating"`
+	}
+	list := make([]entry, 0, len(commands.Kinds()))
+	for _, kind := range commands.Kinds() {
+		spec, _ := commands.Lookup(kind)
+		list = append(list, entry{Kind: spec.Kind, NeedsModem: spec.NeedsModem, Mutating: spec.Mutating})
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"commands": list})
 }
 
 func (process *process) listAudit(writer http.ResponseWriter, request *http.Request) {

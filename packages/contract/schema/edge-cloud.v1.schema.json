@@ -603,6 +603,14 @@
         { "$ref": "#/$defs/SendSmsCommand" },
         { "$ref": "#/$defs/RestartModemCommand" },
         { "$ref": "#/$defs/SwitchEsimProfileCommand" },
+      { "$ref": "#/$defs/ListEsimProfilesCommand" },
+      { "$ref": "#/$defs/RunAtCommandCommand" },
+      { "$ref": "#/$defs/SendUssdCommand" },
+      { "$ref": "#/$defs/SetRadioCommand" },
+      { "$ref": "#/$defs/ScanOperatorsCommand" },
+      { "$ref": "#/$defs/SelectOperatorCommand" },
+      { "$ref": "#/$defs/ModemReportCommand" },
+      { "$ref": "#/$defs/ResetModemUsbCommand" },
         { "$ref": "#/$defs/UpdateCardPolicyCommand" },
         { "$ref": "#/$defs/UpdateCapabilityMatrixCommand" },
         { "$ref": "#/$defs/SelfUpdateCommand" }
@@ -630,6 +638,91 @@
       "required": ["kind", "modem_imei"],
       "properties": {
         "kind": { "const": "RestartModem" },
+        "modem_imei": { "$ref": "#/$defs/Imei" }
+      }
+    },
+    "RunAtCommandCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei", "command"],
+      "properties": {
+        "kind": { "const": "RunAtCommand" },
+        "modem_imei": { "$ref": "#/$defs/Imei" },
+        "command": { "type": "string", "minLength": 2, "maxLength": 1024 },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 300000 }
+      }
+    },
+    "SendUssdCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei", "code"],
+      "properties": {
+        "kind": { "const": "SendUssd" },
+        "modem_imei": { "$ref": "#/$defs/Imei" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 182 },
+        "stage": { "type": "string", "enum": ["start", "continue", "cancel"] }
+      }
+    },
+    "SetRadioCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei", "enabled"],
+      "properties": {
+        "kind": { "const": "SetRadio" },
+        "modem_imei": { "$ref": "#/$defs/Imei" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "ScanOperatorsCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei"],
+      "properties": {
+        "kind": { "const": "ScanOperators" },
+        "modem_imei": { "$ref": "#/$defs/Imei" }
+      }
+    },
+    "SelectOperatorCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei", "mode"],
+      "properties": {
+        "kind": { "const": "SelectOperator" },
+        "modem_imei": { "$ref": "#/$defs/Imei" },
+        "mode": { "type": "string", "enum": ["automatic", "manual"] },
+        "plmn": { "$ref": "#/$defs/Plmn" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "manual" } }, "required": ["mode"] },
+          "then": { "required": ["plmn"] }
+        }
+      ]
+    },
+    "ModemReportCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei"],
+      "properties": {
+        "kind": { "const": "ModemReport" },
+        "modem_imei": { "$ref": "#/$defs/Imei" }
+      }
+    },
+    "ResetModemUsbCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei"],
+      "properties": {
+        "kind": { "const": "ResetModemUsb" },
+        "modem_imei": { "$ref": "#/$defs/Imei" }
+      }
+    },
+    "ListEsimProfilesCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei"],
+      "properties": {
+        "kind": { "const": "ListEsimProfiles" },
         "modem_imei": { "$ref": "#/$defs/Imei" }
       }
     },
