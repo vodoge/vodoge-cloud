@@ -174,15 +174,7 @@ func main() {
 		ticker := time.NewTicker(session.IdleTimeout / 2)
 		defer ticker.Stop()
 		for range ticker.C {
-			for _, expired := range proc.session.Hub.SweepIdle(time.Now()) {
-				logger.Info("reaping an idle device session",
-					"device_id", expired.Device.DeviceID,
-					"connection_id", expired.ID,
-					"silent_for", time.Since(expired.LastPacketAt).Round(time.Second).String())
-				if expired.Close != nil {
-					expired.Close()
-				}
-			}
+			reapIdleSessions(proc.session.Hub, proc.notify, logger, time.Now())
 		}
 	}()
 
@@ -204,6 +196,52 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// notifier is the slice of the dispatcher the reaper needs, so the reaping can
+// be tested without standing up channels and a settings store.
+type notifier interface {
+	Notify(notify.Event)
+}
+
+// reapIdleSessions unbinds sessions that stopped speaking, and tells the tenant
+// that one of their devices went quiet.
+//
+// Notifying from here rather than from the socket's error path is the whole
+// point. A connection ending is normal and constant: the edge restarts, a NAT
+// rebinds, a container is replaced, and the device is back within seconds —
+// alerting on that trains people to ignore the alert. Silence past IdleTimeout
+// is different, because a device that vanished without a clean close supersedes
+// nothing and will never come back on its own.
+//
+// Detection therefore lands somewhere between IdleTimeout and IdleTimeout plus
+// the sweep period, so with the current 90s timeout a dead device is reported
+// 90 to 135 seconds after its last frame, not within 90.
+//
+// Returns how many were reaped, for tests.
+func reapIdleSessions(hub *session.Hub, alerts notifier, logger *slog.Logger, now time.Time) int {
+	expired := hub.SweepIdle(now)
+	for _, connection := range expired {
+		silent := now.Sub(connection.LastPacketAt).Round(time.Second)
+		logger.Info("reaping an idle device session",
+			"device_id", connection.Device.DeviceID,
+			"connection_id", connection.ID,
+			"silent_for", silent.String())
+		if alerts != nil {
+			alerts.Notify(notify.Event{
+				Kind:     notify.KindDeviceOffline,
+				TenantID: connection.Device.TenantID,
+				Title:    "设备离线",
+				Body: "设备 " + connection.Device.DeviceID + " 已经 " + silent.String() +
+					" 没有上报。在控制台的设备页查看。",
+				At: now,
+			})
+		}
+		if connection.Close != nil {
+			connection.Close()
+		}
+	}
+	return len(expired)
 }
 
 type process struct {

@@ -17,8 +17,11 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 )
 
@@ -757,5 +760,96 @@ func TestTheJournalIsScopedAndPayloadsAreOptIn(t *testing.T) {
 	handler.ServeHTTP(response, crossTenant)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", response.Code)
+	}
+}
+
+// recordingNotifier captures what would have been delivered.
+type recordingNotifier struct{ events []notify.Event }
+
+func (r *recordingNotifier) Notify(event notify.Event) { r.events = append(r.events, event) }
+
+// A device that stops sending frames is the one case nothing else catches: a
+// superseded session is closed at Bind and a clean close ends itself, so
+// without this the tenant's first hint is an empty console.
+func TestReapingAnIdleSessionNotifiesTheTenant(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	hub := session.NewHub()
+	closed := false
+	hub.Bind(session.Connection{
+		ID:           "connection-1",
+		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1", Region: "cn"},
+		ConnectedAt:  now.Add(-time.Hour),
+		LastPacketAt: now.Add(-session.IdleTimeout - time.Second),
+		Close:        func() { closed = true },
+	})
+
+	alerts := &recordingNotifier{}
+	if reaped := reapIdleSessions(hub, alerts, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 1 {
+		t.Fatalf("reaped = %d, want 1", reaped)
+	}
+	if !closed {
+		t.Error("the reaped connection was not closed")
+	}
+	if len(alerts.events) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(alerts.events))
+	}
+	event := alerts.events[0]
+	if event.Kind != notify.KindDeviceOffline {
+		t.Errorf("kind = %q, want %q", event.Kind, notify.KindDeviceOffline)
+	}
+	if event.TenantID != "tenant-1" {
+		t.Errorf("tenant_id = %q, want tenant-1", event.TenantID)
+	}
+	if !strings.Contains(event.Body, "device-1") {
+		t.Errorf("body = %q, want it to name the device", event.Body)
+	}
+}
+
+// The sweep runs every 45 seconds against every bound connection, so a device
+// that is merely between heartbeats must produce no notification at all.
+// Getting this wrong would page someone twice a minute per device.
+func TestASessionStillWithinTheIdleTimeoutIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	hub := session.NewHub()
+	hub.Bind(session.Connection{
+		ID:           "connection-1",
+		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1"},
+		LastPacketAt: now.Add(-session.IdleTimeout + time.Second),
+		Close:        func() { t.Error("a live connection was closed") },
+	})
+
+	alerts := &recordingNotifier{}
+	if reaped := reapIdleSessions(hub, alerts, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 0 {
+		t.Fatalf("reaped = %d, want 0", reaped)
+	}
+	if len(alerts.events) != 0 {
+		t.Fatalf("notifications = %d, want 0", len(alerts.events))
+	}
+}
+
+// A gateway without a dispatcher still serves, so the reaper must not depend on
+// one being present.
+func TestReapingWithoutANotifierStillClosesTheConnection(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	hub := session.NewHub()
+	closed := false
+	hub.Bind(session.Connection{
+		ID:           "connection-1",
+		Device:       identity.Device{TenantID: "tenant-1", DeviceID: "device-1"},
+		LastPacketAt: now.Add(-2 * session.IdleTimeout),
+		Close:        func() { closed = true },
+	})
+
+	if reaped := reapIdleSessions(hub, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), now); reaped != 1 {
+		t.Fatalf("reaped = %d, want 1", reaped)
+	}
+	if !closed {
+		t.Error("the reaped connection was not closed")
 	}
 }
