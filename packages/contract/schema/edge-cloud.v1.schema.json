@@ -56,6 +56,7 @@
     "CommandResult": { "direction": "edge_to_cloud", "sequenced": true, "max_payload_bytes": 32768 },
     "EsimInventory": { "direction": "edge_to_cloud", "sequenced": true, "max_payload_bytes": 131072 },
     "Alert": { "direction": "edge_to_cloud", "sequenced": true, "max_payload_bytes": 32768 },
+    "ProxyTraffic": { "direction": "edge_to_cloud", "sequenced": true, "max_payload_bytes": 65536 },
     "ProtocolError": { "direction": "cloud_to_edge", "sequenced": false, "max_payload_bytes": 4096 }
   },
   "$defs": {
@@ -198,6 +199,7 @@
         "CommandResult",
         "EsimInventory",
         "Alert",
+        "ProxyTraffic",
         "ProtocolError"
       ]
     },
@@ -459,6 +461,30 @@
         "bearer": { "type": "string", "enum": ["cs", "ims", "nas", "unknown"] },
         "encoding": { "type": "string", "enum": ["gsm7", "ucs2", "8bit", "unknown"] },
         "modem_storage_index": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    },
+    "ProxyTrafficPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reported_at", "instances"],
+      "properties": {
+        "reported_at": { "$ref": "#/$defs/EpochMillis" },
+        "instances": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProxyTrafficEntry" }
+        }
+      }
+    },
+    "ProxyTrafficEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "bytes_up", "bytes_down", "connections"],
+      "properties": {
+        "instance_id": { "$ref": "#/$defs/Uuid" },
+        "bytes_up": { "type": "integer", "minimum": 0 },
+        "bytes_down": { "type": "integer", "minimum": 0 },
+        "connections": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 }
       }
     },
     "DeviceStatePayload": {

@@ -30,6 +30,7 @@ export type MessageKind =
   | "CommandResult" |
   | "EsimInventory" |
   | "Alert" |
+  | "ProxyTraffic" |
   | "ProtocolError";
 
 export const SEQUENCED_KINDS: ReadonlySet<MessageKind> = new Set([
@@ -38,6 +39,7 @@ export const SEQUENCED_KINDS: ReadonlySet<MessageKind> = new Set([
   "CommandResult",
   "EsimInventory",
   "Alert",
+  "ProxyTraffic",
 ]);
 
 export type ContextValue =
@@ -147,6 +149,19 @@ export interface SmsReceivedPayload {
   bearer: "cs" | "ims" | "nas" | "unknown";
   encoding: "gsm7" | "ucs2" | "8bit" | "unknown";
   modem_storage_index?: number;
+}
+
+export interface ProxyTrafficPayload {
+  reported_at: number;
+  instances: Array<ProxyTrafficEntry>;
+}
+
+export interface ProxyTrafficEntry {
+  instance_id: Uuid;
+  bytes_up: number;
+  bytes_down: number;
+  connections: number;
+  errors?: number;
 }
 
 export interface DeviceStatePayload {

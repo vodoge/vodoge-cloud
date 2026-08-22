@@ -195,6 +195,12 @@ var catalogue = map[string]Spec{
 			return map[string]any{"kind": "ListEsimProfiles", "modem_imei": request.ModemIMEI}, nil
 		},
 	},
+	"rotate_ip": {
+		Kind: "rotate_ip", ContractKind: "RotateIp", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			return map[string]any{"kind": "RotateIp", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
 	"switch_esim_profile": {
 		Kind: "switch_esim_profile", ContractKind: "SwitchEsimProfile", NeedsModem: true, Mutating: true,
 		Build: func(request Request) (map[string]any, error) {

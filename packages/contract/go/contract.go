@@ -25,12 +25,13 @@ const (
 	MessageKindCommandResult  MessageKind = "CommandResult"
 	MessageKindEsimInventory  MessageKind = "EsimInventory"
 	MessageKindAlert          MessageKind = "Alert"
+	MessageKindProxyTraffic   MessageKind = "ProxyTraffic"
 	MessageKindProtocolError  MessageKind = "ProtocolError"
 )
 
 func (kind MessageKind) Sequenced() bool {
 	switch kind {
-	case MessageKindSmsReceived, MessageKindDeviceState, MessageKindCommandResult, MessageKindEsimInventory, MessageKindAlert:
+	case MessageKindSmsReceived, MessageKindDeviceState, MessageKindCommandResult, MessageKindEsimInventory, MessageKindAlert, MessageKindProxyTraffic:
 		return true
 	default:
 		return false
@@ -136,6 +137,19 @@ type SmsReceivedPayload struct {
 	Bearer            string `json:"bearer"`
 	Encoding          string `json:"encoding"`
 	ModemStorageIndex *int64 `json:"modem_storage_index,omitempty"`
+}
+
+type ProxyTrafficPayload struct {
+	ReportedAt int64               `json:"reported_at"`
+	Instances  []ProxyTrafficEntry `json:"instances"`
+}
+
+type ProxyTrafficEntry struct {
+	InstanceID  string `json:"instance_id"`
+	BytesUp     int64  `json:"bytes_up"`
+	BytesDown   int64  `json:"bytes_down"`
+	Connections int64  `json:"connections"`
+	Errors      *int64 `json:"errors,omitempty"`
 }
 
 type DeviceStatePayload struct {

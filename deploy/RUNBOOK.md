@@ -123,8 +123,10 @@ Offboard by setting `status` instead:
 UPDATE app.tenants SET status = 'disabled' WHERE slug = 'name';
 ```
 
-The gateway resolves a tenant regardless of status today; enforcing `status` at
-the boundary is still to be done.
+`status` is enforced at the gateway boundary: a tenant that is not `active` is
+refused before authentication runs, so a suspended tenant cannot be probed for
+whether a credential is valid, and cannot mint a new session — which is the one
+thing offboarding has to stop.
 
 ## Drills
 
@@ -159,6 +161,36 @@ sequence 1 to 28200, no missing ranges.
 The wrong-region device check (`X-05b`'s second half) is covered by unit tests
 and the region values were confirmed to differ live, but no device certificate
 from another region has been presented to this gateway.
+
+## Migrations that cannot run in a transaction
+
+`ALTER TYPE ... ADD VALUE` is refused inside a transaction block, so `0015` and
+`0018` — which add command kinds — deliberately have no `BEGIN`/`COMMIT`. Every
+statement in them is idempotent on its own, which is what makes a partial
+re-run safe.
+
+Adding a command kind to `app.command_kind` is not optional. Without it the
+gateway accepts the request, the INSERT fails on the enum, and the operator
+sees a queue error for a command that was perfectly valid.
+
+## Proxy configuration
+
+The listeners run on the edge, bound to a modem's interface so traffic leaves
+over that SIM. The cloud stores desired state and pushes it; the device
+reconciles.
+
+Two consequences worth knowing when something looks wrong:
+
+- A listener with no interface **refuses to start** and reports which modem.
+  That is deliberate — the alternative is a listener that quietly uses the
+  box's default route, which looks correct from every angle except the exit IP.
+- Saving any instance pushes the device its **whole** configuration, not the
+  row that changed. A device that missed an earlier change would otherwise stay
+  wrong forever.
+
+Binding needs `CAP_NET_RAW` for `SO_BINDTODEVICE`. If every listener reports a
+bind failure naming the interface, check the service's capabilities before
+looking anywhere else.
 
 ## Checking health
 

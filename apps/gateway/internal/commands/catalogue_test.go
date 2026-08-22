@@ -154,6 +154,8 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	t.Parallel()
 
 	readOnly := map[string]bool{"modem_report": true, "list_esim_profiles": true}
+	// rotate_ip drops the data session, so it belongs with the disruptive
+	// actions even though it reads as a small thing.
 	for _, kind := range Kinds() {
 		spec, _ := Lookup(kind)
 		if readOnly[kind] && spec.Mutating {
