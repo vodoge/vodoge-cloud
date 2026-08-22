@@ -69,6 +69,28 @@ Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
 `b/a` when `b` already exists, which silently produces `.next/static/static`
 and a console that serves no CSS.
 
+## Rate limits
+
+| Endpoint | Limit | Keyed by |
+| --- | --- | --- |
+| `POST /v1/auth/login` | 5, then one per 12s | client address |
+| `POST /v1/auth/password` | 5, then one per 12s | client address |
+| `POST /v1/commands` | 30, then two per second | tenant |
+
+Sign-in is keyed by address rather than by account on purpose: limiting by
+account lets anyone lock a colleague out by failing their password five times,
+which turns a defence into a denial of service.
+
+Commands are keyed by tenant rather than by caller, because they cost a device
+real time — an operator scan takes the radio away for over a minute — and two
+operators in one tenant should not be able to queue twice as much work for the
+same hardware.
+
+The key is the socket's remote address, not `X-Forwarded-For`. If a proxy is
+ever put in front of this, that has to change deliberately — until then a
+caller setting the header would be choosing their own bucket, which is the
+same as having no limit.
+
 ## Networks
 
 `backend` is `internal: true`. **Docker silently ignores published ports for a

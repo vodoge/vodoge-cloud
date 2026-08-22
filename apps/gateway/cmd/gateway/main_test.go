@@ -642,3 +642,78 @@ func TestAnActiveTenantIsUnaffected(t *testing.T) {
 		t.Fatalf("status = %d, want 200", response.Code)
 	}
 }
+
+// Sign-in accepted passwords as fast as a client could send them, which makes
+// a short password a matter of hours rather than years.
+func TestSignInIsRateLimited(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	attempt := func() int {
+		body := strings.NewReader(`{"email":"someone@example.com","password":"guess-again"}`)
+		request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/auth/login", body)
+		request.RemoteAddr = "203.0.113.7:44444"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	var limited bool
+	for i := 0; i < 12; i++ {
+		if attempt() == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatal("a dozen password guesses from one address were all accepted")
+	}
+}
+
+// Limiting by account would let anyone lock out a colleague by failing their
+// password a few times, so a second address must be unaffected.
+func TestOneAddressBeingLimitedDoesNotAffectAnother(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	attemptFrom := func(addr string) int {
+		body := strings.NewReader(`{"email":"someone@example.com","password":"guess-again"}`)
+		request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/auth/login", body)
+		request.RemoteAddr = addr
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	for i := 0; i < 12; i++ {
+		attemptFrom("203.0.113.9:1000")
+	}
+	if code := attemptFrom("198.51.100.4:1000"); code == http.StatusTooManyRequests {
+		t.Fatal("a second address was limited by the first one's attempts")
+	}
+}
+
+// A refusal has to say when, or a client retries in a tight loop and the
+// limit costs more than it saves.
+func TestARefusalSaysWhenToRetry(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	var last *httptest.ResponseRecorder
+	for i := 0; i < 12; i++ {
+		body := strings.NewReader(`{"email":"someone@example.com","password":"guess-again"}`)
+		request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/auth/login", body)
+		request.RemoteAddr = "192.0.2.55:5000"
+		last = httptest.NewRecorder()
+		handler.ServeHTTP(last, request)
+		if last.Code == http.StatusTooManyRequests {
+			break
+		}
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Fatal("never reached the limit")
+	}
+	if last.Header().Get("Retry-After") == "" {
+		t.Fatal("a 429 with no Retry-After tells the client nothing")
+	}
+}

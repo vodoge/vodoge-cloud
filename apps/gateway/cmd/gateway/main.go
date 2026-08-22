@@ -37,6 +37,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ratelimit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -223,7 +224,16 @@ func (process *process) handler() http.Handler {
 	// Sign-in has no session yet, and tenant lookup is what the console uses to
 	// decide whether a subdomain exists at all. Both stay open; neither returns
 	// tenant data.
-	mux.HandleFunc("POST /v1/auth/login", process.login)
+	// Sign-in is limited per client address rather than per account: limiting
+	// by account lets anyone lock out a colleague by failing their password
+	// five times, which turns a defence into a denial of service. Five
+	// attempts then one every twelve seconds is invisible to a person typing
+	// a password and ruinous to anything trying a dictionary.
+	signIn := ratelimit.New(1.0/12.0, 5)
+	mux.HandleFunc("POST /v1/auth/login",
+		ratelimit.Guard(signIn, ratelimit.ClientKey, process.login))
+	// A password change is a credential guess too — it needs the current one.
+	passwordChange := ratelimit.New(1.0/12.0, 5)
 	mux.HandleFunc("POST /v1/auth/logout", process.logout)
 	mux.HandleFunc("GET /v1/auth/session", process.currentSession)
 	mux.HandleFunc("GET /v1/tenant", process.tenants.ServeHost)
@@ -241,12 +251,20 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
 	mux.HandleFunc("PUT /v1/capability-matrix", process.putMatrix)
-	mux.HandleFunc("POST /v1/commands", process.enqueueCommand)
+	// Commands cost a device real time — an operator scan takes the radio away
+	// for over a minute — so this is limited per tenant rather than per
+	// caller: two operators in one tenant should not be able to queue twice as
+	// much work for the same hardware. The burst covers working through a
+	// device page; the rate is well above what a person generates.
+	commandRate := ratelimit.New(2, 30)
+	mux.HandleFunc("POST /v1/commands",
+		ratelimit.Guard(commandRate, process.tenantKey, process.enqueueCommand))
 	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
 	mux.HandleFunc("GET /v1/commands", process.listCommands)
 	mux.HandleFunc("GET /v1/settings", process.readSettings)
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
-	mux.HandleFunc("POST /v1/auth/password", process.changePassword)
+	mux.HandleFunc("POST /v1/auth/password",
+		ratelimit.Guard(passwordChange, ratelimit.ClientKey, process.changePassword))
 	process.registerProxyRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
@@ -774,6 +792,16 @@ func (process *process) listCommands(writer http.ResponseWriter, request *http.R
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"commands": list})
+}
+
+// tenantKey limits by tenant, falling back to the client address when the
+// tenant cannot be resolved — an unresolvable host is exactly the traffic that
+// should not get an unlimited allowance while it is being refused.
+func (process *process) tenantKey(request *http.Request) string {
+	if entry, ok := process.hostTenant(request); ok {
+		return "tenant:" + entry.TenantID
+	}
+	return "addr:" + ratelimit.ClientKey(request)
 }
 
 // commandKinds tells the console what this gateway can dispatch, so the device
