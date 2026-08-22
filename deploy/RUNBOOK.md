@@ -80,8 +80,7 @@ error anywhere. Any service that must be reachable from the host has to join
 ## Migrations
 
 ```sh
-docker exec -i vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 \
-  < packages/db/migrations/00NN_name.sql
+/opt/vodoge-cloud/bin/migrate.sh packages/db/migrations/00NN_name.sql
 ```
 
 Two things about the schema that are not obvious:
@@ -161,6 +160,64 @@ sequence 1 to 28200, no missing ranges.
 The wrong-region device check (`X-05b`'s second half) is covered by unit tests
 and the region values were confirmed to differ live, but no device certificate
 from another region has been presented to this gateway.
+
+## Backups
+
+A dump runs at 03:30 daily (`vodoge-backup.timer`), deliberately half an hour
+after TREK's on the same box — two `pg_dump`s at once on 2 vCPU starve sshd,
+which has happened here before.
+
+It produces two things:
+
+| Path | For | Leaves the machine |
+| --- | --- | --- |
+| `/opt/vodoge-cloud/stage/` | fast local rollback, 3 days | no |
+| `/srv/vodoge-export/vodoge/` | the NAS pulls this over SFTP | yes |
+
+The export carries the dump, the role definitions, the migrations, the compose
+file, a redacted `.env`, and a `MANIFEST` with checksums and row counts.
+
+It does **not** carry passwords. Role password hashes are stripped, because a
+restore needs each role's *attributes* — `vodoge_resolver` must be `BYPASSRLS`,
+`vodoge_app` must not be — and not its password, which lives in the password
+manager alongside `.env`. Redis is not backed up either: it holds presence and
+wakeup hints, all of which come back from PostgreSQL and a device reconnect.
+
+The script refuses to overwrite a good backup with a bad one. It checks that
+`pg_restore --list` can read the archive, and that the archive contains at
+least five tables' worth of data — an empty dump passes `--list` perfectly
+well, and connecting to the wrong database is the way to produce one.
+
+### Restoring
+
+```sh
+docker exec -i vodoge-cloud-postgres-1 psql -U vodoge -d postgres   -c 'CREATE DATABASE vodoge_restored'
+docker exec -i vodoge-cloud-postgres-1 psql -U vodoge -d postgres   < roles.sql
+docker exec -i vodoge-cloud-postgres-1 pg_restore -U vodoge -d vodoge_restored   < vodoge.dump
+```
+
+Then set the role passwords from the password manager, and check the row
+counts against the `MANIFEST` **before** pointing anything at it. That is what
+catches restoring yesterday's snapshot, or a restore that only half completed,
+while it is still cheap to notice.
+
+Restore was drilled on 2026-08-22 against a scratch database: every row count
+matched the manifest, and all 21 RLS policies came back with `FORCE` intact on
+all 21 tables. Verifying the policies matters more than the rows — a database
+that restored without them starts, queries, and shows every tenant everyone
+else's data.
+
+## Migrations
+
+Applied through `bin/migrate.sh`, which records each one in
+`app.schema_migrations` and skips what is already applied. It refuses to
+re-apply a file whose contents have changed since it ran: a changed file under
+the same number is the failure ordinary version tracking misses entirely.
+
+Before 0020 there was no record at all of which migrations had run, so the only
+evidence that one had been applied was that its columns existed. That is enough
+day to day and useless when restoring a dump and needing to know which version
+it holds.
 
 ## Migrations that cannot run in a transaction
 
