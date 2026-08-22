@@ -36,3 +36,87 @@ jobs:
       - name: Console tests
         working-directory: apps/console
         run: npm ci && npm test
+      - name: Console types
+        working-directory: apps/console
+        run: npm run typecheck
+
+  # Every migration, applied in order to an empty database.
+  #
+  # Applying them one at a time to a fresh database is the only thing that
+  # proves the set can be replayed — which is what a restore does, and what
+  # setting up a second region would do. Until this existed, a migration that
+  # only worked against the one live database would pass every check here and
+  # fail the first time anyone needed it.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: vodoge
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: vodoge
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vodoge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Roles the schema depends on
+        env:
+          PGPASSWORD: ci
+        # The policies reference these by name, so an empty database cannot
+        # take the migrations without them. Passwords are irrelevant here —
+        # every one of these is NOLOGIN.
+        run: |
+          psql -h localhost -U vodoge -d vodoge -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE vodoge_owner NOLOGIN;
+          CREATE ROLE vodoge_app NOLOGIN;
+          CREATE ROLE vodoge_gateway NOLOGIN IN ROLE vodoge_app;
+          CREATE ROLE vodoge_dispatcher NOLOGIN IN ROLE vodoge_app;
+          CREATE ROLE vodoge_resolver NOLOGIN BYPASSRLS;
+          GRANT vodoge_owner TO vodoge;
+          GRANT vodoge_resolver TO vodoge;
+          SQL
+      - name: Replay every migration in order
+        env:
+          PGPASSWORD: ci
+          PSQL_DIRECT: "1"
+        # The same runner production uses, so this exercises the real thing
+        # rather than a second code path that only exists for CI.
+        run: ./deploy/bin/migrate.sh packages/db/migrations/*.sql
+      - name: Every table with a tenant_id enforces isolation
+        env:
+          PGPASSWORD: ci
+        # A table holding tenant data without FORCE row level security is the
+        # one mistake in this schema that nothing else would catch: it works
+        # perfectly, and shows every tenant everyone else's rows.
+        run: |
+          unguarded=$(psql -h localhost -U vodoge -d vodoge -tAc "
+            SELECT string_agg(c.relname, ' ')
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id'
+             WHERE n.nspname = 'app'
+               AND c.relkind = 'r'
+               AND NOT c.relforcerowsecurity")
+          if [ -n "$unguarded" ]; then
+            echo "these hold tenant data without FORCE row level security: $unguarded"
+            exit 1
+          fi
+          echo "every tenant table enforces isolation"
+      - name: Migrations are recorded
+        env:
+          PGPASSWORD: ci
+        # The runner records each migration, so a mismatch means a file was
+        # added to the directory in a way the runner could not parse.
+        run: |
+          files=$(ls packages/db/migrations/*.sql | wc -l)
+          rows=$(psql -h localhost -U vodoge -d vodoge -tAc "SELECT count(*) FROM app.schema_migrations")
+          echo "files=$files recorded=$rows"
+          if [ "$files" -ne "$rows" ]; then
+            echo "every migration must insert its own schema_migrations row"
+            exit 1
+          fi

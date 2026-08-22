@@ -19,12 +19,40 @@ PG_DB=${PG_DB:-vodoge}
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
-psql_q() { docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "$1"; }
+# How to reach psql. Defaults to the compose container; CI and a scratch
+# database set PSQL_DIRECT=1 to run psql against a host instead. One runner
+# either way — a separate code path for CI would test something other than
+# what production runs.
+psql_run() {
+  if [ "${PSQL_DIRECT:-0}" = "1" ]; then
+    psql -h "${PGHOST:-localhost}" -U "$PG_USER" -d "$PG_DB" "$@"
+  else
+    docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" "$@"
+  fi
+}
+
+psql_q() { psql_run -tAc "$1"; }
 
 if [ $# -eq 0 ]; then
   log "用法: $0 <迁移文件...>"
   exit 2
 fi
+
+# The ledger is the runner's own bookkeeping, so the runner creates it.
+#
+# It cannot live only in a migration: on an empty database the first migration
+# runs before any migration has created the table to record it in. 0020 keeps
+# a matching CREATE TABLE IF NOT EXISTS for the database that was already
+# running before this script existed, and does the historical backfill.
+psql_run -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE SCHEMA IF NOT EXISTS app;
+CREATE TABLE IF NOT EXISTS app.schema_migrations (
+    version integer PRIMARY KEY,
+    name text NOT NULL,
+    sha256 text,
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
 
 for file in "$@"; do
   base=$(basename "$file" .sql)
@@ -47,7 +75,7 @@ for file in "$@"; do
   log "应用 $base"
   # ON_ERROR_STOP 让任何一条语句失败都中断,而不是继续跑完剩下的、
   # 留下一个应用了一半的迁移。
-  docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 < "$file"
+  psql_run -v ON_ERROR_STOP=1 -q < "$file"
 
   # 记录发生在应用之后:一个失败的迁移不该留下"已应用"的痕迹。
   psql_q "INSERT INTO app.schema_migrations (version, name, sha256)

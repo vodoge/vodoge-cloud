@@ -69,6 +69,25 @@ Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
 `b/a` when `b` already exists, which silently produces `.next/static/static`
 and a console that serves no CSS.
 
+## The contract lives in two places
+
+`packages/contract/` is the source of truth. The edge repository vendors a copy
+of the schema and the generator so it can build and run CI without this
+repository beside it.
+
+The cost is silent drift, and it has already bitten once: editing the schema
+here and regenerating the edge's Rust leaves the edge's *schema* stale, so its
+"generated types match schema" check compares new code against an old schema
+and fails for a reason that reads like nonsense.
+
+So syncing is one command that does all three parts:
+
+```sh
+./scripts/sync-contract.sh
+```
+
+Run it after any schema change, before pushing either repository.
+
 ## Rate limits
 
 | Endpoint | Limit | Keyed by |
