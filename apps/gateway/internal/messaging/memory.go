@@ -83,6 +83,7 @@ func (store *Memory) RecordOutbound(_ context.Context, tenantID string, message 
 	message.Direction = "outbound"
 	message.Status = "queued"
 	message.Bearer = "unknown"
+	message.createdAt = time.Now()
 	if message.ReceivedAt == 0 {
 		message.ReceivedAt = time.Now().UnixMilli()
 	}
@@ -153,4 +154,20 @@ func (store *Memory) Seed(tenantID string, message Message) {
 		message.ID = "mem-" + strconv.Itoa(store.nextID)
 	}
 	store.messages[tenantID] = append(store.messages[tenantID], message)
+}
+
+func (store *Memory) CountOutboundSince(
+	_ context.Context,
+	tenantID string,
+	since time.Time,
+) (int, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	count := 0
+	for _, message := range store.messages[tenantID] {
+		if message.Direction == "outbound" && !message.createdAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
 }

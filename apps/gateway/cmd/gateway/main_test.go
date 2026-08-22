@@ -19,9 +19,11 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 )
 
@@ -1079,5 +1081,135 @@ func TestBackupFailureReachesTheConfiguredTenant(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no notification was delivered")
+	}
+}
+
+// hourly_limit was validated and stored from the day the settings page
+// existed, and read by nobody: a tenant could set 2 and send two hundred.
+func TestTheHourlySendLimitIsEnforced(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+	}
+	proc.inbox = &messaging.Memory{}
+	config := &settings.Memory{}
+	if err := config.Put(context.Background(), "t-a", settings.SectionSMS,
+		map[string]any{"hourly_limit": 2}); err != nil {
+		t.Fatal(err)
+	}
+	proc.config = config
+	handler := proc.handler()
+
+	send := func() int {
+		request := authorize(httptest.NewRequest(http.MethodPost,
+			"http://a.vodoge.com/v1/commands",
+			strings.NewReader(`{"device_id":"d-a","kind":"send_sms","modem_imei":"862547055142811","to":"+15551212","body":"hi"}`)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	for i := 1; i <= 2; i++ {
+		if code := send(); code != http.StatusOK {
+			t.Fatalf("send %d: status = %d, want 200", i, code)
+		}
+	}
+	if code := send(); code != http.StatusTooManyRequests {
+		t.Fatalf("third send: status = %d, want 429", code)
+	}
+
+	// The refused one must not have been queued, or the limit would only be
+	// changing the status code the console sees.
+	queue := proc.queue.(*commands.Memory)
+	if len(queue.Items) != 2 {
+		t.Fatalf("queued = %d, want 2", len(queue.Items))
+	}
+}
+
+// Zero means no limit, and so does an unset field. Reading an absent value as
+// a limit of zero-allowed would silently stop every tenant from sending.
+func TestNoConfiguredLimitDoesNotStopSending(t *testing.T) {
+	t.Parallel()
+
+	for _, document := range []map[string]any{
+		{},
+		{"hourly_limit": 0},
+	} {
+		tenants := directory.New(nil)
+		_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+		proc := signedIn(newProcess("", nil, tenants, nil, nil))
+		proc.catalog = &catalog.Memory{
+			Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+		}
+		proc.inbox = &messaging.Memory{}
+		config := &settings.Memory{}
+		if err := config.Put(context.Background(), "t-a", settings.SectionSMS, document); err != nil {
+			t.Fatal(err)
+		}
+		proc.config = config
+		handler := proc.handler()
+
+		for i := 1; i <= 5; i++ {
+			request := authorize(httptest.NewRequest(http.MethodPost,
+				"http://a.vodoge.com/v1/commands",
+				strings.NewReader(`{"device_id":"d-a","kind":"send_sms","modem_imei":"862547055142811","to":"+15551212","body":"hi"}`)))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("config %v send %d: status = %d body=%s",
+					document, i, response.Code, response.Body.String())
+			}
+		}
+	}
+}
+
+// Two commands issued back to back must not share an idempotency key.
+//
+// The key was built from time.Now().UnixNano(), which names a unit and
+// promises nothing about resolution -- on Windows successive calls return the
+// same value, and this test failed against that within three requests.
+// app.enqueue_command treats a repeated key as the same command, so in
+// production the second send was dropped with a 200 carrying the first
+// command's id, or raised when the bodies differed.
+func TestCommandsIssuedBackToBackGetDistinctKeys(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+	}
+	handler := proc.handler()
+
+	const sends = 20
+	for i := 0; i < sends; i++ {
+		request := authorize(httptest.NewRequest(http.MethodPost,
+			"http://a.vodoge.com/v1/commands",
+			strings.NewReader(`{"device_id":"d-a","kind":"restart_modem","modem_imei":"862547055142811"}`)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("send %d: status = %d body=%s", i, response.Code, response.Body.String())
+		}
+	}
+
+	seen := map[string]bool{}
+	for _, item := range proc.queue.(*commands.Memory).Items {
+		if seen[item.IdempotencyKey] {
+			t.Fatalf("idempotency key %q was reused; the database would treat these as one command",
+				item.IdempotencyKey)
+		}
+		seen[item.IdempotencyKey] = true
+	}
+	if len(seen) != sends {
+		t.Fatalf("distinct keys = %d, want %d", len(seen), sends)
 	}
 }

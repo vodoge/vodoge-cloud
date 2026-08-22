@@ -31,6 +31,14 @@ type Message struct {
 	ReceivedAt    int64   `json:"received_at"`
 	CommandID     *string `json:"command_id,omitempty"`
 	FailureReason *string `json:"failure_reason,omitempty"`
+	// createdAt is when the send was accepted, which is not ReceivedAt.
+	//
+	// SettleOutbound moves ReceivedAt to the moment the device answered, so a
+	// message queued two hours ago and acknowledged a minute ago looks like a
+	// minute old. Anything counting recent sends has to use this instead.
+	// Unexported: it mirrors the messages.created_at column and exists for the
+	// in-memory store to behave the same way, not for callers to set.
+	createdAt time.Time
 }
 
 // Thread is one conversation, as the console lists them.
@@ -49,6 +57,9 @@ type Store interface {
 	Threads(ctx context.Context, tenantID string) ([]Thread, error)
 	Thread(ctx context.Context, tenantID, peer string, limit int) ([]Message, error)
 	RecordOutbound(ctx context.Context, tenantID string, message Message) error
+	// CountOutboundSince counts sends accepted at or after a moment, which is
+	// what an hourly send limit is a limit on.
+	CountOutboundSince(ctx context.Context, tenantID string, since time.Time) (int, error)
 	SettleOutbound(ctx context.Context, tenantID, commandID, status, reason string) error
 	DeleteMessage(ctx context.Context, tenantID, id string) error
 	DeleteThread(ctx context.Context, tenantID, peer string) (int64, error)
@@ -181,6 +192,26 @@ func (store SQL) RecordOutbound(ctx context.Context, tenantID string, message Me
 			message.DeviceID, message.Peer, message.Body, message.CommandID)
 		return err
 	})
+}
+
+// CountOutboundSince counts sends this tenant accepted since a moment.
+//
+// created_at rather than received_at: SettleOutbound rewrites received_at when
+// the device answers, so counting on it would let an old message that just got
+// its receipt consume a slot in the current hour.
+func (store SQL) CountOutboundSince(
+	ctx context.Context,
+	tenantID string,
+	since time.Time,
+) (int, error) {
+	var count int
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*) FROM app.messages
+			 WHERE direction = 'outbound'
+			   AND created_at >= $1`, since).Scan(&count)
+	})
+	return count, err
 }
 
 // SettleOutbound applies what the device reported about a send.

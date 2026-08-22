@@ -9,10 +9,12 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,6 +233,66 @@ type notifier interface {
 // that is gone is that it does not come back. A grace period is the whole
 // mechanism, and making it shorter to report faster only buys false alarms.
 const offlineGrace = 90 * time.Second
+
+// randomKey returns a value no other request will produce.
+//
+// crypto/rand rather than math/rand: the cost is irrelevant next to enqueuing a
+// command, and a seeded generator would hand every gateway that restarted at
+// the same moment the same sequence.
+func randomKey() string {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		// crypto/rand does not fail on any platform this runs on, and a
+		// timestamp is a poor key -- but silently reusing one is worse than a
+		// key that is merely likely to be distinct.
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(buffer)
+}
+
+// sendAllowed reports whether another SMS may be queued for this tenant right
+// now, and the numbers to say why not.
+//
+// settings.hourly_limit has been validated and stored since the settings page
+// was written, and read by nothing: a tenant could set a limit of 2, watch the
+// console accept it, and send two hundred. A control that appears to work and
+// does not is worse than one that is missing, because the second kind gets
+// noticed.
+//
+// Both failure modes here allow the send. A limit exists to stop a runaway
+// loop, not to be the thing that stops messages going out, so an unreadable
+// settings row or an uncountable table must not become an outage -- especially
+// as the same database failure would very likely block the send anyway, with a
+// better error.
+func (process *process) sendAllowed(ctx context.Context, tenantID string) (bool, int, int) {
+	if process.config == nil || process.inbox == nil {
+		return true, 0, 0
+	}
+	config, err := process.config.Get(ctx, tenantID, settings.SectionSMS)
+	if err != nil {
+		slog.Warn("send limit not checked, settings unreadable",
+			"tenant_id", tenantID, "error", err)
+		return true, 0, 0
+	}
+	limit := 0
+	switch typed := config["hourly_limit"].(type) {
+	case float64:
+		limit = int(typed)
+	case int:
+		limit = typed
+	}
+	// Zero means no limit, which is also what an unset field decodes to.
+	if limit <= 0 {
+		return true, 0, 0
+	}
+	sent, err := process.inbox.CountOutboundSince(ctx, tenantID, time.Now().Add(-time.Hour))
+	if err != nil {
+		slog.Warn("send limit not enforced, count failed",
+			"tenant_id", tenantID, "error", err)
+		return true, limit, 0
+	}
+	return sent < limit, limit, sent
+}
 
 // backupFailed turns a report from a job outside the request path into a
 // notification.
@@ -952,14 +1014,35 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 		http.Error(writer, "invalid command", http.StatusBadRequest)
 		return
 	}
+	if spec.Kind == "send_sms" {
+		if allowed, limit, sent := process.sendAllowed(request.Context(), entry.TenantID); !allowed {
+			http.Error(writer, fmt.Sprintf(
+				"hourly send limit reached: %d of %d in the last hour", sent, limit),
+				http.StatusTooManyRequests)
+			return
+		}
+	}
 	process.metrics.Add(observe.CommandsTotal, 1, "kind", spec.Kind)
 	id, err := process.queue.Enqueue(request.Context(), commands.Item{
 		TenantID: entry.TenantID,
 		DeviceID: body.DeviceID,
 		Kind:     spec.Kind,
-		// Two identical commands issued a nanosecond apart are two separate
-		// intentions — a second AT+CSQ is a second reading, not a duplicate.
-		IdempotencyKey: fmt.Sprintf("%s:%s:%d", spec.Kind, body.DeviceID, time.Now().UnixNano()),
+		// Two commands issued in quick succession are two separate intentions
+		// -- a second AT+CSQ is a second reading, not a duplicate -- so the key
+		// has to be unique per request.
+		//
+		// This used to be time.Now().UnixNano(), which names a unit and
+		// promises nothing about resolution: successive calls can return the
+		// same value, and on Windows routinely do. Two sends inside one tick
+		// then collided on commands_tenant_idempotency_key, and
+		// app.enqueue_command's answer to a collision is to return the first
+		// command when the payloads match and to raise when they differ -- so
+		// the second message was either silently dropped with a 200 and the
+		// first command's id, or failed with a 500. Nothing surfaced either.
+		//
+		// Randomness rather than a counter because the key must stay unique
+		// across gateway restarts, which a counter starting from zero is not.
+		IdempotencyKey: fmt.Sprintf("%s:%s:%s", spec.Kind, body.DeviceID, randomKey()),
 		Payload:        payload,
 		ExpiresAt:      time.Now().Add(10 * time.Minute),
 	})
