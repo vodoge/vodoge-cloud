@@ -12,6 +12,7 @@ const NAV = [
   { href: "/inbox", key: "nav.inbox" },
   { href: "/sessions", key: "nav.sessions" },
   { href: "/rules", key: "nav.rules" },
+  { href: "/journal", key: "nav.journal" },
   { href: "/audit", key: "nav.audit" },
   { href: "/proxy", key: "nav.proxy" },
   { href: "/settings", key: "nav.settings" },

@@ -322,6 +322,37 @@ export async function fetchCardPolicies(
   });
 }
 
+export type JournalEvent = {
+  seq: number;
+  deviceId: string;
+  kind: string;
+  receivedAt: number;
+  payload: unknown;
+};
+
+export async function fetchJournal(
+  host: string,
+  token: string | undefined,
+  options: { kind?: string; deviceId?: string; limit?: number } = {},
+  fetchImpl: typeof fetch = fetch,
+): Promise<JournalEvent[]> {
+  const query = new URLSearchParams();
+  if (options.kind) query.set("kind", options.kind);
+  if (options.deviceId) query.set("device_id", options.deviceId);
+  query.set("limit", String(options.limit ?? 100));
+  const body = await getCatalog(host, `/v1/journal?${query}`, token, fetchImpl);
+  return arrayOf(body.events).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      seq: asNumber(row.seq) ?? 0,
+      deviceId: asString(row.device_id) ?? "",
+      kind: asString(row.kind) ?? "",
+      receivedAt: asNumber(row.received_at) ?? 0,
+      payload: row.payload,
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

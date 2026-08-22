@@ -274,6 +274,7 @@ func (process *process) handler() http.Handler {
 		ratelimit.Guard(commandRate, process.tenantKey, process.enqueueCommand))
 	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
 	mux.HandleFunc("GET /v1/commands", process.listCommands)
+	mux.HandleFunc("GET /v1/journal", process.listJournal)
 	mux.HandleFunc("GET /v1/settings", process.readSettings)
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
 	mux.HandleFunc("POST /v1/auth/password",
@@ -728,6 +729,50 @@ func (process *process) changePassword(writer http.ResponseWriter, request *http
 		Target: session.UserID,
 	})
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+// listJournal reads what devices actually said, as opposed to what the
+// projections made of it.
+//
+// When something looks wrong on a page the question is always whether the
+// device reported it that way or the projection mangled it. Nothing could
+// answer that before: the journal held thirty thousand envelopes and had no
+// reader.
+func (process *process) listJournal(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	query := request.URL.Query()
+	criteria := catalog.EventQuery{
+		DeviceID: query.Get("device_id"),
+		Kind:     query.Get("kind"),
+		// Payloads are opt-in: a page of DeviceState envelopes is a megabyte
+		// of JSON that the list view does not show.
+		WithPayload: query.Get("payload") == "1",
+	}
+	if raw := query.Get("before"); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			criteria.Before = parsed
+		}
+	}
+	if raw := query.Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			criteria.Limit = parsed
+		}
+	}
+	events, err := process.catalog.ListEvents(request.Context(), entry.TenantID, criteria)
+	if err != nil {
+		http.Error(writer, "journal unavailable", http.StatusInternalServerError)
+		return
+	}
+	// The cursor for the next page is the oldest row's timestamp. Returned
+	// rather than left for the caller to compute, so paging cannot drift.
+	var next int64
+	if len(events) > 0 {
+		next = events[len(events)-1].ReceivedAt
+	}
+	writeJSON(writer, map[string]any{"events": events, "next_before": next})
 }
 
 // readSettings returns every section, secrets replaced by a placeholder.

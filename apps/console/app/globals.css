@@ -978,3 +978,10 @@ form {
 .link-button:hover:not(:disabled) {
   color: var(--bad);
 }
+
+/* The selected option in a row of filter buttons. */
+.button-row button.segmented-on {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}

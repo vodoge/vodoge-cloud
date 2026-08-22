@@ -717,3 +717,45 @@ func TestARefusalSaysWhenToRetry(t *testing.T) {
 		t.Fatal("a 429 with no Retry-After tells the client nothing")
 	}
 }
+
+// The journal is the only record of what a device actually said. It must be
+// behind the same boundary as everything else, and it must not leak payloads
+// to a listing that did not ask for them.
+func TestTheJournalIsScopedAndPayloadsAreOptIn(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	proc.catalog = &catalog.Memory{
+		Events: map[string][]catalog.EventRow{
+			"t-a": {{Seq: 1, DeviceID: "d-a", Kind: "DeviceState", ReceivedAt: 1000,
+				Payload: []byte(`{"secret":"tenant-a-only"}`)}},
+			"t-b": {{Seq: 1, DeviceID: "d-b", Kind: "DeviceState", ReceivedAt: 1000,
+				Payload: []byte(`{"secret":"tenant-b-only"}`)}},
+		},
+	}
+	handler := proc.handler()
+
+	// A listing without payload=1 must not carry the payload at all.
+	body := getJSON(t, handler, "http://a.vodoge.com/v1/journal")
+	encoded, _ := json.Marshal(body)
+	if strings.Contains(string(encoded), "tenant-a-only") {
+		t.Fatal("payloads were returned to a listing that did not ask for them")
+	}
+
+	withPayload := getJSON(t, handler, "http://a.vodoge.com/v1/journal?payload=1")
+	encoded, _ = json.Marshal(withPayload)
+	if !strings.Contains(string(encoded), "tenant-a-only") {
+		t.Fatal("payload=1 did not return the payload")
+	}
+	if strings.Contains(string(encoded), "tenant-b-only") {
+		t.Fatal("another tenant's journal was served")
+	}
+
+	crossTenant := httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/journal", nil)
+	crossTenant.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, crossTenant)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+}

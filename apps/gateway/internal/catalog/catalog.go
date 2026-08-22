@@ -48,6 +48,7 @@ type Store interface {
 	ListSessions(ctx context.Context, tenantID string) ([]Session, error)
 	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
 	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
+	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
 }
 
 // Modem is one module as the edge last reported it.
@@ -84,6 +85,29 @@ type CommandRow struct {
 	Result      json.RawMessage `json:"result"`
 }
 
+// EventRow is one envelope as it landed, for the history view.
+type EventRow struct {
+	Seq        int64           `json:"seq"`
+	DeviceID   string          `json:"device_id"`
+	Kind       string          `json:"kind"`
+	ReceivedAt int64           `json:"received_at"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
+}
+
+// EventQuery narrows the history.
+type EventQuery struct {
+	DeviceID string
+	Kind     string
+	// Before is a cursor: return what arrived strictly before this instant.
+	// A timestamp rather than an offset, because rows keep arriving while
+	// someone pages and an offset would show them the same row twice.
+	Before int64
+	Limit  int
+	// WithPayload is off by default. A page of envelopes with payloads is
+	// megabytes, and the list view shows none of it.
+	WithPayload bool
+}
+
 // Empty is used when PostgreSQL is not configured.
 type Empty struct{}
 
@@ -102,6 +126,10 @@ func (Empty) ListCommands(context.Context, string, string, int) ([]CommandRow, e
 	return []CommandRow{}, nil
 }
 
+func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error) {
+	return []EventRow{}, nil
+}
+
 func (Empty) ListModems(context.Context, string) ([]Modem, error) {
 	return []Modem{}, nil
 }
@@ -117,6 +145,37 @@ type Memory struct {
 	Messages map[string][]Message
 	Modems   map[string][]Modem
 	Commands map[string][]CommandRow
+	Events   map[string][]EventRow
+}
+
+// ListEvents returns the tenant's journal entries, newest first.
+func (store *Memory) ListEvents(
+	_ context.Context,
+	tenantID string,
+	query EventQuery,
+) ([]EventRow, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := []EventRow{}
+	for _, row := range store.Events[tenantID] {
+		if query.DeviceID != "" && row.DeviceID != query.DeviceID {
+			continue
+		}
+		if query.Kind != "" && row.Kind != query.Kind {
+			continue
+		}
+		if query.Before > 0 && row.ReceivedAt >= query.Before {
+			continue
+		}
+		if !query.WithPayload {
+			row.Payload = nil
+		}
+		out = append(out, row)
+		if query.Limit > 0 && len(out) == query.Limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // ListCommands returns the tenant's commands, filtered to one device when
@@ -183,6 +242,71 @@ type SQL struct {
 }
 
 // ListModems returns the tenant's modules, most recently seen first.
+// ListEvents reads the uplink journal, newest first.
+//
+// This is the only view of what a device actually said, as opposed to what the
+// projections made of it. When a modem's state looks wrong on a page, the
+// question is always whether the device reported it that way or the projection
+// mangled it, and nothing could answer that before.
+func (store SQL) ListEvents(
+	ctx context.Context,
+	tenantID string,
+	query EventQuery,
+) ([]EventRow, error) {
+	if query.Limit <= 0 || query.Limit > 500 {
+		query.Limit = 100
+	}
+	var rows []EventRow
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		// The payload column is selected conditionally rather than always and
+		// discarded: a hundred DeviceState payloads is a megabyte of JSON the
+		// list view never shows.
+		payloadExpr := "NULL::jsonb"
+		if query.WithPayload {
+			payloadExpr = "payload"
+		}
+		before := time.Now().Add(time.Minute)
+		if query.Before > 0 {
+			before = time.UnixMilli(query.Before)
+		}
+		queried, err := tx.QueryContext(ctx, `
+			SELECT seq, device_id::text, kind, received_at, `+payloadExpr+`
+			  FROM app.ingress
+			 WHERE received_at < $1
+			   AND ($2 = '' OR device_id = $2::uuid)
+			   AND ($3 = '' OR kind = $3)
+			 ORDER BY received_at DESC, seq DESC
+			 LIMIT $4`, before, query.DeviceID, query.Kind, query.Limit)
+		if err != nil {
+			return err
+		}
+		defer queried.Close()
+		for queried.Next() {
+			var item EventRow
+			var at time.Time
+			var payload []byte
+			if err := queried.Scan(
+				&item.Seq, &item.DeviceID, &item.Kind, &at, &payload,
+			); err != nil {
+				return err
+			}
+			item.ReceivedAt = at.UnixMilli()
+			if len(payload) > 0 {
+				item.Payload = json.RawMessage(payload)
+			}
+			rows = append(rows, item)
+		}
+		return queried.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []EventRow{}
+	}
+	return rows, nil
+}
+
 // ListCommands returns a device's recent commands, newest first, with whatever
 // result has landed. A relayed diagnostic is asynchronous — the console issues
 // it and reads the answer here — so the result column is the point of this
