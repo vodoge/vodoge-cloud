@@ -55,6 +55,7 @@ type Store interface {
 	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
 	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
 	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
+	ListEsimProfiles(ctx context.Context, tenantID, deviceID string) ([]EsimProfileRow, error)
 	RenameDevice(ctx context.Context, tenantID, deviceID, name string) error
 	// RecordResume stores what a device reported when it connected.
 	RecordResume(ctx context.Context, tenantID, deviceID, edgeVersion, matrixVersion string,
@@ -95,6 +96,17 @@ type CommandRow struct {
 	CompletedAt *int64          `json:"completed_at"`
 	Payload     json.RawMessage `json:"payload"`
 	Result      json.RawMessage `json:"result"`
+}
+
+// EsimProfileRow is one profile on one eUICC, as last reported.
+type EsimProfileRow struct {
+	EID         string  `json:"eid"`
+	ICCID       string  `json:"iccid"`
+	State       string  `json:"state"`
+	Nickname    *string `json:"nickname,omitempty"`
+	ModemIMEI   *string `json:"modem_imei,omitempty"`
+	DeviceID    *string `json:"device_id,omitempty"`
+	CollectedAt int64   `json:"collected_at"`
 }
 
 // EventRow is one envelope as it landed, for the history view.
@@ -142,6 +154,10 @@ func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error)
 	return []EventRow{}, nil
 }
 
+func (Empty) ListEsimProfiles(context.Context, string, string) ([]EsimProfileRow, error) {
+	return []EsimProfileRow{}, nil
+}
+
 func (Empty) RenameDevice(context.Context, string, string, string) error { return nil }
 
 func (Empty) RecordResume(
@@ -168,6 +184,24 @@ type Memory struct {
 	Modems   map[string][]Modem
 	Commands map[string][]CommandRow
 	Events   map[string][]EventRow
+	Esim     map[string][]EsimProfileRow
+}
+
+// ListEsimProfiles returns the tenant's eUICC contents.
+func (store *Memory) ListEsimProfiles(
+	_ context.Context,
+	tenantID, deviceID string,
+) ([]EsimProfileRow, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := []EsimProfileRow{}
+	for _, row := range store.Esim[tenantID] {
+		if deviceID != "" && (row.DeviceID == nil || *row.DeviceID != deviceID) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // RecordResume stores what a device reported when it connected.
@@ -372,6 +406,48 @@ func (store SQL) DeleteDevice(ctx context.Context, tenantID, deviceID string) (b
 			`SELECT app.delete_device($1::uuid)`, deviceID).Scan(&existed)
 	})
 	return existed, err
+}
+
+// ListEsimProfiles returns what each eUICC last reported it holds.
+//
+// Deleted profiles are included. Which ICCID used to be on a chip is exactly
+// what someone needs when a card stops working after a switch, and hiding them
+// would make the inventory agree with the chip while disagreeing with history.
+func (store SQL) ListEsimProfiles(
+	ctx context.Context,
+	tenantID, deviceID string,
+) ([]EsimProfileRow, error) {
+	out := []EsimProfileRow{}
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT eid, iccid, state, nickname, modem_imei, device_id::text, collected_at
+			  FROM app.esim_profiles
+			 WHERE ($1 = '' OR device_id = $1::uuid)
+			 ORDER BY eid, state, iccid`, deviceID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var row EsimProfileRow
+			var nickname, imei, device sql.NullString
+			var collected time.Time
+			if err := rows.Scan(&row.EID, &row.ICCID, &row.State,
+				&nickname, &imei, &device, &collected); err != nil {
+				return err
+			}
+			row.Nickname = nullableString(nickname)
+			row.ModemIMEI = nullableString(imei)
+			row.DeviceID = nullableString(device)
+			row.CollectedAt = collected.UnixMilli()
+			out = append(out, row)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ListEvents reads the uplink journal, newest first.

@@ -1,8 +1,16 @@
 import Link from "next/link";
 import { DeviceAdmin } from "@/components/device-admin";
 import { DeviceConsole } from "@/components/device-console";
+import { EsimPanel } from "@/components/esim-panel";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
-import { fetchDevices, fetchModems, type DeviceRow, type ModemRow } from "@/lib/catalog";
+import {
+  fetchDevices,
+  fetchEsimProfiles,
+  fetchModems,
+  type DeviceRow,
+  type EsimProfileRow,
+  type ModemRow,
+} from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -28,11 +36,13 @@ export default async function DevicePage({
 
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
+  let esim: EsimProfileRow[] = [];
   let loadError = false;
   try {
-    [devices, modems] = await Promise.all([
+    [devices, modems, esim] = await Promise.all([
       fetchDevices(host, token),
       fetchModems(host, token),
+      fetchEsimProfiles(host, token, deviceId),
     ]);
   } catch {
     loadError = true;
@@ -133,6 +143,29 @@ export default async function DevicePage({
             }}
           />
         </Card>
+        <Card
+          className="card-span-all"
+          title={t("esim.title", locale)}
+          note={t("esim.note", locale)}
+        >
+          <EsimPanel
+            deviceId={deviceId}
+            profiles={esim}
+            modems={own.map((modem) => ({ imei: modem.imei }))}
+            labels={{
+              none: t("esim.none", locale),
+              colEid: t("esim.colEid", locale),
+              colIccid: t("esim.colIccid", locale),
+              colState: t("esim.colState", locale),
+              colNickname: t("esim.colNickname", locale),
+              colCollected: t("esim.colCollected", locale),
+              switch: t("esim.switch", locale),
+              refresh: t("esim.refresh", locale),
+              confirmSwitch: t("esim.confirmSwitch", locale),
+            }}
+          />
+        </Card>
+
         <Card title={t("device.admin", locale)} note={t("device.adminNote", locale)}>
           <DeviceAdmin
             deviceId={deviceId}

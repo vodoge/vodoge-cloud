@@ -276,6 +276,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
 	mux.HandleFunc("GET /v1/commands", process.listCommands)
 	mux.HandleFunc("GET /v1/journal", process.listJournal)
+	mux.HandleFunc("GET /v1/esim/profiles", process.listEsimProfiles)
 	mux.HandleFunc("GET /v1/settings", process.readSettings)
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
 	mux.HandleFunc("POST /v1/auth/password",
@@ -731,6 +732,21 @@ func (process *process) changePassword(writer http.ResponseWriter, request *http
 		Target: session.UserID,
 	})
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+// listEsimProfiles returns what each eUICC last reported it holds.
+func (process *process) listEsimProfiles(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	profiles, err := process.catalog.ListEsimProfiles(
+		request.Context(), entry.TenantID, request.URL.Query().Get("device_id"))
+	if err != nil {
+		http.Error(writer, "esim inventory unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(writer, map[string]any{"profiles": profiles})
 }
 
 // listJournal reads what devices actually said, as opposed to what the

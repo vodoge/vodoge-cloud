@@ -358,6 +358,38 @@ export async function fetchJournal(
   });
 }
 
+export type EsimProfileRow = {
+  eid: string;
+  iccid: string;
+  state: string;
+  nickname: string | null;
+  modemImei: string | null;
+  collectedAt: number;
+};
+
+export async function fetchEsimProfiles(
+  host: string,
+  token: string | undefined,
+  deviceId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<EsimProfileRow[]> {
+  const path = deviceId
+    ? `/v1/esim/profiles?device_id=${encodeURIComponent(deviceId)}`
+    : "/v1/esim/profiles";
+  const body = await getCatalog(host, path, token, fetchImpl);
+  return arrayOf(body.profiles).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      eid: asString(row.eid) ?? "",
+      iccid: asString(row.iccid) ?? "",
+      state: asString(row.state) ?? "unknown",
+      nickname: asString(row.nickname),
+      modemImei: asString(row.modem_imei),
+      collectedAt: asNumber(row.collected_at) ?? 0,
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

@@ -282,5 +282,16 @@
   "device.confirmDelete": "输入设备名以确认删除：{name}",
   "device.adminFailed": "保存失败。",
   "devices.colVersion": "版本",
-  "devices.colQueue": "积压"
+  "devices.colQueue": "积压",
+  "esim.title": "eSIM 配置文件",
+  "esim.note": "各 eUICC 最近一次上报的内容",
+  "esim.none": "还没有 eUICC 上报过内容。",
+  "esim.colEid": "EID",
+  "esim.colIccid": "ICCID",
+  "esim.colState": "状态",
+  "esim.colNickname": "名称",
+  "esim.colCollected": "上报时间",
+  "esim.switch": "切到这个",
+  "esim.refresh": "读取芯片",
+  "esim.confirmSwitch": "切换配置文件会让卡在重新注册期间脱网，确定继续？"
 }

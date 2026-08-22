@@ -282,5 +282,16 @@
   "device.confirmDelete": "Type the device name to confirm removal: {name}",
   "device.adminFailed": "That could not be saved.",
   "devices.colVersion": "Build",
-  "devices.colQueue": "Backlog"
+  "devices.colQueue": "Backlog",
+  "esim.title": "eSIM profiles",
+  "esim.note": "as each eUICC last reported",
+  "esim.none": "No eUICC has reported its contents yet.",
+  "esim.colEid": "EID",
+  "esim.colIccid": "ICCID",
+  "esim.colState": "State",
+  "esim.colNickname": "Name",
+  "esim.colCollected": "Reported",
+  "esim.switch": "Switch to this",
+  "esim.refresh": "Read the chip",
+  "esim.confirmSwitch": "Switching profile takes the card off the network while it re-registers. Continue?"
 }
