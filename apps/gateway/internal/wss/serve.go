@@ -75,7 +75,12 @@ type Server struct {
 	// which build it is running and how far behind its queue is. Optional, so
 	// a gateway without a database still serves.
 	ResumeReport func(tenantID, deviceID string, report DeviceReport)
-	Now          func() time.Time
+	// Metrics is optional; a gateway without one still serves.
+	Metrics interface {
+		Add(name string, delta int64, labels ...string)
+		AddGauge(name string, delta int64)
+	}
+	Now func() time.Time
 }
 
 // DeviceReport is what a device tells the gateway about itself on Resume.
@@ -162,6 +167,13 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 		return err
 	}
 	server.hintPresence(device.DeviceID)
+	// Counted from here rather than from the accept: a connection that never
+	// completed a Resume was never a session, and counting it would leave the
+	// gauge permanently above the truth.
+	if server.Metrics != nil {
+		server.Metrics.AddGauge("vodoge_device_sessions_active", 1)
+		defer server.Metrics.AddGauge("vodoge_device_sessions_active", -1)
+	}
 	if server.ResumeReport != nil {
 		server.ResumeReport(device.TenantID, device.DeviceID, DeviceReport{
 			EdgeVersion:   stringValue(resume.EdgeVersion),
@@ -247,11 +259,19 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			// let four wrong enum values reach storage across two message
 			// kinds, none of which anything noticed until a column read wrong.
 			if found := violations(envelope.Kind, envelope.Payload); len(found) > 0 {
+				if server.Metrics != nil {
+					server.Metrics.Add("vodoge_contract_violations_total", 1,
+						"kind", string(envelope.Kind))
+				}
 				slog.Warn("payload violates the contract",
 					"tenant_id", device.TenantID,
 					"device_id", device.DeviceID,
 					"kind", string(envelope.Kind),
 					"violations", strings.Join(found, "; "))
+			}
+			if server.Metrics != nil {
+				server.Metrics.Add("vodoge_ingress_records_total", 1,
+					"kind", string(envelope.Kind))
 			}
 			result, err := server.Journal.Accept(ingress.Record{
 				TenantID:   device.TenantID,

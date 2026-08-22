@@ -290,6 +290,32 @@ Binding needs `CAP_NET_RAW` for `SO_BINDTODEVICE`. If every listener reports a
 bind failure naming the interface, check the service's capabilities before
 looking anywhere else.
 
+## Metrics
+
+`GET /metrics` on the gateway, Prometheus text format, no client library —
+the set of measurements is small and fixed and a dependency tree is a real
+cost on a host with 1.6 GB of memory.
+
+```sh
+curl -s http://127.0.0.1:18080/metrics
+```
+
+Served on the plain HTTP listener only, which is published to 127.0.0.1. The
+device listener is a different port with mTLS, and operational numbers should
+not be reachable from the internet.
+
+Route labels are the matched *pattern*, never the path. A label per device id
+is an unbounded number of series, which is how one deployment destroys a
+metrics system.
+
+The most useful three:
+
+| Metric | Reads |
+| --- | --- |
+| `vodoge_device_sessions_active` | how many devices are connected right now |
+| `vodoge_contract_violations_total` | an edge sending values outside the schema |
+| `vodoge_requests_rate_limited_total` | someone hitting a limit, by route |
+
 ## Checking health
 
 ```sh

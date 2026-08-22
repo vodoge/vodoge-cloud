@@ -37,6 +37,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/observe"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
@@ -102,6 +103,8 @@ func main() {
 		proc.session.AfterInsert = proc.afterInsert
 		proc.session.ResumeReport = proc.recordResume
 	}
+
+	proc.session.Metrics = proc.metrics
 
 	handler := proc.handler()
 	httpServer := &http.Server{
@@ -180,6 +183,7 @@ type process struct {
 	audit   audit.Log
 	rules   rules.Store
 	codes   enroll.CodeStore
+	metrics *observe.Registry
 	config   settings.Store
 	proxies  proxy.Store
 	inbox    messaging.Store
@@ -219,6 +223,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
+		metrics: newRegistry(),
 		config:  &settings.Memory{},
 		proxies: &proxy.Memory{},
 		inbox:   &messaging.Memory{},
@@ -233,6 +238,10 @@ func healthHandler() http.Handler {
 
 func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
+	// Served on the plain HTTP listener only, which is published to
+	// 127.0.0.1 — operational numbers should not be reachable from the
+	// internet, and the device listener is a different port with mTLS.
+	mux.HandleFunc("GET /metrics", observe.Handler(process.metrics))
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
 	// Sign-in has no session yet, and tenant lookup is what the console uses to
@@ -290,7 +299,9 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("POST /v1/rules", process.createRule)
 	mux.HandleFunc("GET /v1/enrollment-codes", process.listEnrollmentCodes)
 	mux.HandleFunc("POST /v1/enrollment-codes", process.createEnrollmentCode)
-	return securityHeaders(mux)
+	// Metrics wrap the mux rather than each handler, so a route added later
+	// is measured without anyone remembering to measure it.
+	return securityHeaders(observe.Middleware(process.metrics, mux))
 }
 
 // login exchanges a credential for a session token.
@@ -647,6 +658,7 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 		http.Error(writer, "invalid command", http.StatusBadRequest)
 		return
 	}
+	process.metrics.Add(observe.CommandsTotal, 1, "kind", spec.Kind)
 	id, err := process.queue.Enqueue(request.Context(), commands.Item{
 		TenantID: entry.TenantID,
 		DeviceID: body.DeviceID,
@@ -946,6 +958,17 @@ func (process *process) recordResume(tenantID, deviceID string, report wss.Devic
 		slog.Warn("device resume not recorded",
 			"tenant_id", tenantID, "device_id", deviceID, "error", err)
 	}
+}
+
+// newRegistry declares every metric this process reports.
+//
+// Declared at construction rather than on first use so a series reads zero
+// before anything happens. An absent series and a zero one look very different
+// on a graph, and only one of them is true.
+func newRegistry() *observe.Registry {
+	registry := observe.New()
+	observe.Declare(registry)
+	return registry
 }
 
 // tenantKey limits by tenant, falling back to the client address when the
