@@ -15,12 +15,12 @@ import (
 
 // Upstream is a proxy the edge chains through.
 type Upstream struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Address  string         `json:"address"`
-	Protocol string         `json:"protocol"`
-	Username string         `json:"username"`
-	Enabled  bool           `json:"enabled"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Address  string `json:"address"`
+	Protocol string `json:"protocol"`
+	Username string `json:"username"`
+	Enabled  bool   `json:"enabled"`
 	// Password is never serialised. The console writes it and never reads it
 	// back, the same rule the settings secrets follow.
 	Password string `json:"-"`

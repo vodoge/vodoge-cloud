@@ -444,8 +444,8 @@ func TestTrafficFromABusyDeviceDeliversQueuedWork(t *testing.T) {
 		}),
 	)
 	server := &Server{
-		Hub:      session.NewHub(),
-		Journal:  ingress.NewJournal(),
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
 		// The pending check is rate limited to five seconds, so the clock has
 		// to move past that between the resume and the envelope.
 		Now:      advancingClock(now),
@@ -490,7 +490,6 @@ func (p *appearingPending) PendingForDevice(
 		},
 	}}
 }
-
 
 // advancingClock returns a clock that moves ten seconds each time it is read,
 // so the rate-limited pending check is past its interval by the time the

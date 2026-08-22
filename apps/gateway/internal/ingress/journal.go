@@ -29,6 +29,9 @@ var (
 type Store interface {
 	Accept(record Record) (Result, error)
 	Snapshot(tenantID, deviceID string) (Window, error)
+	// RecordUnstorable fills a sequence the real record can never occupy, so
+	// the contiguous prefix can advance past it. See ErrMalformed.
+	RecordUnstorable(record Record, reason string) error
 }
 
 // Record is one sequenced uplink envelope after authentication.
@@ -117,6 +120,25 @@ func (journal *Journal) Accept(record Record) (Result, error) {
 		device.committed = next
 	}
 	return Result{Status: StatusInserted, Window: device.window()}, nil
+}
+
+// RecordUnstorable stands in for a record this store cannot hold, so the
+// contiguous prefix advances past it instead of stopping on it.
+//
+// The in-memory journal has no storage constraints to violate, so nothing
+// reaches here in practice; it exists so tests and the memory-backed
+// deployment satisfy Store with the same semantics as PostgreSQL.
+func (journal *Journal) RecordUnstorable(record Record, reason string) error {
+	tombstone := record
+	tombstone.Kind = "Unstorable"
+	tombstone.Payload = []byte(`{"original_kind":"` + record.Kind + `"}`)
+	_ = reason
+	_, err := journal.Accept(tombstone)
+	if errors.Is(err, ErrConflict) {
+		// The sequence is already filled. That is the outcome we wanted.
+		return nil
+	}
+	return err
 }
 
 // Snapshot is the durable contiguous prefix for a device.

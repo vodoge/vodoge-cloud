@@ -316,12 +316,48 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 					"tenant_id", device.TenantID, "device_id", device.DeviceID,
 					"kind", string(envelope.Kind), "envelope_id", envelope.ID,
 					"seq", seq, "error", err)
+				// The sequence still has to be filled. Leaving it empty is
+				// not neutral: the contiguous prefix cannot cross a sequence
+				// that was never written, so the device replays this record on
+				// every reconnect and everything queued behind it waits behind
+				// it forever. Three SMS bodies carrying a NUL stalled an entire
+				// device's uplink this way.
+				//
+				// A tombstone records what was lost and why, and lets the
+				// prefix move on.
+				if tombstoneErr := server.Journal.RecordUnstorable(ingress.Record{
+					TenantID:   device.TenantID,
+					DeviceID:   device.DeviceID,
+					EnvelopeID: envelope.ID,
+					Seq:        seq,
+					Kind:       string(envelope.Kind),
+				}, err.Error()); tombstoneErr != nil {
+					// Failing to tombstone is not itself fatal to the record —
+					// it is already lost — but the uplink is now stuck, and
+					// saying so beats a silent stall.
+					slog.Error("could not tombstone an unstorable record; this device's uplink will stall",
+						"tenant_id", device.TenantID, "device_id", device.DeviceID,
+						"seq", seq, "error", tombstoneErr)
+				}
+				// The ack must describe the journal as it really is, not as
+				// this record would have left it. Claiming committed through
+				// the dropped sequence — with no missing ranges — tells the
+				// device everything below is safely stored, and it deletes
+				// records this side never had. The hole then cannot be filled
+				// from either end: the device no longer holds them and the
+				// window never advances past the gap, so the whole uplink
+				// stops. That is exactly how three thousand records got
+				// stranded.
+				window, windowErr := server.Journal.Snapshot(device.TenantID, device.DeviceID)
+				if windowErr != nil {
+					return windowErr
+				}
 				if err := writeEnvelope(conn, device.DeviceID, contract.MessageKindUplinkAck,
 					contract.UplinkAckPayload{
 						ConnectionID:     connectionID,
-						CommittedThrough: formatSeq(seq),
-						MissingRanges:    []contract.SequenceRange{},
-						MoreMissing:      false,
+						CommittedThrough: formatSeq(window.CommittedThrough),
+						MissingRanges:    toContractRanges(window.MissingRanges),
+						MoreMissing:      window.MoreMissing,
 						MaxInFlight:      32,
 					}, server.now()); err != nil {
 					return err

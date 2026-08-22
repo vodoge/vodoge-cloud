@@ -28,7 +28,7 @@ type Connection struct {
 
 // Hub stores live connections. It is safe for concurrent use.
 type Hub struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	byDevice map[string]*Connection
 	byID     map[string]string
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -47,6 +48,14 @@ func (store *SQLStore) Accept(record Record) (Result, error) {
 	if !json.Valid(record.Payload) {
 		return Result{}, fmt.Errorf("%w: payload is not JSON", ErrInvalidRecord)
 	}
+	// jsonb cannot hold a NUL and rejects the whole document over one. The
+	// record is otherwise fine, so the code point goes rather than the record.
+	payload, scrubbed := stripNulls(record.Payload)
+	if scrubbed {
+		slog.Warn("removed NUL code points a jsonb column cannot store",
+			"tenant_id", record.TenantID, "device_id", record.DeviceID,
+			"kind", record.Kind, "envelope_id", record.EnvelopeID, "seq", record.Seq)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), store.timeout())
 	defer cancel()
@@ -65,7 +74,7 @@ func (store *SQLStore) Accept(record Record) (Result, error) {
 			int64(record.Seq),
 			record.EnvelopeID,
 			record.Kind,
-			string(record.Payload),
+			string(payload),
 		).Scan(&status, &committed, &missing, &more)
 	})
 	if err != nil {
@@ -86,6 +95,42 @@ func (store *SQLStore) Accept(record Record) (Result, error) {
 		return Result{}, fmt.Errorf("%w: unknown ingress status %q", ErrInvalidRecord, status)
 	}
 	return result, nil
+}
+
+// RecordUnstorable fills a sequence with a tombstone when the real record can
+// never be stored, so the device's contiguous prefix can advance past it.
+//
+// Without this the uplink stalls permanently on the first such record: the
+// prefix cannot cross a sequence that was never written, so the device replays
+// it on every reconnect and everything queued behind it waits forever.
+func (store *SQLStore) RecordUnstorable(record Record, reason string) error {
+	if store == nil || store.DB == nil {
+		return fmt.Errorf("%w: sql store is not configured", ErrInvalidRecord)
+	}
+	if record.TenantID == "" || record.DeviceID == "" || record.EnvelopeID == "" {
+		return fmt.Errorf("%w: tenant, device, and envelope are required", ErrInvalidRecord)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), store.timeout())
+	defer cancel()
+
+	var status string
+	err := tenant.Transact(ctx, store.DB, record.TenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(
+			ctx,
+			`SELECT app.record_unstorable_ingress($1, $2, $3, $4, $5, $6)`,
+			record.TenantID,
+			record.DeviceID,
+			int64(record.Seq),
+			record.EnvelopeID,
+			record.Kind,
+			reason,
+		).Scan(&status)
+	})
+	if err != nil {
+		return fmt.Errorf("record unstorable ingress: %w", err)
+	}
+	return nil
 }
 
 // Snapshot reads the durable contiguous prefix for a device.

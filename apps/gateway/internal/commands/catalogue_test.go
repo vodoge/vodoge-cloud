@@ -173,7 +173,6 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	}
 }
 
-
 // A self-update points a fleet at a binary it will execute. Every field is
 // checked, because the failure mode is every device installing the wrong
 // thing at once.

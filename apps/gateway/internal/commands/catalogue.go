@@ -74,9 +74,9 @@ type ErrInvalid struct{ Reason string }
 func (err ErrInvalid) Error() string { return err.Reason }
 
 var (
-	imeiPattern  = regexp.MustCompile(`^[0-9]{15}$`)
-	iccidPattern = regexp.MustCompile(`^[0-9]{19,20}$`)
-	phonePattern = regexp.MustCompile(`^\+?[0-9]{1,15}$`)
+	imeiPattern   = regexp.MustCompile(`^[0-9]{15}$`)
+	iccidPattern  = regexp.MustCompile(`^[0-9]{19,20}$`)
+	phonePattern  = regexp.MustCompile(`^\+?[0-9]{1,15}$`)
 	plmnPattern   = regexp.MustCompile(`^[0-9]{3}-[0-9]{2,3}$`)
 	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
