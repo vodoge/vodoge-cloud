@@ -1,0 +1,28 @@
+# The host has 2 vCPU and 1.6 GB of RAM, so `next build` cannot run there.
+# This image takes the finished bundle instead; RUNBOOK.md "Deploying the
+# console" is what produces it on a workstation.
+#
+# console-dist.tgz is the standalone output already assembled into the layout
+# the runtime expects, so a single extraction reproduces what the from-source
+# Dockerfile.console assembles with three COPY lines:
+#
+#   ./server.js          .next/standalone/.
+#   ./.next/static/      .next/static/.
+#   ./public/            public/.
+#
+# Build it with `tar -czf console-dist.tgz -C dist .` — the archive holds those
+# paths at its root, not nested under a dist/ directory.
+FROM node:22-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# ADD extracts a local tarball; COPY would leave it as a file.
+ADD console-dist.tgz ./
+
+EXPOSE 3000
+USER node
+CMD ["node", "server.js"]
