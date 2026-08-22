@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
@@ -230,6 +231,54 @@ type notifier interface {
 // that is gone is that it does not come back. A grace period is the whole
 // mechanism, and making it shorter to report faster only buys false alarms.
 const offlineGrace = 90 * time.Second
+
+// backupFailed turns a report from a job outside the request path into a
+// notification.
+//
+// Backups are why this exists and why it looks unlike everything else here. A
+// dump covers the whole database and belongs to no tenant, while every
+// notification must be addressed to one, and section 3.1's rule -- nothing can
+// enumerate tenants, not even a SECURITY DEFINER function -- means the gateway
+// cannot choose a recipient by itself. So the recipient is configuration, and
+// the route is inert until an operator names one.
+//
+// The token is checked in constant time and the route is registered on the
+// shared mux, which is also served on the public device port. Without the token
+// this would be an unauthenticated way to make a tenant's webhook fire.
+func (process *process) backupFailed(token, slug string) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		presented := request.Header.Get("X-VoDoge-Ops-Token")
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+			http.Error(writer, "forbidden", http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Detail string `json:"detail"`
+		}
+		// A report with no readable body still means the backup failed, which
+		// is the part worth passing on.
+		_ = json.NewDecoder(io.LimitReader(request.Body, 8<<10)).Decode(&body)
+
+		entry, found, err := process.tenants.Resolve(request.Context(), slug)
+		if err != nil || !found {
+			slog.Error("ops alert has nowhere to go",
+				"slug", slug, "found", found, "error", err)
+			http.Error(writer, "ops tenant is not resolvable", http.StatusServiceUnavailable)
+			return
+		}
+		detail := strings.TrimSpace(body.Detail)
+		if detail == "" {
+			detail = "备份脚本未报告原因。"
+		}
+		process.notify.Notify(notify.Event{
+			Kind:     notify.KindBackupFailed,
+			TenantID: entry.TenantID,
+			Title:    "数据库备份失败",
+			Body:     detail,
+		})
+		writer.WriteHeader(http.StatusNoContent)
+	}
+}
 
 // violationCooldown is how long one distinct contract violation stays quiet
 // after being reported.
@@ -496,6 +545,19 @@ func (process *process) handler() http.Handler {
 		mux.Handle("POST "+enroll.Path, process.enroll)
 	} else {
 		mux.HandleFunc("POST "+enroll.Path, enroll.Unavailable)
+	}
+	// Reporting a failed backup needs both a shared secret to authenticate the
+	// job and a tenant to address the alert to. Neither has a safe default, so
+	// an unconfigured deployment answers 503 rather than quietly accepting
+	// reports it can do nothing with.
+	opsToken := strings.TrimSpace(os.Getenv("VODOGE_OPS_TOKEN"))
+	opsTenant := strings.TrimSpace(os.Getenv("VODOGE_OPS_TENANT"))
+	if opsToken != "" && opsTenant != "" && process.tenants != nil {
+		mux.HandleFunc("POST /v1/ops/backup-failed", process.backupFailed(opsToken, opsTenant))
+	} else {
+		mux.HandleFunc("POST /v1/ops/backup-failed", func(writer http.ResponseWriter, _ *http.Request) {
+			http.Error(writer, "ops notifications are not configured", http.StatusServiceUnavailable)
+		})
 	}
 	mux.Handle("GET "+wss.Path, process.session)
 	mux.HandleFunc("GET /v1/events", process.sse)

@@ -38,7 +38,46 @@ PG_USER=vodoge
 PG_DB=vodoge
 KEEP_LOCAL_DAYS=3
 
-log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
+# --- 失败上报 --------------------------------------------------------------
+# 这个脚本由 timer 触发,没有任何租户上下文,而每条通知都必须发给某一个租户,
+# 且这个库里没有任何东西能枚举租户(RLS 是 FORCE 的,连 SECURITY DEFINER 也
+# 看不到全部租户)。所以收件人由网关侧的 VODOGE_OPS_TENANT 指定,这里只负责
+# 把"失败了、以及为什么"送过去。
+#
+# 没配 token 就整段跳过 —— 端点在未配置时本来也是 503,静默跳过比每天在日志
+# 里留一条上报失败要好。
+OPS_URL="http://127.0.0.1:${VODOGE_GATEWAY_PORT:-18080}/v1/ops/backup-failed"
+OPS_TOKEN="${VODOGE_OPS_TOKEN:-}"
+last_message=""
+failed_line=""
+
+log() { last_message="$*"; printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
+
+report_failure() {
+  local code=$1
+  [ "$code" -eq 0 ] && return 0
+  [ -z "$OPS_TOKEN" ] && return 0
+
+  # 只带内嵌到 JSON 里会出问题的两个字符,用参数展开做,不起外部进程 ——
+  # 这段跑在脚本已经失败的路径上,越少依赖越好。
+  local reason="${last_message//\\/}"
+  reason="${reason//\"/}"
+  reason="${reason//$'\n'/ }"
+
+  # 三处显式 exit 不会触发 ERR(ERR 只对命令返回非零生效),所以行号经常是空的。
+  # 那三处退出前都有一条 "!!" 日志,原因本来就带着了,行号有就带、没有就不写,
+  # 好过打印一个会被当成 bug 的问号。
+  local where=""
+  [ -n "$failed_line" ] && where="第 $failed_line 行,"
+
+  curl -fsS --max-time 10 -X POST "$OPS_URL" \
+    -H 'content-type: application/json' \
+    -H "X-VoDoge-Ops-Token: $OPS_TOKEN" \
+    --data "{\"detail\":\"备份失败(${where}退出码 $code):$reason\"}" \
+    >/dev/null 2>&1 || true
+}
+trap 'failed_line=$LINENO' ERR
+trap 'report_failure $?' EXIT
 
 mkdir -p "$STAGE" "$PAYLOAD/db"
 ts=$(date +%Y%m%d-%H%M%S)

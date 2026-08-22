@@ -91,6 +91,12 @@ services:
       VODOGE_GATEWAY_CLIENT_CA: /certs/device-ca.crt
       VODOGE_DEVICE_CA_CERT: /certs/device-ca.crt
       VODOGE_DEVICE_CA_KEY: /certs/device-ca.key
+      # Who to tell when a job outside any request fails, and the secret that
+      # job authenticates with. Both empty by default: the route answers 503
+      # until an operator picks a tenant, because nothing here can pick one --
+      # RLS means not even the gateway can list the tenants it serves.
+      VODOGE_OPS_TENANT: ${VODOGE_OPS_TENANT:-}
+      VODOGE_OPS_TOKEN: ${VODOGE_OPS_TOKEN:-}
     volumes:
       - ./certs:/certs:ro
     ports:

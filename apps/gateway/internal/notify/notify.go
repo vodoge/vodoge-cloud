@@ -43,6 +43,13 @@ const (
 	// schema — rare, and the sort of thing that otherwise sits in a log
 	// nobody reads.
 	KindContractViolation Kind = "contract.violation"
+	// KindBackupFailed fires when a scheduled dump does not complete.
+	//
+	// Unlike every other kind this one is not about a device, and nothing
+	// inside a request produces it: the dump runs from a timer with no tenant
+	// context at all. It arrives through the ops endpoint, addressed to
+	// whichever tenant is configured to receive operational alerts.
+	KindBackupFailed Kind = "backup.failed"
 	// KindTest is what the "send a test" button produces.
 	KindTest Kind = "test"
 )
@@ -51,7 +58,7 @@ const (
 func Kinds() []Kind {
 	return []Kind{
 		KindSmsReceived, KindDeviceOffline, KindCommandFailed,
-		KindContractViolation, KindTest,
+		KindContractViolation, KindBackupFailed, KindTest,
 	}
 }
 

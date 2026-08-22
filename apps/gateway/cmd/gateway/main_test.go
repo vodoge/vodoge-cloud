@@ -983,3 +983,101 @@ func TestOneTenantsViolationDoesNotSilenceAnothers(t *testing.T) {
 		t.Errorf("second notification went to %q, want tenant-2", alerts.events[1].TenantID)
 	}
 }
+
+// opsSettings turns one channel on for every tenant.
+type opsSettings struct{}
+
+func (opsSettings) Get(context.Context, string, string) (map[string]any, error) {
+	return map[string]any{"recorder": map[string]any{}}, nil
+}
+
+// opsChannel records what it was asked to deliver.
+type opsChannel struct {
+	delivered chan notify.Event
+}
+
+func (opsChannel) Name() string                          { return "recorder" }
+func (opsChannel) Configured(map[string]any) bool        { return true }
+func (c opsChannel) Send(_ context.Context, _ map[string]any, event notify.Event) error {
+	c.delivered <- event
+	return nil
+}
+
+func opsTenants(t *testing.T) *directory.Resolver {
+	t.Helper()
+	tenants := directory.New(nil)
+	if !tenants.Cache.Store(region.Entry{TenantID: "t-ops", Slug: "ops", Region: "cn", Status: "active"}) {
+		t.Fatal("store the ops tenant")
+	}
+	return tenants
+}
+
+// The dump runs from a timer with no tenant context, and nothing may enumerate
+// tenants, so an unconfigured gateway has no one to tell and must say so rather
+// than accept reports it will drop.
+func TestBackupFailureReportingIsOffUntilConfigured(t *testing.T) {
+	t.Setenv("VODOGE_OPS_TOKEN", "")
+	t.Setenv("VODOGE_OPS_TENANT", "")
+
+	handler := newProcess("", ingress.NewJournal(), opsTenants(t), nil, nil).handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/ops/backup-failed", strings.NewReader(`{}`)))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+}
+
+// The route lives on the mux that also answers on the public device port, so a
+// missing or wrong token must not reach the dispatcher.
+func TestBackupFailureReportingRejectsABadToken(t *testing.T) {
+	t.Setenv("VODOGE_OPS_TOKEN", "correct-token")
+	t.Setenv("VODOGE_OPS_TENANT", "ops")
+
+	handler := newProcess("", ingress.NewJournal(), opsTenants(t), nil, nil).handler()
+	for _, presented := range []string{"", "wrong-token"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/ops/backup-failed", strings.NewReader(`{}`))
+		if presented != "" {
+			request.Header.Set("X-VoDoge-Ops-Token", presented)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Errorf("token %q: status = %d, want 403", presented, response.Code)
+		}
+	}
+}
+
+func TestBackupFailureReachesTheConfiguredTenant(t *testing.T) {
+	t.Setenv("VODOGE_OPS_TOKEN", "correct-token")
+	t.Setenv("VODOGE_OPS_TENANT", "ops")
+
+	delivered := make(chan notify.Event, 1)
+	proc := newProcess("", ingress.NewJournal(), opsTenants(t), nil, nil)
+	proc.notify = notify.New(opsSettings{}, []notify.Channel{opsChannel{delivered: delivered}}, notify.Options{})
+	t.Cleanup(proc.notify.Close)
+	handler := proc.handler()
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/ops/backup-failed",
+		strings.NewReader(`{"detail":"pg_dump exited 1"}`))
+	request.Header.Set("X-VoDoge-Ops-Token", "correct-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", response.Code)
+	}
+
+	select {
+	case event := <-delivered:
+		if event.Kind != notify.KindBackupFailed {
+			t.Errorf("kind = %q, want %q", event.Kind, notify.KindBackupFailed)
+		}
+		if event.TenantID != "t-ops" {
+			t.Errorf("tenant_id = %q, want t-ops", event.TenantID)
+		}
+		if !strings.Contains(event.Body, "pg_dump exited 1") {
+			t.Errorf("body = %q, want the reported detail", event.Body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification was delivered")
+	}
+}
