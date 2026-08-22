@@ -36,6 +36,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -73,6 +74,7 @@ func main() {
 		proc.audit = audit.SQL{DB: sqlStore.DB}
 		proc.rules = rules.SQL{DB: sqlStore.DB}
 		proc.config = settings.SQL{DB: sqlStore.DB}
+		proc.proxies = proxy.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -168,6 +170,7 @@ type process struct {
 	rules   rules.Store
 	codes   enroll.CodeStore
 	config  settings.Store
+	proxies proxy.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -204,6 +207,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
 		config:  &settings.Memory{},
+		proxies: &proxy.Memory{},
 		codes:   &enroll.MemoryCodes{},
 	}
 }
@@ -243,6 +247,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/settings", process.readSettings)
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
 	mux.HandleFunc("POST /v1/auth/password", process.changePassword)
+	process.registerProxyRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)

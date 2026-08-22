@@ -876,3 +876,43 @@ form {
   height: 1rem;
   accent-color: var(--accent);
 }
+
+/* A row's buttons sit together and wrap rather than stretching the column. */
+.row-actions {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.row-actions button,
+.row-actions select {
+  padding: var(--s1) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.row-actions button.risk {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.row-actions button:disabled,
+.row-actions select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

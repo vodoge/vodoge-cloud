@@ -611,6 +611,10 @@
       { "$ref": "#/$defs/SelectOperatorCommand" },
       { "$ref": "#/$defs/ModemReportCommand" },
       { "$ref": "#/$defs/ResetModemUsbCommand" },
+      { "$ref": "#/$defs/ConfigureProxyCommand" },
+      { "$ref": "#/$defs/ProxyLifecycleCommand" },
+      { "$ref": "#/$defs/ProbeUpstreamProxyCommand" },
+      { "$ref": "#/$defs/RotateIpCommand" },
         { "$ref": "#/$defs/UpdateCardPolicyCommand" },
         { "$ref": "#/$defs/UpdateCapabilityMatrixCommand" },
         { "$ref": "#/$defs/SelfUpdateCommand" }
@@ -723,6 +727,76 @@
       "required": ["kind", "modem_imei"],
       "properties": {
         "kind": { "const": "ListEsimProfiles" },
+        "modem_imei": { "$ref": "#/$defs/Imei" }
+      }
+    },
+    "ConfigureProxyCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "instances", "upstreams"],
+      "properties": {
+        "kind": { "const": "ConfigureProxy" },
+        "instances": { "type": "array", "items": { "$ref": "#/$defs/ProxyInstanceSpec" } },
+        "upstreams": { "type": "array", "items": { "$ref": "#/$defs/ProxyUpstreamSpec" } }
+      }
+    },
+    "ProxyInstanceSpec": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "modem_imei", "protocol", "listen_addr", "listen_port", "enabled"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string", "maxLength": 128 },
+        "modem_imei": { "$ref": "#/$defs/Imei" },
+        "protocol": { "type": "string", "enum": ["socks5", "http"] },
+        "listen_addr": { "type": "string", "maxLength": 64 },
+        "listen_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "auth_enabled": { "type": "boolean" },
+        "username": { "type": "string", "maxLength": 128 },
+        "password": { "type": "string", "maxLength": 256 },
+        "upstream_id": { "type": "string", "maxLength": 64 },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "ProxyUpstreamSpec": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "address", "protocol"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string", "maxLength": 128 },
+        "address": { "type": "string", "maxLength": 256 },
+        "protocol": { "type": "string", "enum": ["socks5", "http"] },
+        "username": { "type": "string", "maxLength": 128 },
+        "password": { "type": "string", "maxLength": 256 },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "ProxyLifecycleCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "instance_id", "action"],
+      "properties": {
+        "kind": { "const": "ProxyLifecycle" },
+        "instance_id": { "$ref": "#/$defs/Uuid" },
+        "action": { "type": "string", "enum": ["start", "stop", "restart"] }
+      }
+    },
+    "ProbeUpstreamProxyCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "upstream_id"],
+      "properties": {
+        "kind": { "const": "ProbeUpstreamProxy" },
+        "upstream_id": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "RotateIpCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "modem_imei"],
+      "properties": {
+        "kind": { "const": "RotateIp" },
         "modem_imei": { "$ref": "#/$defs/Imei" }
       }
     },

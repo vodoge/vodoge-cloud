@@ -254,6 +254,52 @@ type ListEsimProfilesCommand struct {
 	ModemImei string `json:"modem_imei"`
 }
 
+type ConfigureProxyCommand struct {
+	Kind      string              `json:"kind"`
+	Instances []ProxyInstanceSpec `json:"instances"`
+	Upstreams []ProxyUpstreamSpec `json:"upstreams"`
+}
+
+type ProxyInstanceSpec struct {
+	ID          string  `json:"id"`
+	Name        *string `json:"name,omitempty"`
+	ModemImei   string  `json:"modem_imei"`
+	Protocol    string  `json:"protocol"`
+	ListenAddr  string  `json:"listen_addr"`
+	ListenPort  int64   `json:"listen_port"`
+	AuthEnabled *bool   `json:"auth_enabled,omitempty"`
+	Username    *string `json:"username,omitempty"`
+	Password    *string `json:"password,omitempty"`
+	UpstreamID  *string `json:"upstream_id,omitempty"`
+	Enabled     bool    `json:"enabled"`
+}
+
+type ProxyUpstreamSpec struct {
+	ID       string  `json:"id"`
+	Name     *string `json:"name,omitempty"`
+	Address  string  `json:"address"`
+	Protocol string  `json:"protocol"`
+	Username *string `json:"username,omitempty"`
+	Password *string `json:"password,omitempty"`
+	Enabled  *bool   `json:"enabled,omitempty"`
+}
+
+type ProxyLifecycleCommand struct {
+	Kind       string `json:"kind"`
+	InstanceID string `json:"instance_id"`
+	Action     string `json:"action"`
+}
+
+type ProbeUpstreamProxyCommand struct {
+	Kind       string `json:"kind"`
+	UpstreamID string `json:"upstream_id"`
+}
+
+type RotateIpCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
 type SwitchEsimProfileCommand struct {
 	Kind        string `json:"kind"`
 	ModemImei   string `json:"modem_imei"`

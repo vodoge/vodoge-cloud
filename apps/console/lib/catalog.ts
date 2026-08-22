@@ -101,6 +101,109 @@ export async function fetchSettings(
   return out;
 }
 
+export type UpstreamRow = {
+  id: string;
+  name: string;
+  address: string;
+  protocol: string;
+  username: string;
+  enabled: boolean;
+  hasPassword: boolean;
+  lastProbe: Record<string, unknown> | null;
+  lastProbeAt: number | null;
+};
+
+export type ProxyInstanceRow = {
+  id: string;
+  deviceId: string;
+  name: string;
+  modemImei: string;
+  protocol: string;
+  listenAddr: string;
+  listenPort: number;
+  authEnabled: boolean;
+  username: string;
+  hasPassword: boolean;
+  upstreamId: string;
+  enabled: boolean;
+};
+
+export type TrafficPoint = {
+  instanceId: string;
+  hour: number;
+  bytesUp: number;
+  bytesDown: number;
+  connections: number;
+};
+
+export async function fetchUpstreams(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<UpstreamRow[]> {
+  const body = await getCatalog(host, "/v1/proxy/upstreams", token, fetchImpl);
+  return arrayOf(body.upstreams).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      id: asString(row.id) ?? "",
+      name: asString(row.name) ?? "",
+      address: asString(row.address) ?? "",
+      protocol: asString(row.protocol) ?? "socks5",
+      username: asString(row.username) ?? "",
+      enabled: row.enabled === true,
+      hasPassword: row.has_password === true,
+      lastProbe:
+        row.last_probe && typeof row.last_probe === "object"
+          ? (row.last_probe as Record<string, unknown>)
+          : null,
+      lastProbeAt: asNumber(row.last_probe_at),
+    };
+  });
+}
+
+export async function fetchProxyInstances(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ProxyInstanceRow[]> {
+  const body = await getCatalog(host, "/v1/proxy/instances", token, fetchImpl);
+  return arrayOf(body.instances).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      id: asString(row.id) ?? "",
+      deviceId: asString(row.device_id) ?? "",
+      name: asString(row.name) ?? "",
+      modemImei: asString(row.modem_imei) ?? "",
+      protocol: asString(row.protocol) ?? "socks5",
+      listenAddr: asString(row.listen_addr) ?? "",
+      listenPort: asNumber(row.listen_port) ?? 0,
+      authEnabled: row.auth_enabled === true,
+      username: asString(row.username) ?? "",
+      hasPassword: row.has_password === true,
+      upstreamId: asString(row.upstream_id) ?? "",
+      enabled: row.enabled === true,
+    };
+  });
+}
+
+export async function fetchTraffic(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<TrafficPoint[]> {
+  const body = await getCatalog(host, "/v1/proxy/traffic", token, fetchImpl);
+  return arrayOf(body.traffic).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      instanceId: asString(row.instance_id) ?? "",
+      hour: asNumber(row.hour) ?? 0,
+      bytesUp: asNumber(row.bytes_up) ?? 0,
+      bytesDown: asNumber(row.bytes_down) ?? 0,
+      connections: asNumber(row.connections) ?? 0,
+    };
+  });
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

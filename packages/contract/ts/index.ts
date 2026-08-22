@@ -265,6 +265,52 @@ export interface ListEsimProfilesCommand {
   modem_imei: Imei;
 }
 
+export interface ConfigureProxyCommand {
+  kind: "ConfigureProxy";
+  instances: Array<ProxyInstanceSpec>;
+  upstreams: Array<ProxyUpstreamSpec>;
+}
+
+export interface ProxyInstanceSpec {
+  id: Uuid;
+  name?: string;
+  modem_imei: Imei;
+  protocol: "socks5" | "http";
+  listen_addr: string;
+  listen_port: number;
+  auth_enabled?: boolean;
+  username?: string;
+  password?: string;
+  upstream_id?: string;
+  enabled: boolean;
+}
+
+export interface ProxyUpstreamSpec {
+  id: Uuid;
+  name?: string;
+  address: string;
+  protocol: "socks5" | "http";
+  username?: string;
+  password?: string;
+  enabled?: boolean;
+}
+
+export interface ProxyLifecycleCommand {
+  kind: "ProxyLifecycle";
+  instance_id: Uuid;
+  action: "start" | "stop" | "restart";
+}
+
+export interface ProbeUpstreamProxyCommand {
+  kind: "ProbeUpstreamProxy";
+  upstream_id: Uuid;
+}
+
+export interface RotateIpCommand {
+  kind: "RotateIp";
+  modem_imei: Imei;
+}
+
 export interface SwitchEsimProfileCommand {
   kind: "SwitchEsimProfile";
   modem_imei: Imei;
@@ -319,6 +365,10 @@ export type Command =
   | SelectOperatorCommand |
   | ModemReportCommand |
   | ResetModemUsbCommand |
+  | ConfigureProxyCommand |
+  | ProxyLifecycleCommand |
+  | ProbeUpstreamProxyCommand |
+  | RotateIpCommand |
   | UpdateCardPolicyCommand |
   | UpdateCapabilityMatrixCommand |
   | SelfUpdateCommand;
