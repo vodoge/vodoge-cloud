@@ -994,3 +994,12 @@ form {
   gap: var(--s2);
   flex-wrap: wrap;
 }
+
+/* A binary message's body is hex, and the line under it says why. Without it
+   the hex reads as a decoder that gave up. */
+.msg-binary {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--fg-faint);
+  font-style: italic;
+}

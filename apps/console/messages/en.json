@@ -296,5 +296,6 @@
   "esim.confirmSwitch": "Switching profile takes the card off the network while it re-registers. Continue?",
   "settings.test": "Send test",
   "settings.testSent": "delivered",
-  "settings.testFailed": "The test could not be delivered."
+  "settings.testFailed": "The test could not be delivered.",
+  "inbox.encoding8bit": "Binary message (SIM toolkit / OTA), shown as hex"
 }

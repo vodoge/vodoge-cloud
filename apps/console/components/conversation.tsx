@@ -63,7 +63,18 @@ export function Conversation({
             key={message.id}
             className={message.direction === "inbound" ? "msg msg-in" : "msg msg-out"}
           >
-            <p className="msg-body">{message.body}</p>
+            {message.encoding === "8bit" ? (
+              // Binary: SIM toolkit or OTA traffic, shown as hex because it
+              // is not text. Saying so matters -- unexplained hex reads as a
+              // broken decoder, which is how four real decoding faults
+              // stayed hidden for weeks.
+              <>
+                <p className="msg-body mono faint">{message.body}</p>
+                <p className="msg-binary">{labels["encoding.8bit"]}</p>
+              </>
+            ) : (
+              <p className="msg-body">{message.body}</p>
+            )}
             <div className="msg-meta">
               <span className="mono faint">
                 {new Date(message.receivedAt).toISOString().replace("T", " ").slice(5, 16)}

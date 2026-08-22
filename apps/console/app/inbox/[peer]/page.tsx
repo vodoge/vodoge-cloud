@@ -53,6 +53,7 @@ export default async function ThreadPage({
             "status.sent": t("inbox.statusSent", locale),
             "status.failed": t("inbox.statusFailed", locale),
             "status.received": t("inbox.statusReceived", locale),
+            "encoding.8bit": t("inbox.encoding8bit", locale),
           }}
         />
       </Card>

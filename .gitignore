@@ -9,3 +9,6 @@ coverage/
 *.tsbuildinfo
 *.test
 coverage.out
+
+# Deploy bundle built by the console release step; 8 MB of derived output.
+console-dist.tgz

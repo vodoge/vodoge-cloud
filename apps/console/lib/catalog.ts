@@ -246,6 +246,7 @@ export type ThreadMessage = {
   peer: string;
   body: string;
   bearer: string;
+  encoding: string;
   status: string;
   receivedAt: number;
   failureReason: string | null;
@@ -292,6 +293,7 @@ export async function fetchThread(
       peer: asString(row.peer) ?? "",
       body: asString(row.body) ?? "",
       bearer: asString(row.bearer) ?? "",
+      encoding: asString(row.encoding) ?? "unknown",
       status: asString(row.status) ?? "",
       receivedAt: asNumber(row.received_at) ?? 0,
       failureReason: asString(row.failure_reason),

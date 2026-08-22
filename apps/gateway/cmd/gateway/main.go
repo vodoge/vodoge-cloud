@@ -159,6 +159,33 @@ func main() {
 		}()
 	}
 
+	// Reap sessions that stopped speaking.
+	//
+	// Hub.SweepIdle existed and was tested from the beginning, and nothing ever
+	// called it: a connection the device abandoned without a clean close stayed
+	// bound forever, held its goroutine, and counted towards the active-session
+	// gauge. Superseded sessions are closed at Bind, but a device that vanishes
+	// without reconnecting -- lost power, lost route, NAT rebind -- supersedes
+	// nothing, so this is the only thing that ends it.
+	//
+	// Half the idle timeout, so a connection is reaped within one timeout of
+	// going quiet rather than up to two.
+	go func() {
+		ticker := time.NewTicker(session.IdleTimeout / 2)
+		defer ticker.Stop()
+		for range ticker.C {
+			for _, expired := range proc.session.Hub.SweepIdle(time.Now()) {
+				logger.Info("reaping an idle device session",
+					"device_id", expired.Device.DeviceID,
+					"connection_id", expired.ID,
+					"silent_for", time.Since(expired.LastPacketAt).Round(time.Second).String())
+				if expired.Close != nil {
+					expired.Close()
+				}
+			}
+		}
+	}()
+
 	select {
 	case signal := <-shutdownSignals:
 		logger.Info("gateway shutdown requested", "signal", signal.String())

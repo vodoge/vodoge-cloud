@@ -87,3 +87,63 @@ func TestUnbindIgnoresSupersededConnection(t *testing.T) {
 		t.Fatal("device must be offline after live unbind")
 	}
 }
+
+// The hub hands back a closer so the caller can actually end the connection it
+// replaced. Carrying only bookkeeping is what left a superseded session running
+// against a socket the device had abandoned.
+func TestBindReturnsACloserForTheSupersededConnection(t *testing.T) {
+	hub := NewHub()
+	closed := false
+
+	hub.Bind(Connection{
+		ID:     "first",
+		Device: identity.Device{DeviceID: "device-1"},
+		Close:  func() { closed = true },
+	})
+	previous := hub.Bind(Connection{
+		ID:     "second",
+		Device: identity.Device{DeviceID: "device-1"},
+		Close:  func() {},
+	})
+
+	if previous == nil {
+		t.Fatal("binding over a live connection returned no previous connection")
+	}
+	if previous.ID != "first" {
+		t.Fatalf("previous connection = %q, want %q", previous.ID, "first")
+	}
+	if previous.Close == nil {
+		t.Fatal("previous connection carries no closer, so nothing can end it")
+	}
+	previous.Close()
+	if !closed {
+		t.Fatal("the returned closer did not close the connection it came from")
+	}
+}
+
+// Same requirement on the reaping path: a device that vanishes without
+// reconnecting supersedes nothing, so the sweep is the only thing that ends it.
+func TestSweepIdleReturnsClosersForExpiredConnections(t *testing.T) {
+	hub := NewHub()
+	closed := false
+	start := time.Now()
+
+	hub.Bind(Connection{
+		ID:           "stale",
+		Device:       identity.Device{DeviceID: "device-1"},
+		LastPacketAt: start,
+		Close:        func() { closed = true },
+	})
+
+	expired := hub.SweepIdle(start.Add(IdleTimeout + time.Second))
+	if len(expired) != 1 {
+		t.Fatalf("swept %d connections, want 1", len(expired))
+	}
+	if expired[0].Close == nil {
+		t.Fatal("expired connection carries no closer")
+	}
+	expired[0].Close()
+	if !closed {
+		t.Fatal("the returned closer did not close the connection it came from")
+	}
+}

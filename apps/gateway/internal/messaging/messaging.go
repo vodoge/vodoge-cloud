@@ -17,12 +17,16 @@ import (
 
 // Message is one SMS in either direction.
 type Message struct {
-	ID            string  `json:"id"`
-	DeviceID      string  `json:"device_id"`
-	Direction     string  `json:"direction"`
-	Peer          string  `json:"peer"`
-	Body          string  `json:"body"`
-	Bearer        string  `json:"bearer"`
+	ID        string `json:"id"`
+	DeviceID  string `json:"device_id"`
+	Direction string `json:"direction"`
+	Peer      string `json:"peer"`
+	Body      string `json:"body"`
+	Bearer    string `json:"bearer"`
+	// Encoding is the alphabet the message arrived in. A reader needs it: an
+	// "8bit" body is hex because the message was binary, not because decoding
+	// failed.
+	Encoding      string  `json:"encoding"`
 	Status        string  `json:"status"`
 	ReceivedAt    int64   `json:"received_at"`
 	CommandID     *string `json:"command_id,omitempty"`
@@ -118,7 +122,7 @@ func (store SQL) Thread(
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT id::text, device_id::text, direction, peer, body, bearer,
-			       status, received_at, command_id::text, failure_reason
+			       encoding, status, received_at, command_id::text, failure_reason
 			  FROM (
 			    SELECT * FROM app.messages
 			     WHERE peer = $1
@@ -136,7 +140,8 @@ func (store SQL) Thread(
 			var commandID, reason sql.NullString
 			if err := rows.Scan(
 				&message.ID, &message.DeviceID, &message.Direction, &message.Peer,
-				&message.Body, &message.Bearer, &message.Status, &at, &commandID, &reason,
+				&message.Body, &message.Bearer, &message.Encoding, &message.Status,
+				&at, &commandID, &reason,
 			); err != nil {
 				return err
 			}

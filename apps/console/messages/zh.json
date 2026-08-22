@@ -296,5 +296,6 @@
   "esim.confirmSwitch": "切换配置文件会让卡在重新注册期间脱网，确定继续？",
   "settings.test": "发送测试",
   "settings.testSent": "已送达",
-  "settings.testFailed": "测试没能送达。"
+  "settings.testFailed": "测试没能送达。",
+  "inbox.encoding8bit": "二进制消息（SIM 卡应用 / OTA），以十六进制显示"
 }

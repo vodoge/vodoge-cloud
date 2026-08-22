@@ -144,12 +144,26 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 	}
 
 	now := server.now()
-	server.Hub.Bind(session.Connection{
+	// The connection this one replaces has to be closed, not merely forgotten.
+	// Dropping it from the hub leaves its goroutine running: it keeps reading
+	// whatever the kernel already buffered, storing it, and writing an ack per
+	// record into a socket the device abandoned. Those acks pile up unread
+	// until the send buffer fills, at which point the zombie blocks in write
+	// while the live session competes with it for the same device journal.
+	// Observed on the deployment: two sessions for one device, 542 KB stuck in
+	// one direction and 204 KB in the other, and an uplink that stopped moving.
+	if previous := server.Hub.Bind(session.Connection{
 		ID:           resume.ConnectionID,
 		Device:       device,
 		ConnectedAt:  now,
 		LastPacketAt: now,
-	})
+		Close:        func() { _ = conn.Close() },
+	}); previous != nil && previous.Close != nil {
+		slog.Info("closing a device session superseded by a new one",
+			"tenant_id", device.TenantID, "device_id", device.DeviceID,
+			"superseded", previous.ID, "replacement", resume.ConnectionID)
+		previous.Close()
+	}
 	connectionID = resume.ConnectionID
 
 	snapshot, err := server.Journal.Snapshot(device.TenantID, device.DeviceID)

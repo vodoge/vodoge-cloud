@@ -24,6 +24,15 @@ type Connection struct {
 	Device       identity.Device
 	ConnectedAt  time.Time
 	LastPacketAt time.Time
+	// Close severs this connection's socket.
+	//
+	// The hub never calls it. It carries the closer so that whoever supersedes
+	// or reaps a connection can actually end it: the hub only ever held
+	// bookkeeping, so a replaced session stayed bound to a live goroutine that
+	// went on reading, storing, and acking into a socket with no reader. One
+	// device reconnecting left two sessions racing over the same journal until
+	// both sides' buffers filled and the uplink deadlocked.
+	Close func()
 }
 
 // Hub stores live connections. It is safe for concurrent use.
