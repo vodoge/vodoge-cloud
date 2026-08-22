@@ -340,3 +340,98 @@ func TestSignOutOfAnUnknownTokenSucceeds(t *testing.T) {
 		t.Fatalf("SignOut: %v", err)
 	}
 }
+
+// A recording changer, so the password path can be exercised without bcrypt
+// or a database.
+type fakeChanger struct {
+	user     User
+	hash     string
+	kept     []byte
+	setCalls int
+}
+
+func (f *fakeChanger) UserByID(context.Context, string, string) (User, bool, error) {
+	if f.user.ID == "" {
+		return User{}, false, nil
+	}
+	return f.user, true, nil
+}
+
+func (f *fakeChanger) SetPassword(
+	_ context.Context,
+	_, _, hash string,
+	keepFingerprint []byte,
+) error {
+	f.setCalls++
+	f.hash = hash
+	f.kept = keepFingerprint
+	return nil
+}
+
+func TestChangingAPasswordRequiresTheCurrentOne(t *testing.T) {
+	t.Parallel()
+
+	changer := &fakeChanger{user: User{ID: "u1", TenantID: "t1", PasswordHash: "hash:old-one-here"}}
+	session := Session{UserID: "u1", TenantID: "t1"}
+
+	// A session alone is not enough: it can be a borrowed laptop, and a
+	// password change is the first thing an attacker with one would reach for.
+	err := ChangePassword(
+		context.Background(), changer, &plainHasher{}, session,
+		"not-the-current", "a-brand-new-password", nil,
+	)
+	if !errors.Is(err, ErrBadCredentials) {
+		t.Fatalf("err = %v, want ErrBadCredentials", err)
+	}
+	if changer.setCalls != 0 {
+		t.Fatal("the password was written despite a wrong current password")
+	}
+}
+
+func TestAShortOrUnchangedPasswordIsRefused(t *testing.T) {
+	t.Parallel()
+
+	changer := &fakeChanger{user: User{ID: "u1", TenantID: "t1", PasswordHash: "hash:old-one-here"}}
+	session := Session{UserID: "u1", TenantID: "t1"}
+
+	if err := ChangePassword(
+		context.Background(), changer, &plainHasher{}, session,
+		"old-one-here", "short", nil,
+	); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("short password err = %v, want ErrWeakPassword", err)
+	}
+
+	// Re-setting the same password reads as success while leaving in place the
+	// credential the operator was trying to retire.
+	if err := ChangePassword(
+		context.Background(), changer, &plainHasher{}, session,
+		"old-one-here", "old-one-here", nil,
+	); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("unchanged password err = %v, want ErrWeakPassword", err)
+	}
+	if changer.setCalls != 0 {
+		t.Fatal("a refused password was written")
+	}
+}
+
+func TestAChangedPasswordKeepsOnlyTheCallersSession(t *testing.T) {
+	t.Parallel()
+
+	changer := &fakeChanger{user: User{ID: "u1", TenantID: "t1", PasswordHash: "hash:old-one-here"}}
+	mine := Fingerprint("my-token")
+
+	if err := ChangePassword(
+		context.Background(), changer, &plainHasher{},
+		Session{UserID: "u1", TenantID: "t1"},
+		"old-one-here", "a-brand-new-password", mine,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if changer.hash != "hash:a-brand-new-password" {
+		t.Fatalf("stored hash = %q", changer.hash)
+	}
+	// The other sessions are what a leaked password would still be holding.
+	if string(changer.kept) != string(mine) {
+		t.Fatal("the caller's own session was not the one spared")
+	}
+}

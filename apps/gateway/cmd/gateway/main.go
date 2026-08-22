@@ -37,6 +37,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
@@ -71,6 +72,7 @@ func main() {
 		proc.queue = commands.SQL{DB: sqlStore.DB}
 		proc.audit = audit.SQL{DB: sqlStore.DB}
 		proc.rules = rules.SQL{DB: sqlStore.DB}
+		proc.config = settings.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -165,6 +167,7 @@ type process struct {
 	audit   audit.Log
 	rules   rules.Store
 	codes   enroll.CodeStore
+	config  settings.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -200,6 +203,7 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
+		config:  &settings.Memory{},
 		codes:   &enroll.MemoryCodes{},
 	}
 }
@@ -236,6 +240,9 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("POST /v1/commands", process.enqueueCommand)
 	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
 	mux.HandleFunc("GET /v1/commands", process.listCommands)
+	mux.HandleFunc("GET /v1/settings", process.readSettings)
+	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
+	mux.HandleFunc("POST /v1/auth/password", process.changePassword)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)
@@ -410,6 +417,30 @@ func (process *process) tenantFromRequest(
 	}
 	_ = session
 	return entry, true
+}
+
+// tenantAndSession is tenantFromRequest for the handlers that need to know who
+// is asking, not only which tenant they belong to.
+func (process *process) tenantAndSession(
+	writer http.ResponseWriter,
+	request *http.Request,
+) (region.Entry, auth.Session, bool) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return region.Entry{}, auth.Session{}, false
+	}
+	session, err := auth.Authenticate(
+		request.Context(),
+		process.authSessions,
+		request.Header.Get("Authorization"),
+		entry.TenantID,
+		time.Now(),
+	)
+	if err != nil {
+		http.Error(writer, "sign in required", http.StatusUnauthorized)
+		return region.Entry{}, auth.Session{}, false
+	}
+	return entry, session, true
 }
 
 // modems lists the modules the edge has reported, which is what says whether a
@@ -596,6 +627,124 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 	})
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"id": id, "status": "queued"})
+}
+
+// changePassword lets a signed-in operator replace their own credential.
+func (process *process) changePassword(writer http.ResponseWriter, request *http.Request) {
+	_, session, ok := process.tenantAndSession(writer, request)
+	if !ok {
+		return
+	}
+	changer, canChange := process.users.(auth.PasswordChanger)
+	if !canChange || process.hasher == nil {
+		http.Error(writer, "password changes are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Current string `json:"current_password"`
+		Next    string `json:"new_password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(request.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(writer, "invalid request", http.StatusBadRequest)
+		return
+	}
+	err := auth.ChangePassword(
+		request.Context(), changer, process.hasher, session,
+		body.Current, body.Next,
+		auth.Fingerprint(auth.BearerToken(request.Header.Get("Authorization"))),
+	)
+	switch {
+	case errors.Is(err, auth.ErrWeakPassword):
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	case errors.Is(err, auth.ErrBadCredentials):
+		http.Error(writer, "current password is incorrect", http.StatusUnauthorized)
+		return
+	case err != nil:
+		slog.Warn("password change failed", "tenant_id", session.TenantID, "error", err)
+		http.Error(writer, "password change failed", http.StatusInternalServerError)
+		return
+	}
+	_ = process.audit.Append(request.Context(), session.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "auth.password_changed",
+		Target: session.UserID,
+	})
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// readSettings returns every section, secrets replaced by a placeholder.
+//
+// The console never receives a webhook secret or an SMTP password: it would
+// otherwise sit in a page's HTML on every visit, so that it could be posted
+// back unchanged. Sending the placeholder back means "leave it alone".
+func (process *process) readSettings(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	all, err := process.config.All(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "settings unavailable", http.StatusInternalServerError)
+		return
+	}
+	shown := make(map[string]map[string]any, len(all))
+	for section, document := range all {
+		shown[section] = settings.Redact(section, document)
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"settings": shown})
+}
+
+func (process *process) writeSettings(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	section := request.PathValue("section")
+	var incoming map[string]any
+	if err := json.NewDecoder(io.LimitReader(request.Body, 256<<10)).Decode(&incoming); err != nil {
+		http.Error(writer, "invalid settings document", http.StatusBadRequest)
+		return
+	}
+	if incoming == nil {
+		incoming = map[string]any{}
+	}
+	stored, err := process.config.Get(request.Context(), entry.TenantID, section)
+	if err != nil {
+		http.Error(writer, "settings unavailable", http.StatusInternalServerError)
+		return
+	}
+	// Merge before validating: a channel whose only missing field is the
+	// secret it never received is valid once the stored one is back.
+	merged := settings.Merge(section, incoming, stored)
+	validated, err := settings.Validate(section, merged)
+	if err != nil {
+		var invalid settings.ErrInvalid
+		if errors.As(err, &invalid) {
+			http.Error(writer, invalid.Reason, http.StatusBadRequest)
+			return
+		}
+		http.Error(writer, "invalid settings document", http.StatusBadRequest)
+		return
+	}
+	if err := process.config.Put(request.Context(), entry.TenantID, section, validated); err != nil {
+		http.Error(writer, "settings unavailable", http.StatusInternalServerError)
+		return
+	}
+	// The values are not audited, only the fact of the change: a settings
+	// document holds credentials and the audit log is read far more widely
+	// than the settings page.
+	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  "console",
+		Action: "settings." + section,
+		Target: section,
+	})
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"section":  section,
+		"settings": settings.Redact(section, validated),
+	})
 }
 
 // listCommands is how the console reads a relayed diagnostic's answer. The

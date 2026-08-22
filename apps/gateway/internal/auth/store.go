@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/tenant"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -150,4 +151,54 @@ func StartSessionPurge(ctx context.Context, store SQL, every time.Duration, onEr
 			}
 		}
 	}()
+}
+
+// UserByID returns an operator by id, for a caller that already has a session
+// and therefore does not know the email address.
+func (store SQL) UserByID(ctx context.Context, tenantID, userID string) (User, bool, error) {
+	if store.DB == nil {
+		return User{}, false, nil
+	}
+	var user User
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT id::text, tenant_id::text, email, password_hash, status
+			   FROM app.users WHERE id = $1::uuid`, userID,
+		).Scan(&user.ID, &user.TenantID, &user.Email, &user.PasswordHash, &user.Status)
+	})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return User{}, false, nil
+	case err != nil:
+		return User{}, false, err
+	}
+	return user, true, nil
+}
+
+// SetPassword stores a new hash and ends the account's other sessions.
+//
+// Ending them is the point of changing a password that may have leaked;
+// leaving them alive would make the change cosmetic. The caller's own session
+// is spared so the operator is not signed out of the page they are standing
+// on — identified by fingerprint, which is what the sessions table stores.
+func (store SQL) SetPassword(
+	ctx context.Context,
+	tenantID, userID, hash string,
+	keepFingerprint []byte,
+) error {
+	if store.DB == nil {
+		return nil
+	}
+	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE app.users SET password_hash = $1, updated_at = now()
+			  WHERE id = $2::uuid`, hash, userID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx,
+			`DELETE FROM app.sessions
+			  WHERE user_id = $1::uuid
+			    AND token_sha256 IS DISTINCT FROM $2`, userID, keepFingerprint)
+		return err
+	})
 }

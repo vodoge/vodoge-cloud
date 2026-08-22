@@ -78,6 +78,29 @@ export function parseModem(value: unknown): ModemRow | null {
   };
 }
 
+export type SettingsBySection = Record<string, Record<string, unknown>>;
+
+/**
+ * Every settings section, with secrets already replaced by a placeholder — the
+ * console is never given a real credential.
+ */
+export async function fetchSettings(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SettingsBySection> {
+  const body = await getCatalog(host, "/v1/settings", token, fetchImpl);
+  const raw = body.settings;
+  if (!raw || typeof raw !== "object") return {};
+  const out: SettingsBySection = {};
+  for (const [section, document] of Object.entries(raw as Record<string, unknown>)) {
+    if (document && typeof document === "object") {
+      out[section] = document as Record<string, unknown>;
+    }
+  }
+  return out;
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

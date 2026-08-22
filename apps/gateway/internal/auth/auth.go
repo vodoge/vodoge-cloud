@@ -32,6 +32,9 @@ var (
 	ErrBadCredentials = errors.New("email or password is incorrect")
 	// ErrUserDisabled means the account exists but may not sign in.
 	ErrUserDisabled = errors.New("account is disabled")
+	// ErrWeakPassword covers a new password that is too short, and one that
+	// is the same as the password being replaced.
+	ErrWeakPassword = errors.New("choose a different password of at least 12 characters")
 )
 
 // TokenBytes is the entropy in a session token. 32 bytes is well past what a
@@ -222,4 +225,60 @@ func SignOut(ctx context.Context, sessions SessionStore, authorization string) e
 		return nil
 	}
 	return sessions.DeleteSession(ctx, Fingerprint(token))
+}
+
+// MinPasswordLength is the shortest password a console operator may choose.
+//
+// Twelve, matching what vodoge-admin has always enforced when creating an
+// account. A shorter minimum on the self-service path would mean the policy
+// depends on which door the password came through.
+const MinPasswordLength = 12
+
+// PasswordChanger updates a stored credential.
+type PasswordChanger interface {
+	// keepFingerprint is the caller's own session, which survives; every other
+	// session the account holds is ended.
+	SetPassword(ctx context.Context, tenantID, userID, hash string, keepFingerprint []byte) error
+	UserByID(ctx context.Context, tenantID, userID string) (User, bool, error)
+}
+
+// ChangePassword replaces a signed-in operator's password.
+//
+// The current password is required even though the caller already holds a
+// valid session: a session can be a borrowed laptop, and a password change is
+// what an attacker with one would reach for first.
+func ChangePassword(
+	ctx context.Context,
+	store PasswordChanger,
+	hasher PasswordHasher,
+	session Session,
+	current, next string,
+	keepFingerprint []byte,
+) error {
+	if store == nil || hasher == nil {
+		return ErrBadCredentials
+	}
+	user, found, err := store.UserByID(ctx, session.TenantID, session.UserID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrBadCredentials
+	}
+	if !hasher.Compare(user.PasswordHash, current) {
+		return ErrBadCredentials
+	}
+	if len(next) < MinPasswordLength {
+		return ErrWeakPassword
+	}
+	// Refusing a no-op change: it reads as success while leaving the
+	// credential the operator was trying to retire in place.
+	if hasher.Compare(user.PasswordHash, next) {
+		return ErrWeakPassword
+	}
+	hash, err := hasher.Hash(next)
+	if err != nil {
+		return err
+	}
+	return store.SetPassword(ctx, session.TenantID, session.UserID, hash, keepFingerprint)
 }
