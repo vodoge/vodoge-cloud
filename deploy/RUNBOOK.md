@@ -1,0 +1,173 @@
+# Cloud runbook
+
+What to actually do on `43.108.53.126`, written from doing it. `README.md`
+covers what the Compose project is; this covers operating it.
+
+## The constraint that shapes everything
+
+The host has **2 vCPU and 1.6 GB of RAM**. It cannot build this software. An
+attempt to run `go build` there starved sshd badly enough that the box stopped
+accepting connections for several minutes, and `next build` is heavier still.
+
+So both images are produced elsewhere and the host only copies a finished
+artifact in:
+
+| Service | Built where | Host Dockerfile |
+| --- | --- | --- |
+| gateway | workstation, `GOOS=linux GOARCH=amd64` | `Dockerfile.gateway.prebuilt` |
+| console | workstation, `next build` standalone | `Dockerfile.console.prebuilt` |
+
+`Dockerfile.gateway` and `Dockerfile.console` still build from source. They are
+correct and are what a CI runner should use; they are simply not usable on this
+host.
+
+## Deploying the gateway
+
+On the workstation:
+
+```sh
+cd apps/gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+  -o /tmp/vodoge-gateway ./cmd/gateway
+scp /tmp/vodoge-gateway root@43.108.53.126:/opt/vodoge-cloud/deploy/
+```
+
+On the host:
+
+```sh
+cd /opt/vodoge-cloud/deploy && docker build -t vodoge-cloud-gateway -f Dockerfile.gateway.prebuilt .
+cd /opt/vodoge-cloud && docker compose --env-file deploy/.env -f deploy/compose.yaml \
+  up -d --no-build --force-recreate gateway
+```
+
+`--no-build` matters: without it Compose tries to build from `Dockerfile.gateway`
+and the host runs out of memory.
+
+## Deploying the console
+
+Next.js traces `sharp` into the standalone bundle even with image optimisation
+off, and its native binary matches the machine that ran the build. Remove it —
+the console renders no images, so nothing loads it.
+
+On the workstation:
+
+```sh
+cd apps/console
+NEXT_TELEMETRY_DISABLED=1 VODOGE_GATEWAY_URL=http://gateway:8080 npm run build
+rm -rf .next/standalone/node_modules/@img
+mkdir -p dist/public && cp -r .next/standalone/. dist/
+rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. dist/.next/static/
+cp -r public/. dist/public/
+tar -czf console-dist.tgz -C dist .
+scp console-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
+```
+
+Then the same `docker build` / `up -d --no-build` pair with
+`Dockerfile.console.prebuilt` and service `console`.
+
+Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
+`b/a` when `b` already exists, which silently produces `.next/static/static`
+and a console that serves no CSS.
+
+## Networks
+
+`backend` is `internal: true`. **Docker silently ignores published ports for a
+container attached only to an internal network** — the binding stays in
+`HostConfig.PortBindings` and never appears in `NetworkSettings.Ports`, with no
+error anywhere. Any service that must be reachable from the host has to join
+`edge` as well. Both the gateway and the console do.
+
+## Migrations
+
+```sh
+docker exec -i vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 \
+  < packages/db/migrations/00NN_name.sql
+```
+
+Two things about the schema that are not obvious:
+
+- `SET row_security = off` inside a `SECURITY DEFINER` function does **not**
+  bypass RLS. Under `FORCE ROW LEVEL SECURITY` it raises unless the function's
+  owner can bypass policies. The three pre-context resolvers are owned by
+  `vodoge_resolver`, a `NOLOGIN BYPASSRLS` role that owns nothing else and can
+  only read three tables. Anything that writes stays inside the policies.
+- Object ownership must be stated explicitly. `0010` did not, so the schema
+  depended on which account applied it; `0011` corrects that.
+
+## Creating an operator
+
+```sh
+docker cp /opt/vodoge-cloud/deploy/vodoge-admin vodoge-cloud-gateway-1:/usr/local/bin/
+DBURL=$(docker inspect vodoge-cloud-gateway-1 \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep '^VODOGE_DATABASE_URL=' | cut -d= -f2-)
+docker exec -it -e VODOGE_DATABASE_URL="$DBURL" vodoge-cloud-gateway-1 \
+  /usr/local/bin/vodoge-admin -tenant a -email you@example.com
+```
+
+The password is read from stdin, never a flag: an argument lands in shell
+history and in the process list. Minimum twelve characters.
+
+`-disable` deactivates an account and deletes its live sessions in the same
+transaction, because otherwise it keeps working until the session expires.
+
+## Removing a tenant
+
+Do not. `audit_log` has a foreign key to `tenants` with no cascade, so any
+tenant that has ever been signed in to cannot be deleted — and deliberately so:
+the audit trail is the last thing that should disappear with an account.
+
+Offboard by setting `status` instead:
+
+```sql
+UPDATE app.tenants SET status = 'disabled' WHERE slug = 'name';
+```
+
+The gateway resolves a tenant regardless of status today; enforcing `status` at
+the boundary is still to be done.
+
+## Drills
+
+Both were run against this deployment on 2026-08-22.
+
+**Outage (`X-04`).** Block the uplink from the edge and confirm nothing is lost:
+
+```sh
+# On the edge host. The rule removes itself, so a dropped session cannot
+# leave the box cut off.
+iptables -I OUTPUT -d 43.108.53.126 -p tcp --dport 444 -j DROP
+sleep 180
+iptables -D OUTPUT -d 43.108.53.126 -p tcp --dport 444 -j DROP
+```
+
+Result: the edge queued locally and kept its panel and AT console fully
+working with the cloud unreachable; the mode badge flipped to `local` on its
+own. After restore the backlog drained with **zero gaps** — 28200 rows,
+sequence 1 to 28200, no missing ranges.
+
+**Isolation (`X-05b`).** With a second tenant and a session belonging to it:
+
+| Attempt | Result |
+| --- | --- |
+| Read own tenant | 200 |
+| Same session against another tenant's Host | 403 |
+| No credential at all | 401 |
+| Another tenant's rows under this tenant's SQL context | 0 rows |
+| No SQL tenant context at all | 0 rows |
+| Insert a row carrying another tenant's id | rejected by policy |
+
+The wrong-region device check (`X-05b`'s second half) is covered by unit tests
+and the region values were confirmed to differ live, but no device certificate
+from another region has been presented to this gateway.
+
+## Checking health
+
+```sh
+curl --fail http://127.0.0.1:18080/healthz
+docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -tAc \
+  "SELECT count(*), max(seq) FROM app.ingress"
+docker logs vodoge-cloud-gateway-1 --since 10m | grep WARN
+```
+
+A `device session ended` warning around a deploy is the edge reconnecting and
+is expected. One at any other time is worth reading.
