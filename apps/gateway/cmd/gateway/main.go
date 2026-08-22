@@ -282,6 +282,7 @@ func (process *process) handler() http.Handler {
 	process.registerProxyRoutes(mux)
 	process.registerMessagingRoutes(mux)
 	process.registerCardRoutes(mux)
+	process.registerDeviceRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)

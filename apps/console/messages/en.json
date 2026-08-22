@@ -272,5 +272,13 @@
   "journal.hide": "hide",
   "journal.loading": "loading…",
   "journal.none": "Nothing recorded yet.",
-  "journal.loadError": "The journal could not be loaded."
+  "journal.loadError": "The journal could not be loaded.",
+  "device.admin": "Device",
+  "device.adminNote": "name, and removal",
+  "device.name": "Name",
+  "device.rename": "Rename",
+  "device.delete": "Remove device",
+  "device.deleteNote": "Removing a device deletes its entire journal, messages and commands. None of it can be recovered.",
+  "device.confirmDelete": "Type the device name to confirm removal: {name}",
+  "device.adminFailed": "That could not be saved."
 }

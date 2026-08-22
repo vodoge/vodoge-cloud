@@ -272,5 +272,13 @@
   "journal.hide": "收起",
   "journal.loading": "加载中…",
   "journal.none": "还没有记录。",
-  "journal.loadError": "日志加载失败。"
+  "journal.loadError": "日志加载失败。",
+  "device.admin": "设备管理",
+  "device.adminNote": "改名与删除",
+  "device.name": "名称",
+  "device.rename": "重命名",
+  "device.delete": "删除设备",
+  "device.deleteNote": "删除设备会连同它的全部日志、短信和命令一起删掉，不可恢复。",
+  "device.confirmDelete": "输入设备名以确认删除：{name}",
+  "device.adminFailed": "保存失败。"
 }

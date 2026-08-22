@@ -49,6 +49,9 @@ type Store interface {
 	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
 	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
 	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
+	RenameDevice(ctx context.Context, tenantID, deviceID, name string) error
+	// DeleteDevice removes a device and reports whether it existed.
+	DeleteDevice(ctx context.Context, tenantID, deviceID string) (bool, error)
 }
 
 // Modem is one module as the edge last reported it.
@@ -130,6 +133,10 @@ func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error)
 	return []EventRow{}, nil
 }
 
+func (Empty) RenameDevice(context.Context, string, string, string) error { return nil }
+
+func (Empty) DeleteDevice(context.Context, string, string) (bool, error) { return false, nil }
+
 func (Empty) ListModems(context.Context, string) ([]Modem, error) {
 	return []Modem{}, nil
 }
@@ -146,6 +153,46 @@ type Memory struct {
 	Modems   map[string][]Modem
 	Commands map[string][]CommandRow
 	Events   map[string][]EventRow
+}
+
+// RenameDevice changes a device's label.
+func (store *Memory) RenameDevice(_ context.Context, tenantID, deviceID, name string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for i, device := range store.Devices[tenantID] {
+		if device.ID == deviceID {
+			store.Devices[tenantID][i].Name = name
+			return nil
+		}
+	}
+	return nil
+}
+
+// DeleteDevice removes a device and everything referring to it.
+func (store *Memory) DeleteDevice(_ context.Context, tenantID, deviceID string) (bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	existed := false
+	kept := store.Devices[tenantID][:0]
+	for _, device := range store.Devices[tenantID] {
+		if device.ID == deviceID {
+			existed = true
+			continue
+		}
+		kept = append(kept, device)
+	}
+	store.Devices[tenantID] = kept
+	if !existed {
+		return false, nil
+	}
+	keptModems := store.Modems[tenantID][:0]
+	for _, modem := range store.Modems[tenantID] {
+		if modem.DeviceID != deviceID {
+			keptModems = append(keptModems, modem)
+		}
+	}
+	store.Modems[tenantID] = keptModems
+	return true, nil
 }
 
 // ListEvents returns the tenant's journal entries, newest first.
@@ -242,6 +289,37 @@ type SQL struct {
 }
 
 // ListModems returns the tenant's modules, most recently seen first.
+// RenameDevice changes the label a device is known by.
+//
+// Only the name. Everything else about a device — its IMEI, its region, what
+// it is running — is reported by the device, and a console that could edit
+// those would be inviting someone to write down what they wish were true.
+func (store SQL) RenameDevice(ctx context.Context, tenantID, deviceID, name string) error {
+	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE app.devices SET name = $2, updated_at = now()
+			 WHERE id = $1::uuid`, deviceID, name)
+		return err
+	})
+}
+
+// DeleteDevice removes a device and everything that hangs off it.
+//
+// The work is in app.delete_device rather than here. Doing it from Go would
+// mean granting this role DELETE on app.ingress, app.commands and
+// app.device_certificates — the power to erase any device's whole history,
+// held permanently, to support one operation. The function is SECURITY
+// DEFINER but not an escape from isolation: its owner is subject to FORCE row
+// level security too, so it still sees only the calling tenant's rows.
+func (store SQL) DeleteDevice(ctx context.Context, tenantID, deviceID string) (bool, error) {
+	var existed bool
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT app.delete_device($1::uuid)`, deviceID).Scan(&existed)
+	})
+	return existed, err
+}
+
 // ListEvents reads the uplink journal, newest first.
 //
 // This is the only view of what a device actually said, as opposed to what the

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeviceAdmin } from "@/components/device-admin";
 import { DeviceConsole } from "@/components/device-console";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
 import { fetchDevices, fetchModems, type DeviceRow, type ModemRow } from "@/lib/catalog";
@@ -129,6 +130,20 @@ export default async function DevicePage({
               select_operator: t("cmd.select_operator", locale),
               send_sms: t("cmd.send_sms", locale),
               switch_esim_profile: t("cmd.switch_esim_profile", locale),
+            }}
+          />
+        </Card>
+        <Card title={t("device.admin", locale)} note={t("device.adminNote", locale)}>
+          <DeviceAdmin
+            deviceId={deviceId}
+            name={device?.name ?? deviceId}
+            labels={{
+              name: t("device.name", locale),
+              rename: t("device.rename", locale),
+              delete: t("device.delete", locale),
+              deleteNote: t("device.deleteNote", locale),
+              confirmDelete: t("device.confirmDelete", locale),
+              failed: t("device.adminFailed", locale),
             }}
           />
         </Card>
