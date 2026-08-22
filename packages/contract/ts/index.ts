@@ -4,14 +4,16 @@ export const PROTOCOL_VERSION = 1 as const;
 export const SCHEMA_ID = "https://schemas.vodoge.cloud/edge-cloud/v1/edge-cloud.schema.json" as const;
 export const WS_SUBPROTOCOL = "vodoge.edge.v1" as const;
 
-export type Uuid = string;
-export type Iccid = string;
-export type Imei = string;
-export type Sha256 = string;
-export type HttpsUrl = string;
 export type EpochMillis = number;
 export type SequenceNumber = string;
 export type SequenceCursor = string;
+export type Uuid = string;
+export type Iccid = string;
+export type Imsi = string;
+export type Plmn = string;
+export type Imei = string;
+export type Sha256 = string;
+export type HttpsUrl = string;
 
 export type MessageKind =
   | "Resume" |
@@ -158,6 +160,10 @@ export interface ModemState {
   registration: "registered" | "searching" | "denied" | "unregistered" | "unknown";
   iccid?: Iccid | null;
   signal_dbm?: number | null;
+  family?: string | null;
+  imsi?: Imsi | null;
+  home_plmn?: Plmn | null;
+  serving_plmn?: Plmn | null;
   capability: CapabilitySummary;
 }
 

@@ -30,6 +30,54 @@ export type SessionRow = {
   deviceId: string;
 };
 
+export type ModemRow = {
+  id: string;
+  deviceId: string;
+  imei: string;
+  family: string;
+  iccid: string | null;
+  state: string | null;
+  registration: string | null;
+  signalDbm: number | null;
+  homePlmn: string | null;
+  servingPlmn: string | null;
+  smsMo: string | null;
+  smsMt: string | null;
+  lastSeen: number | null;
+};
+
+export async function fetchModems(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ModemRow[]> {
+  const body = await getCatalog(host, "/v1/modems", token, fetchImpl);
+  return arrayOf(body.modems).map(parseModem).filter((row): row is ModemRow => row !== null);
+}
+
+export function parseModem(value: unknown): ModemRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const id = asString(row.id);
+  const imei = asString(row.imei);
+  if (!id || !imei) return null;
+  return {
+    id,
+    imei,
+    deviceId: asString(row.device_id) ?? "",
+    family: asString(row.family) ?? "",
+    iccid: asString(row.iccid),
+    state: asString(row.state),
+    registration: asString(row.registration),
+    signalDbm: asNumber(row.signal_dbm),
+    homePlmn: asString(row.home_plmn),
+    servingPlmn: asString(row.serving_plmn),
+    smsMo: asString(row.sms_mo),
+    smsMt: asString(row.sms_mt),
+    lastSeen: asNumber(row.last_seen),
+  };
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

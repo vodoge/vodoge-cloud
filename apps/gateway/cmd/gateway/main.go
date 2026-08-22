@@ -227,6 +227,7 @@ func (process *process) handler() http.Handler {
 	mux.Handle("GET "+wss.Path, process.session)
 	mux.HandleFunc("GET /v1/events", process.sse)
 	mux.HandleFunc("GET /v1/devices", process.devices)
+	mux.HandleFunc("GET /v1/modems", process.modems)
 	mux.HandleFunc("GET /v1/messages", process.messages)
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
@@ -387,6 +388,23 @@ func (process *process) tenantFromRequest(
 	}
 	_ = session
 	return entry, true
+}
+
+// modems lists the modules the edge has reported, which is what says whether a
+// device's hardware is actually usable — a device can be online while every
+// module on it has lost its network.
+func (process *process) modems(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	list, err := process.catalog.ListModems(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"modems": list})
 }
 
 func (process *process) devices(writer http.ResponseWriter, request *http.Request) {

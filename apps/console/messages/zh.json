@@ -112,5 +112,17 @@
   "empty.rules.title": "还没有规则",
   "empty.rules.desc": "规则从来信中提取验证码并按配置转发出去。",
   "empty.audit.title": "还没有记录",
-  "empty.audit.desc": "登录和租户变更发生时会即时写入这里。"
+  "empty.audit.desc": "登录和租户变更发生时会即时写入这里。",
+  "devices.modems": "模组",
+  "devices.modemsNote": "边缘最近一次上报",
+  "modems.colImei": "IMEI",
+  "modems.colIccid": "ICCID",
+  "modems.colState": "状态",
+  "modems.colSignal": "信号",
+  "modems.colSms": "短信",
+  "modems.colSeen": "最近上报",
+  "empty.modems.title": "还没有模组上报",
+  "empty.modems.desc": "设备一接入就会上报它挂着的模组。",
+  "modems.colNetwork": "网络",
+  "modems.roaming": "漫游"
 }

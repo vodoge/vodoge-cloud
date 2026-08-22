@@ -551,3 +551,43 @@ func (expiredSessions) Session(context.Context, []byte) (auth.Session, bool, err
 
 func (expiredSessions) CreateSession(context.Context, []byte, auth.Session) error { return nil }
 func (expiredSessions) DeleteSession(context.Context, []byte) error               { return nil }
+
+// A modem list is tenant data like any other, and it is the one that carries
+// ICCIDs — so it must be behind the same boundary as the rest.
+func TestModemsAreTenantScopedAndAuthenticated(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	proc.catalog = &catalog.Memory{
+		Modems: map[string][]catalog.Modem{
+			"t-a": {{ID: "m-a", DeviceID: "d-a", IMEI: "862547055142811", Family: "EC20"}},
+			"t-b": {{ID: "m-b", DeviceID: "d-b", IMEI: "867018069514820", Family: "EC20"}},
+		},
+	}
+	handler := proc.handler()
+
+	own := getJSON(t, handler, "http://a.vodoge.com/v1/modems")
+	if got := stringSlice(own["modems"], "imei"); len(got) != 1 || got[0] != "862547055142811" {
+		t.Fatalf("tenant a modems = %#v", own)
+	}
+
+	noCredential := httptest.NewRecorder()
+	handler.ServeHTTP(
+		noCredential,
+		httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/modems", nil),
+	)
+	if noCredential.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", noCredential.Code)
+	}
+
+	crossTenant := httptest.NewRequest(http.MethodGet, "http://b.vodoge.com/v1/modems", nil)
+	crossTenant.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, crossTenant)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "867018069514820") {
+		t.Fatal("another tenant's modem was served")
+	}
+}

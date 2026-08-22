@@ -45,6 +45,29 @@ type Store interface {
 	ListDevices(ctx context.Context, tenantID string) ([]Device, error)
 	ListMessages(ctx context.Context, tenantID string) ([]Message, error)
 	ListSessions(ctx context.Context, tenantID string) ([]Session, error)
+	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
+}
+
+// Modem is one module as the edge last reported it.
+//
+// The SMS bearer fields come from the capability matrix rather than being
+// inferred here: whether a card can send is a hardware and carrier fact the
+// edge already resolved, and re-deciding it in the cloud is how the two ends
+// start disagreeing.
+type Modem struct {
+	ID           string  `json:"id"`
+	DeviceID     string  `json:"device_id"`
+	IMEI         string  `json:"imei"`
+	Family       string  `json:"family"`
+	ICCID        *string `json:"iccid"`
+	State        *string `json:"state"`
+	Registration *string `json:"registration"`
+	SignalDbm    *int64  `json:"signal_dbm"`
+	HomePlmn     *string `json:"home_plmn"`
+	ServingPlmn  *string `json:"serving_plmn"`
+	SmsMo        *string `json:"sms_mo"`
+	SmsMt        *string `json:"sms_mt"`
+	LastSeen     *int64  `json:"last_seen"`
 }
 
 // Empty is used when PostgreSQL is not configured.
@@ -61,6 +84,10 @@ func (Empty) ListMessages(context.Context, string) ([]Message, error) {
 }
 
 // ListSessions returns no sessions.
+func (Empty) ListModems(context.Context, string) ([]Modem, error) {
+	return []Modem{}, nil
+}
+
 func (Empty) ListSessions(context.Context, string) ([]Session, error) {
 	return []Session{}, nil
 }
@@ -70,6 +97,20 @@ type Memory struct {
 	mu       sync.Mutex
 	Devices  map[string][]Device
 	Messages map[string][]Message
+	Modems   map[string][]Modem
+}
+
+// ListModems returns modems for tenantID, never another tenant's rows.
+func (store *Memory) ListModems(_ context.Context, tenantID string) ([]Modem, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := store.Modems[tenantID]
+	if out == nil {
+		return []Modem{}, nil
+	}
+	copied := make([]Modem, len(out))
+	copy(copied, out)
+	return copied, nil
 }
 
 // ListDevices returns devices for tenantID, never another tenant's rows.
@@ -98,6 +139,78 @@ func (store *Memory) ListSessions(ctx context.Context, tenantID string) ([]Sessi
 // SQL reads app.devices and app.messages through tenant.Transact.
 type SQL struct {
 	DB *sql.DB
+}
+
+// ListModems returns the tenant's modules, most recently seen first.
+func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, error) {
+	var modems []Modem
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id::text,
+			       device_id::text,
+			       imei,
+			       family,
+			       iccid,
+			       state,
+			       registration,
+			       signal_dbm,
+			       home_plmn,
+			       serving_plmn,
+			       capability ->> 'sms_mo',
+			       capability ->> 'sms_mt',
+			       last_seen_at
+			  FROM app.modems
+			 ORDER BY last_seen_at DESC NULLS LAST, imei`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item Modem
+			var iccid, state, registration, homePlmn, servingPlmn, smsMo, smsMt sql.NullString
+			var signal sql.NullInt64
+			var lastSeen sql.NullTime
+			if err := rows.Scan(
+				&item.ID, &item.DeviceID, &item.IMEI, &item.Family,
+				&iccid, &state, &registration, &signal,
+				&homePlmn, &servingPlmn, &smsMo, &smsMt, &lastSeen,
+			); err != nil {
+				return err
+			}
+			item.ICCID = nullableString(iccid)
+			item.State = nullableString(state)
+			item.Registration = nullableString(registration)
+			item.HomePlmn = nullableString(homePlmn)
+			item.ServingPlmn = nullableString(servingPlmn)
+			item.SmsMo = nullableString(smsMo)
+			item.SmsMt = nullableString(smsMt)
+			if signal.Valid {
+				value := signal.Int64
+				item.SignalDbm = &value
+			}
+			if lastSeen.Valid {
+				ms := lastSeen.Time.UnixMilli()
+				item.LastSeen = &ms
+			}
+			modems = append(modems, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	if modems == nil {
+		modems = []Modem{}
+	}
+	return modems, nil
+}
+
+func nullableString(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	out := value.String
+	return &out
 }
 
 // ListDevices returns the tenant's devices ordered by name.

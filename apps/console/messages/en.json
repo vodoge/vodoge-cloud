@@ -112,5 +112,17 @@
   "empty.rules.title": "No rules yet",
   "empty.rules.desc": "Rules extract codes from incoming messages and forward them onward.",
   "empty.audit.title": "Nothing recorded yet",
-  "empty.audit.desc": "Sign-ins and tenant changes are written here as they happen."
+  "empty.audit.desc": "Sign-ins and tenant changes are written here as they happen.",
+  "devices.modems": "Modems",
+  "devices.modemsNote": "as last reported by the edge",
+  "modems.colImei": "IMEI",
+  "modems.colIccid": "ICCID",
+  "modems.colState": "State",
+  "modems.colSignal": "Signal",
+  "modems.colSms": "SMS",
+  "modems.colSeen": "Last seen",
+  "empty.modems.title": "No modems reported",
+  "empty.modems.desc": "A device reports its modules as soon as it connects.",
+  "modems.colNetwork": "Network",
+  "modems.roaming": "roaming"
 }

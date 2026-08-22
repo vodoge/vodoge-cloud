@@ -149,6 +149,10 @@ type ModemState struct {
 	Registration string            `json:"registration"`
 	Iccid        *string           `json:"iccid,omitempty"`
 	SignalDbm    *int64            `json:"signal_dbm,omitempty"`
+	Family       *string           `json:"family,omitempty"`
+	Imsi         *string           `json:"imsi,omitempty"`
+	HomePlmn     *string           `json:"home_plmn,omitempty"`
+	ServingPlmn  *string           `json:"serving_plmn,omitempty"`
 	Capability   CapabilitySummary `json:"capability"`
 }
 
