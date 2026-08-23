@@ -38,6 +38,14 @@ const NOTIFICATION_FIELDS: Field[] = [
   { path: "telegram.enabled", kind: "boolean" },
   { path: "telegram.chat_id", kind: "text" },
   { path: "telegram.bot_token", kind: "secret" },
+  // The bot half. It shares the token above -- one bot, one credential -- and
+  // is otherwise independent: a deployment may want alerts without a bot, or a
+  // bot without alerts. Each operator line is "<telegram id>=<account email>",
+  // and the account named there is the one the bot acts as, with that
+  // account's role. Mapping a chat here grants exactly what that account can
+  // already do and nothing more.
+  { path: "telegram.bot.enabled", kind: "boolean" },
+  { path: "telegram.bot.operators", kind: "list" },
   { path: "feishu.enabled", kind: "boolean" },
   { path: "feishu.webhook_url", kind: "text" },
   { path: "feishu.secret", kind: "secret" },

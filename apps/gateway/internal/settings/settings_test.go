@@ -209,3 +209,109 @@ func TestWholeNumbersOnlyForCounts(t *testing.T) {
 		t.Fatal("a fractional limit should be refused, not truncated")
 	}
 }
+
+// ── Telegram bot ─────────────────────────────────────────────────────────
+
+// The operator table is an authorisation table. It is parsed once, here, so
+// that the thing which saves it and the thing which enforces it cannot come to
+// different conclusions about who is allowed in.
+func TestTelegramOperatorsAreParsedIntoAccounts(t *testing.T) {
+	t.Parallel()
+
+	operators, err := TelegramOperators(decode(t, `{"telegram":{"bot":{
+		"operators":["8758017357=Ops@Vodoge.com"," -100777 = group@vodoge.com ",""]}}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []TelegramOperator{
+		{ChatID: "8758017357", Email: "ops@vodoge.com"},
+		{ChatID: "-100777", Email: "group@vodoge.com"},
+	}
+	if len(operators) != len(want) {
+		t.Fatalf("parsed %d operators, want %d: %+v", len(operators), len(want), operators)
+	}
+	for i, operator := range operators {
+		if operator != want[i] {
+			t.Errorf("operator %d = %+v, want %+v", i, operator, want[i])
+		}
+	}
+}
+
+func TestUnusableTelegramOperatorLinesAreRejected(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"no separator":  `{"telegram":{"bot":{"operators":["8758017357 ops@vodoge.com"]}}}`,
+		"no email":      `{"telegram":{"bot":{"operators":["8758017357="]}}}`,
+		"not an id":     `{"telegram":{"bot":{"operators":["andy=ops@vodoge.com"]}}}`,
+		"not an email":  `{"telegram":{"bot":{"operators":["1=ops"]}}}`,
+		"not a list":    `{"telegram":{"bot":{"operators":"1=ops@vodoge.com"}}}`,
+		"two accounts":  `{"telegram":{"bot":{"operators":["1=a@b.c","1=d@e.f"]}}}`,
+		"bot not a map": `{"telegram":{"bot":"yes"}}`,
+	} {
+		if _, err := Validate(SectionNotifications, decode(t, document)); err == nil {
+			t.Errorf("%s: saved without complaint", name)
+		}
+	}
+}
+
+// The same chat named twice for the same account is a duplicate, not a
+// conflict -- a person editing a list should not be blocked by their own
+// copy-paste when it says the same thing.
+func TestARepeatedTelegramOperatorIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	operators, err := TelegramOperators(decode(t,
+		`{"telegram":{"bot":{"operators":["1=a@b.c","1=A@B.C"]}}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(operators) != 1 {
+		t.Fatalf("parsed %d operators, want 1", len(operators))
+	}
+}
+
+// An enabled bot that cannot work must be refused at the point of saving. It
+// would otherwise poll, refuse every message, and read as a broken product
+// rather than an unfinished setting.
+func TestAnEnabledTelegramBotMustBeUsable(t *testing.T) {
+	t.Parallel()
+
+	for name, document := range map[string]string{
+		"no operators": `{"telegram":{"bot_token":"1234:AAE","bot":{"enabled":true}}}`,
+		"no token":     `{"telegram":{"bot":{"enabled":true,"operators":["1=a@b.c"]}}}`,
+	} {
+		if _, err := Validate(SectionNotifications, decode(t, document)); err == nil {
+			t.Errorf("%s: an unusable bot was accepted", name)
+		}
+	}
+
+	// Switched off, the same half-filled settings are a draft rather than an
+	// error -- the same rule the channels above already follow.
+	if _, err := Validate(SectionNotifications, decode(t,
+		`{"telegram":{"bot":{"enabled":false}}}`)); err != nil {
+		t.Errorf("a disabled bot was rejected: %v", err)
+	}
+}
+
+// The bot shares the channel's credential, and the console never holds it, so
+// the placeholder has to survive a save made from the bot half of the form.
+func TestSavingBotOperatorsKeepsTheStoredToken(t *testing.T) {
+	t.Parallel()
+
+	stored := decode(t, `{"telegram":{"enabled":true,"chat_id":"1","bot_token":"1234:AAE"}}`)
+	incoming := decode(t, `{"telegram":{"enabled":true,"chat_id":"1","bot_token":"`+
+		Redacted+`","bot":{"enabled":true,"operators":["1=a@b.c"]}}}`)
+
+	merged := Merge(SectionNotifications, incoming, stored)
+	saved, err := Validate(SectionNotifications, merged)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got := TelegramBotToken(saved); got != "1234:AAE" {
+		t.Fatalf("the stored token did not survive enabling the bot")
+	}
+	if !TelegramBotEnabled(saved) {
+		t.Fatal("the bot was not recorded as enabled")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -100,6 +101,12 @@ func Validate(section string, document map[string]any) (map[string]any, error) {
 }
 
 func validateNotifications(document map[string]any) (map[string]any, error) {
+	// Checked whether or not the telegram channel itself is switched on: the
+	// bot and the outbound channel share a token but are independent
+	// features, and a deployment may well want one without the other.
+	if err := validateTelegramBot(document); err != nil {
+		return nil, err
+	}
 	for _, channel := range notificationChannels {
 		raw, present := document[channel]
 		if !present {
@@ -179,6 +186,163 @@ func validateEnabledChannel(channel string, config map[string]any) error {
 		if asString(config["token"]) == "" {
 			return ErrInvalid{"pushplus is enabled but has no token"}
 		}
+	}
+	return nil
+}
+
+// ── Telegram bot ─────────────────────────────────────────────────────────
+
+// TelegramOperator maps one Telegram account to a console account.
+//
+// The bot is a second front door to the same API the console serves, so the
+// question "who is this" has to have the same answer on both. The bot does not
+// get a permission model of its own: a chat names an account, the account
+// carries the role, and every action is performed as that account. A chat that
+// names nothing is nobody.
+type TelegramOperator struct {
+	// ChatID is the sender's numeric Telegram id, which in a private chat is
+	// also the chat id. It is matched against the sender of a message rather
+	// than the conversation it arrived in, so putting the bot in a group does
+	// not hand the group whatever the group's id happened to be mapped to.
+	ChatID string
+	// Email is the console account this chat acts as. It has to exist and be
+	// active; the bot resolves it at the moment of use instead of caching a
+	// role, so disabling the account disables the chat with it.
+	Email string
+}
+
+// One stored mapping is the line "<telegram id>=<email>".
+//
+// A list of strings rather than a list of objects because the settings form
+// renders a jsonb document through a fixed set of field kinds and a string
+// list is one of them; a richer shape would have meant changing the shared
+// form component for this one field.
+var (
+	telegramChatPattern  = regexp.MustCompile(`^-?[0-9]{1,20}$`)
+	telegramEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+$`)
+)
+
+// TelegramOperators parses notifications.telegram.bot.operators.
+//
+// Exported so the bot and this package's validation read the mapping through
+// the same code. Two parsers for one authorisation table is how a chat ends up
+// authorised by the thing that saves it and unrecognised by the thing that
+// checks it, or the reverse.
+func TelegramOperators(notifications map[string]any) ([]TelegramOperator, error) {
+	bot, ok := telegramBotBlock(notifications)
+	if !ok {
+		return nil, nil
+	}
+	raw, present := bot["operators"]
+	if !present || raw == nil {
+		return nil, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, ErrInvalid{
+			`telegram bot operators must be a list of "<telegram id>=<account email>" lines`}
+	}
+	seen := map[string]string{}
+	out := make([]TelegramOperator, 0, len(items))
+	for _, item := range items {
+		line := strings.TrimSpace(asString(item))
+		if line == "" {
+			continue
+		}
+		chatID, email, found := strings.Cut(line, "=")
+		chatID = strings.TrimSpace(chatID)
+		email = strings.ToLower(strings.TrimSpace(email))
+		if !found ||
+			!telegramChatPattern.MatchString(chatID) ||
+			!telegramEmailPattern.MatchString(email) {
+			return nil, ErrInvalid{fmt.Sprintf(
+				`telegram bot operator %q must read "<telegram id>=<account email>"`, line)}
+		}
+		// Two accounts for one chat is an ambiguous identity, and resolving it
+		// either way would be choosing a privilege level by accident.
+		if previous, clash := seen[chatID]; clash {
+			if previous != email {
+				return nil, ErrInvalid{fmt.Sprintf(
+					"telegram bot operator %s is mapped to two accounts", chatID)}
+			}
+			continue
+		}
+		seen[chatID] = email
+		out = append(out, TelegramOperator{ChatID: chatID, Email: email})
+	}
+	return out, nil
+}
+
+// TelegramBotEnabled reports whether the tenant asked for the bot to run.
+func TelegramBotEnabled(notifications map[string]any) bool {
+	bot, ok := telegramBotBlock(notifications)
+	if !ok {
+		return false
+	}
+	enabled, _ := bot["enabled"].(bool)
+	return enabled
+}
+
+// TelegramBotToken returns the credential the bot and the notification channel
+// share. One bot, one token: a second slot would mean two things to rotate.
+func TelegramBotToken(notifications map[string]any) string {
+	channel, ok := notifications["telegram"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return asString(channel["bot_token"])
+}
+
+// TelegramAPIBase returns the endpoint override a test, or a tenant behind a
+// relay, may set. Absent, the real service is used.
+func TelegramAPIBase(notifications map[string]any) string {
+	channel, ok := notifications["telegram"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return asString(channel["api_base"])
+}
+
+func telegramBotBlock(notifications map[string]any) (map[string]any, bool) {
+	channel, ok := notifications["telegram"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	bot, ok := channel["bot"].(map[string]any)
+	return bot, ok
+}
+
+// validateTelegramBot refuses a bot configuration that cannot work.
+//
+// An enabled bot with no operators is the case worth naming: it would poll,
+// answer every message with a refusal, and read as a broken bot rather than an
+// unfinished setting.
+func validateTelegramBot(document map[string]any) error {
+	channel, ok := document["telegram"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	bot, present := telegramBotBlock(document)
+	if !present {
+		if channel["bot"] != nil {
+			return ErrInvalid{"telegram bot must be an object"}
+		}
+		return nil
+	}
+	operators, err := TelegramOperators(document)
+	if err != nil {
+		return err
+	}
+	if enabled, _ := bot["enabled"].(bool); !enabled {
+		return nil
+	}
+	if len(operators) == 0 {
+		return ErrInvalid{"telegram bot is enabled but has no operators"}
+	}
+	// Secrets are merged in before validation runs, so an empty one here means
+	// nothing was ever stored -- the tenant enabled a bot that cannot speak.
+	if TelegramBotToken(document) == "" {
+		return ErrInvalid{"telegram bot is enabled but has no bot_token"}
 	}
 	return nil
 }

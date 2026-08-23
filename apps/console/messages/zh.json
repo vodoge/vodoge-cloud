@@ -199,6 +199,8 @@
   "f.telegram.enabled": "启用 Telegram",
   "f.telegram.chat_id": "Chat ID",
   "f.telegram.bot_token": "Bot Token",
+  "f.telegram.bot.enabled": "启用 Telegram 机器人",
+  "f.telegram.bot.operators": "机器人操作员（每行一条 telegram_id=账号邮箱）",
   "f.feishu.enabled": "启用飞书",
   "f.feishu.webhook_url": "飞书机器人地址",
   "f.feishu.secret": "飞书签名密钥（可选）",

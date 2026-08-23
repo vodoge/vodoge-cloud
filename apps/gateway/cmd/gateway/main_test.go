@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/telegram"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
 )
@@ -1792,5 +1795,289 @@ func TestTheSessionEndpointReportsTheRole(t *testing.T) {
 		if body.Role != want {
 			t.Errorf("%s: role = %q, want %q", token, body.Role, want)
 		}
+	}
+}
+
+// ── The Telegram bot as an authentication front door ─────────────────────
+//
+// The bot is the second way into this API. These exercise it against the real
+// handler -- the same mux, wrapped in the same middleware -- because the thing
+// worth proving is not that the bot works but that it did not become a way
+// around the guard the routes are behind.
+
+// botAccounts is a working users-and-sessions store, which testSessions is
+// not: the bot mints a session and then presents it, so a store whose
+// CreateSession discards would make every one of these pass for the wrong
+// reason.
+type botAccounts struct {
+	mu       sync.Mutex
+	users    map[string]auth.User
+	sessions map[string]auth.Session
+}
+
+func (store *botAccounts) User(_ context.Context, tenantID, email string) (auth.User, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	user, ok := store.users[email]
+	if !ok || user.TenantID != tenantID {
+		return auth.User{}, false, nil
+	}
+	return user, true, nil
+}
+
+func (store *botAccounts) Session(
+	_ context.Context, fingerprint []byte,
+) (auth.Session, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	session, ok := store.sessions[string(fingerprint)]
+	if !ok {
+		return auth.Session{}, false, nil
+	}
+	// The role is read back from the account, exactly as the SQL store does,
+	// so a test cannot accidentally prove something the production path does
+	// not do.
+	for _, user := range store.users {
+		if user.ID == session.UserID {
+			session.Role = user.Role
+		}
+	}
+	return session, true, nil
+}
+
+func (store *botAccounts) CreateSession(
+	_ context.Context, fingerprint []byte, session auth.Session,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.sessions == nil {
+		store.sessions = map[string]auth.Session{}
+	}
+	store.sessions[string(fingerprint)] = session
+	return nil
+}
+
+func (store *botAccounts) DeleteSession(_ context.Context, fingerprint []byte) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	delete(store.sessions, string(fingerprint))
+	return nil
+}
+
+func (store *botAccounts) live() int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return len(store.sessions)
+}
+
+// botFixture is tenant a with one device, an admin and a read-only operator,
+// and a bot wired to the real handler.
+func botFixture(t *testing.T, chatOwner string) (*process, *telegram.Bot, *botAccounts) {
+	t.Helper()
+	store := &botAccounts{users: map[string]auth.User{
+		"admin@example.com": {
+			ID: "u-admin", TenantID: "t-a", Email: "admin@example.com",
+			Status: "active", Role: auth.RoleAdmin,
+		},
+		"viewer@example.com": {
+			ID: "u-viewer", TenantID: "t-a", Email: "viewer@example.com",
+			Status: "active", Role: auth.RoleReadOnly,
+		},
+	}}
+	proc := tenantFixture(t)
+	proc.authSessions = store
+	proc.users = store
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{
+			"t-a": {{ID: "d-a", Name: "bench", State: "online"}},
+		},
+		Modems: map[string][]catalog.Modem{
+			"t-a": {{ID: "m-1", DeviceID: "d-a", IMEI: "867018069509705"}},
+		},
+	}
+	bot := &telegram.Bot{
+		Telegram: &botChat{},
+		API:      telegram.Loopback{Handler: proc.handler(), Host: "a.vodoge.com"},
+		Accounts: telegram.Accounts{Users: store, Sessions: store, TenantID: "t-a"},
+		Logger:   quietLogger(),
+	}
+	_ = chatOwner
+	return proc, bot, store
+}
+
+// botChat records the bot's side of the conversation.
+type botChat struct {
+	mu    sync.Mutex
+	texts []string
+	nonce string
+}
+
+func (chat *botChat) Call(
+	_ context.Context, _ telegram.Config, method string, body, _ any,
+) error {
+	chat.mu.Lock()
+	defer chat.mu.Unlock()
+	document, _ := body.(map[string]any)
+	if method == "sendMessage" {
+		text, _ := document["text"].(string)
+		chat.texts = append(chat.texts, text)
+	}
+	if markup, ok := document["reply_markup"].(map[string]any); ok {
+		if rows, ok := markup["inline_keyboard"].([][]map[string]any); ok && len(rows) > 0 {
+			data, _ := rows[0][0]["callback_data"].(string)
+			_, chat.nonce, _ = strings.Cut(data, ":")
+		}
+	}
+	return nil
+}
+
+func (chat *botChat) said(fragment string) bool {
+	chat.mu.Lock()
+	defer chat.mu.Unlock()
+	for _, text := range chat.texts {
+		if strings.Contains(text, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func botConfig(t *testing.T, chatID int64, email string) telegram.Config {
+	t.Helper()
+	document := map[string]any{"telegram": map[string]any{
+		"bot_token": "1234:AAE",
+		"bot": map[string]any{
+			"enabled":   true,
+			"operators": []any{fmt.Sprintf("%d=%s", chatID, email)},
+		},
+	}}
+	config := telegram.ReadConfig(document)
+	if !config.Enabled {
+		t.Fatal("the fixture configuration did not enable the bot")
+	}
+	return config
+}
+
+func chatMessage(sender int64, text string) telegram.Update {
+	return telegram.Update{UpdateID: 1, Message: &telegram.Message{
+		MessageID: 1, Text: text,
+		From: &telegram.User{ID: sender},
+		Chat: &telegram.Chat{ID: sender, Type: "private"},
+	}}
+}
+
+func chatPress(sender int64, data string) telegram.Update {
+	return telegram.Update{UpdateID: 2, CallbackQuery: &telegram.CallbackQuery{
+		ID: "cb", Data: data,
+		From: &telegram.User{ID: sender},
+		Message: &telegram.Message{
+			MessageID: 2, Chat: &telegram.Chat{ID: sender, Type: "private"},
+		},
+	}}
+}
+
+// The bot must not become a way around the read-only guard. A chat mapped to
+// a read-only account has to be as unable to restart a modem through Telegram
+// as it is through a browser.
+func TestTheTelegramBotCannotOutrankTheAccountItActsAs(t *testing.T) {
+	t.Parallel()
+
+	proc, bot, _ := botFixture(t, "viewer@example.com")
+	queue := proc.queue.(*commands.Memory)
+	config := botConfig(t, 111, "viewer@example.com")
+	chat := bot.Telegram.(*botChat)
+
+	bot.HandleUpdate(context.Background(), config,
+		chatMessage(111, "/reset 867018069509705"))
+	bot.HandleUpdate(context.Background(), config, chatPress(111, "ok:"+chat.nonce))
+
+	if len(queue.Items) != 0 {
+		t.Fatalf("a read-only account queued %+v through the bot", queue.Items)
+	}
+	if !chat.said("read-only") {
+		t.Fatalf("the refusal did not come from the guard: %q", chat.texts)
+	}
+	// And the same account can still read, because refusing writes must not
+	// turn into refusing the account.
+	bot.HandleUpdate(context.Background(), config, chatMessage(111, "/status"))
+	if !chat.said("867018069509705") {
+		t.Fatalf("a read-only account could not read the fleet: %q", chat.texts)
+	}
+}
+
+// The other half: an admin chat reaches the same route and the command is
+// enqueued and audited exactly as it would be from the console.
+func TestTheTelegramBotActsWithTheMappedAccountsRole(t *testing.T) {
+	t.Parallel()
+
+	proc, bot, _ := botFixture(t, "admin@example.com")
+	queue := proc.queue.(*commands.Memory)
+	config := botConfig(t, 111, "admin@example.com")
+	chat := bot.Telegram.(*botChat)
+
+	bot.HandleUpdate(context.Background(), config,
+		chatMessage(111, "/reset 867018069509705"))
+	if len(queue.Items) != 0 {
+		t.Fatalf("the command was queued before it was confirmed: %+v", queue.Items)
+	}
+
+	bot.HandleUpdate(context.Background(), config, chatPress(111, "ok:"+chat.nonce))
+	if len(queue.Items) != 1 {
+		t.Fatalf("queued %d commands after confirming, want 1", len(queue.Items))
+	}
+	if got := queue.Items[0].Kind; got != "reset_modem_usb" {
+		t.Errorf("queued kind = %q", got)
+	}
+	if got := queue.Items[0].TenantID; got != "t-a" {
+		t.Errorf("queued for tenant %q, want t-a", got)
+	}
+	events := proc.audit.(*audit.Memory).ForTenant("t-a")
+	if len(events) != 1 || events[0].Action != "reset_modem_usb" {
+		t.Errorf("audit = %+v, want one reset_modem_usb", events)
+	}
+}
+
+// A sender the tenant never mapped reaches nothing at all -- not the guard,
+// not a handler, not the queue.
+func TestAnUnmappedTelegramSenderReachesNoRoute(t *testing.T) {
+	t.Parallel()
+
+	proc, bot, store := botFixture(t, "admin@example.com")
+	queue := proc.queue.(*commands.Memory)
+	config := botConfig(t, 111, "admin@example.com")
+	chat := bot.Telegram.(*botChat)
+
+	bot.HandleUpdate(context.Background(), config,
+		chatMessage(222, "/reset 867018069509705"))
+	bot.HandleUpdate(context.Background(), config, chatMessage(222, "/status"))
+
+	if len(queue.Items) != 0 {
+		t.Fatalf("an unmapped sender queued %+v", queue.Items)
+	}
+	if !chat.said("未授权") {
+		t.Fatalf("the sender was not refused: %q", chat.texts)
+	}
+	// No credential was minted for a sender with no account.
+	if store.live() != 0 {
+		t.Fatalf("%d sessions exist for an unmapped sender", store.live())
+	}
+}
+
+// Sessions the bot mints are released. A bot that leaked one per message would
+// leave a trail of live credentials in app.sessions.
+func TestTheTelegramBotLeavesNoSessionsBehind(t *testing.T) {
+	t.Parallel()
+
+	_, bot, store := botFixture(t, "admin@example.com")
+	config := botConfig(t, 111, "admin@example.com")
+	chat := bot.Telegram.(*botChat)
+
+	bot.HandleUpdate(context.Background(), config, chatMessage(111, "/status"))
+	bot.HandleUpdate(context.Background(), config,
+		chatMessage(111, "/sms 867018069509705 10086 CXYE"))
+	bot.HandleUpdate(context.Background(), config, chatPress(111, "ok:"+chat.nonce))
+
+	if store.live() != 0 {
+		t.Fatalf("%d minted sessions outlived their calls", store.live())
 	}
 }

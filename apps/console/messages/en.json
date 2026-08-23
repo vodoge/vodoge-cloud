@@ -199,6 +199,8 @@
   "f.telegram.enabled": "Telegram enabled",
   "f.telegram.chat_id": "Chat ID",
   "f.telegram.bot_token": "Bot token",
+  "f.telegram.bot.enabled": "Telegram bot enabled",
+  "f.telegram.bot.operators": "Bot operators (one telegram_id=account email per line)",
   "f.feishu.enabled": "Feishu enabled",
   "f.feishu.webhook_url": "Feishu bot webhook",
   "f.feishu.secret": "Feishu signing secret (optional)",

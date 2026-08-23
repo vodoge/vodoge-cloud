@@ -52,6 +52,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/schedule"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/telegram"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
@@ -236,6 +237,10 @@ func main() {
 	}
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
+	// The Telegram bot shares the scheduler's lifetime for the same reason it
+	// shares its shape: both are background work that must stop when the
+	// process does, and neither belongs to a request.
+	startTelegramBot(schedulerCtx, proc, handler, logger)
 	go func() {
 		ticker := time.NewTicker(scheduleTick)
 		defer ticker.Stop()
@@ -1668,6 +1673,7 @@ func newRegistry() *observe.Registry {
 	registry := observe.New()
 	observe.Declare(registry)
 	observe.DeclareNotifications(registry)
+	telegram.DeclareMetrics(registry)
 	return registry
 }
 
@@ -2012,6 +2018,92 @@ func healthResponse(status string, code int) http.HandlerFunc {
 			"status":    status,
 		}); err != nil {
 			_ = fmt.Errorf("encode health response: %w", err)
+		}
+	}
+}
+
+// startTelegramBot runs the operator bot, if this deployment has a tenant for
+// it to act for.
+//
+// The tenant comes from VODOGE_OPS_TENANT, which already names the tenant that
+// out-of-band, non-request-path work belongs to -- backup alerts arrive there
+// for the same reason. A second variable would have been clearer and could not
+// be added: nothing in this system can enumerate tenants (app.tenants is under
+// FORCE row-level security keyed to app.current_tenant_id()), so a background
+// job has to be told which tenant it serves, and the deployment's environment
+// is defined in a compose file this change does not own.
+//
+// Everything else is tenant data: whether the bot runs at all, its token, and
+// which chats may speak to it are read from settings on every poll. An
+// unconfigured deployment starts this goroutine and it sleeps.
+func startTelegramBot(
+	ctx context.Context, proc *process, handler http.Handler, logger *slog.Logger,
+) {
+	slug := strings.TrimSpace(os.Getenv("VODOGE_OPS_TENANT"))
+	if slug == "" || proc.authSessions == nil || proc.users == nil || proc.config == nil {
+		return
+	}
+	base := directory.DefaultBaseDomain
+	if proc.tenants != nil && strings.TrimSpace(proc.tenants.BaseDomain) != "" {
+		base = proc.tenants.BaseDomain
+	}
+	// The host the bot's own requests carry. The gateway resolves the tenant
+	// from it and then cross-checks it against the session, so a wrong value
+	// here fails closed rather than reaching the wrong tenant.
+	host := slug + "." + base
+	go func() {
+		entry, ok := resolveTenantForBot(ctx, proc, slug, logger)
+		if !ok {
+			return
+		}
+		bot := &telegram.Bot{
+			Telegram: telegram.HTTPTransport{},
+			// The gateway's own handler, guard and all. Calling the handler
+			// methods directly would skip the read-only middleware, which is
+			// the one thing this must not do.
+			API: telegram.Loopback{Handler: handler, Host: host},
+			Accounts: telegram.Accounts{
+				Users:    proc.users,
+				Sessions: proc.authSessions,
+				TenantID: entry.TenantID,
+			},
+			Metrics: proc.metrics,
+			Logger:  logger,
+		}
+		bot.Run(ctx, telegram.SettingsSource(proc.config, entry.TenantID))
+	}()
+}
+
+// resolveTenantForBot waits for the tenant row to be readable.
+//
+// Retried rather than resolved once at startup: the gateway comes up beside
+// PostgreSQL and regularly wins, and a bot that gave up on the first attempt
+// would then stay dead until somebody restarted the container and noticed.
+func resolveTenantForBot(
+	ctx context.Context, proc *process, slug string, logger *slog.Logger,
+) (region.Entry, bool) {
+	for attempt := 0; ; attempt++ {
+		entry, found, err := proc.tenants.Resolve(ctx, slug)
+		switch {
+		case err == nil && found && entry.Status == tenantActive:
+			return entry, true
+		case err == nil && found:
+			logger.Warn("telegram bot will not run: tenant is not active",
+				"slug", slug, "status", entry.Status)
+			return region.Entry{}, false
+		case err == nil:
+			logger.Warn("telegram bot will not run: unknown tenant", "slug", slug)
+			return region.Entry{}, false
+		}
+		if attempt >= 10 {
+			logger.Error("telegram bot will not run: tenant lookup kept failing",
+				"slug", slug, "error", err)
+			return region.Entry{}, false
+		}
+		select {
+		case <-ctx.Done():
+			return region.Entry{}, false
+		case <-time.After(5 * time.Second):
 		}
 	}
 }
