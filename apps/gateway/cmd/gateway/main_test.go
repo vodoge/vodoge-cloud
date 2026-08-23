@@ -1519,8 +1519,10 @@ func routesFromSource(t *testing.T) []route {
 				if !ok {
 					return true
 				}
-				receiver, ok := selector.X.(*ast.Ident)
-				if !ok || receiver.Name != "mux" {
+				// Any receiver, not only one named `mux`: a second router
+				// introduced later should be enumerated too rather than
+				// silently left out of the count.
+				if _, ok := selector.X.(*ast.Ident); !ok {
 					return true
 				}
 				if selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc" {
@@ -1615,6 +1617,17 @@ const fewestRoutesEverRegistered = 60
 // Not a sample. The tempting version of this rule is "the console does not
 // draw the dangerous buttons", which is not a permission check at all: /v1 is
 // reachable with curl and a token.
+//
+// What this holds, precisely. The guard wraps the mux rather than sitting
+// inside it, so coverage of a route added tomorrow is structural — that is the
+// point of putting it there, and main() serves exactly what handler() returns
+// on both listeners. This test is what keeps that structure honest: it fails
+// if the guard is removed, moved inside the mux, or narrowed; if a write route
+// appears under the exempt prefix; if a registration appears that it cannot
+// read; or if registrations stop looking like registrations. What it cannot
+// see is a handler served from somewhere other than handler() — there is no
+// such handler today, and the two http.Server values in main() are where to
+// look if that ever changes.
 func TestEveryWriteRouteRefusesAReadOnlySession(t *testing.T) {
 	t.Parallel()
 
