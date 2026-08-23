@@ -998,8 +998,8 @@ type opsChannel struct {
 	delivered chan notify.Event
 }
 
-func (opsChannel) Name() string                          { return "recorder" }
-func (opsChannel) Configured(map[string]any) bool        { return true }
+func (opsChannel) Name() string                   { return "recorder" }
+func (opsChannel) Configured(map[string]any) bool { return true }
 func (c opsChannel) Send(_ context.Context, _ map[string]any, event notify.Event) error {
 	c.delivered <- event
 	return nil
@@ -1211,5 +1211,112 @@ func TestCommandsIssuedBackToBackGetDistinctKeys(t *testing.T) {
 	}
 	if len(seen) != sends {
 		t.Fatalf("distinct keys = %d, want %d", len(seen), sends)
+	}
+}
+
+// The reference is the whole point of a send reporting details.
+//
+// A delivery report names the message it is about by TP-MR and by nothing
+// else, so a send whose reference was dropped can be observed to arrive and
+// never matched to the row on the operator's screen.
+func TestTheMessageReferenceIsTakenFromASendsDetails(t *testing.T) {
+	t.Parallel()
+
+	if got := messageReference([]byte(`{"message_reference":42}`)); got == nil || *got != 42 {
+		t.Fatalf("reference = %v, want 42", got)
+	}
+	// Zero is a real reference. Returning nil for it would leave the first
+	// message of every wrap unmatched.
+	if got := messageReference([]byte(`{"message_reference":0}`)); got == nil || *got != 0 {
+		t.Fatalf("reference = %v, want 0", got)
+	}
+	for name, details := range map[string]string{
+		"absent":       `{"port":"/dev/ttyUSB6"}`,
+		"empty":        ``,
+		"not json":     `+CSQ: 31,99`,
+		"wrong type":   `{"message_reference":"42"}`,
+		"another kind": `{"lines":["OK"]}`,
+	} {
+		if got := messageReference([]byte(details)); got != nil {
+			t.Fatalf("%s: reference = %v, want nil rather than a guess", name, *got)
+		}
+	}
+}
+
+// Unread state and contact names have to survive the round trip through the
+// routes, not just the store: the console reads them from this JSON.
+func TestTheInboxReportsUnreadAndContactNames(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	inbox := &messaging.Memory{}
+	inbox.Seed("t-a", messaging.Message{
+		DeviceID: "d-a", Direction: "inbound", Peer: "10086",
+		Body: "余额 12.34 元", Status: "received", ReceivedAt: 1000,
+	})
+	proc.inbox = inbox
+	handler := proc.handler()
+
+	get := func(path string) map[string]any {
+		request := authorize(httptest.NewRequest(http.MethodGet, "http://a.vodoge.com"+path, nil))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d body=%s", path, response.Code, response.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	send := func(method, path, payload string) int {
+		request := authorize(httptest.NewRequest(method, "http://a.vodoge.com"+path,
+			strings.NewReader(payload)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	threads := get("/v1/messages/threads")["threads"].([]any)
+	first := threads[0].(map[string]any)
+	if first["unread"] != float64(1) {
+		t.Fatalf("unread = %v, want 1", first["unread"])
+	}
+	if first["name"] != "" {
+		t.Fatalf("name = %v, want empty for an unnamed number", first["name"])
+	}
+
+	if code := send(http.MethodPut, "/v1/messages/contact",
+		`{"peer":"10086","name":"中国移动","note":"运营商"}`); code != http.StatusOK {
+		t.Fatalf("save contact: status = %d", code)
+	}
+	// A name with nothing in it would render as a blank cell where the number
+	// used to be, so it is refused before it reaches the table constraint.
+	if code := send(http.MethodPut, "/v1/messages/contact",
+		`{"peer":"10086","name":"   "}`); code != http.StatusBadRequest {
+		t.Fatalf("blank name: status = %d, want 400", code)
+	}
+
+	if code := send(http.MethodPost, "/v1/messages/thread/read",
+		`{"peer":"10086"}`); code != http.StatusOK {
+		t.Fatalf("mark read: status = %d", code)
+	}
+
+	threads = get("/v1/messages/threads")["threads"].([]any)
+	first = threads[0].(map[string]any)
+	if first["unread"] != float64(0) {
+		t.Fatalf("unread = %v after reading, want 0", first["unread"])
+	}
+	if first["name"] != "中国移动" {
+		t.Fatalf("name = %v", first["name"])
+	}
+
+	contacts := get("/v1/messages/contacts")["contacts"].([]any)
+	if len(contacts) != 1 {
+		t.Fatalf("contacts = %v, want one", contacts)
 	}
 }

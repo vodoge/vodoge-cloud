@@ -568,3 +568,93 @@ func TestACommandReachesTheDeviceAsAnObject(t *testing.T) {
 		t.Fatalf("command = %#v, want the kind preserved", frame.Payload.Command)
 	}
 }
+
+// A delivery receipt is its own uplink kind, and the kind list here is what
+// decides whether it survives the connection at all.
+//
+// It is a hardcoded switch: a kind the schema declares and this line does not
+// falls through to the default and takes the device's session down with it, so
+// the envelope is lost and the modem's only copy has already been deleted.
+// Reusing SmsReceived instead would have avoided this line at the cost of one
+// ingress kind carrying two events with two projections -- and of firing the
+// "new SMS" notification for every delivery receipt.
+func TestADeliveryReceiptIsAcceptedAsItsOwnKind(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	delivered := now.UnixMilli()
+	statusCode := int64(0)
+	reportPayload, err := json.Marshal(contract.SmsStatusReportPayload{
+		ModemImei:   "867018069509705",
+		Peer:        "10086",
+		Reference:   42,
+		Status:      "delivered",
+		StatusCode:  &statusCode,
+		ReportedAt:  now.UnixMilli(),
+		DeliveredAt: &delivered,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn := newMemoryConn(
+		mustEnvelope(t, contract.Envelope{
+			V: contract.ProtocolVersion, Kind: contract.MessageKindResume,
+			ID: "11111111-1111-4111-8111-111111111111", Ts: now.UnixMilli(), DeviceID: device.DeviceID,
+			Payload: mustJSON(t, contract.ResumePayload{
+				ConnectionID:            "22222222-2222-4222-8222-222222222222",
+				LastAssignedSeq:         "0",
+				LastAckedSeq:            "0",
+				PendingGapIds:           []string{},
+				CapabilityMatrixVersion: "1",
+			}),
+		}),
+		mustEnvelope(t, contract.Envelope{
+			V: contract.ProtocolVersion, Kind: contract.MessageKindSmsStatusReport,
+			ID: "44444444-4444-4444-8444-444444444444", Ts: now.UnixMilli(), DeviceID: device.DeviceID,
+			Seq: stringPtr("1"), Payload: reportPayload,
+		}),
+	)
+
+	var seen []string
+	server := &Server{
+		Region:  "cn",
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		AfterInsert: func(_, _ string, kind string, _ []byte) {
+			seen = append(seen, kind)
+		},
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v, want EOF", err)
+	}
+	if len(seen) != 1 || seen[0] != string(contract.MessageKindSmsStatusReport) {
+		t.Fatalf("projected kinds = %v, want one SmsStatusReport", seen)
+	}
+	if conn.nwrites() != 2 {
+		t.Fatalf("writes = %d, want ResumeAck + UplinkAck", conn.nwrites())
+	}
+	if kind := decodeWritten(t, conn.written(1)).Kind; kind != contract.MessageKindUplinkAck {
+		t.Fatalf("second write kind = %s, want an ack rather than a protocol error", kind)
+	}
+}
+
+// The enum in the payload has to reach the conformance check. A named $def
+// would have generated an untyped value on all three sides with no error, and
+// the constraint table would have had nothing to check against.
+func TestADeliveryStatusOutsideTheEnumIsReported(t *testing.T) {
+	t.Parallel()
+
+	found := violations(contract.MessageKindSmsStatusReport, []byte(
+		`{"modem_imei":"867018069509705","peer":"10086","reference":1,`+
+			`"status":"arrived","reported_at":1}`))
+	if len(found) != 1 {
+		t.Fatalf("violations = %v, want the bad status named", found)
+	}
+}

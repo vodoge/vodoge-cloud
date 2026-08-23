@@ -247,9 +247,12 @@ export async function fetchCountryRules(
 
 export type ThreadRow = {
   peer: string;
+  /** The contact's name, or empty when the number has none. */
+  name: string;
   deviceId: string;
   messages: number;
   unsent: number;
+  unread: number;
   lastBody: string;
   lastAt: number;
   lastInbound: boolean;
@@ -263,9 +266,27 @@ export type ThreadMessage = {
   body: string;
   bearer: string;
   encoding: string;
+  /**
+   * queued, sent, delivered, undelivered or failed for an outbound message;
+   * received for one that arrived.
+   *
+   * `sent` and `delivered` are separate answers to separate questions: the
+   * modem took it, and the network handed it over. The second arrives later
+   * and may never arrive at all.
+   */
   status: string;
   receivedAt: number;
+  /** When the network says it handed the message over, not when we heard. */
+  deliveredAt: number | null;
+  readAt: number | null;
   failureReason: string | null;
+};
+
+export type ContactRow = {
+  peer: string;
+  name: string;
+  note: string;
+  updatedAt: number;
 };
 
 export async function fetchThreads(
@@ -278,12 +299,31 @@ export async function fetchThreads(
     const row = value as Record<string, unknown>;
     return {
       peer: asString(row.peer) ?? "",
+      name: asString(row.name) ?? "",
       deviceId: asString(row.device_id) ?? "",
       messages: asNumber(row.messages) ?? 0,
       unsent: asNumber(row.unsent) ?? 0,
+      unread: asNumber(row.unread) ?? 0,
       lastBody: asString(row.last_body) ?? "",
       lastAt: asNumber(row.last_at) ?? 0,
       lastInbound: row.last_inbound === true,
+    };
+  });
+}
+
+export async function fetchContacts(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ContactRow[]> {
+  const body = await getCatalog(host, "/v1/messages/contacts", token, fetchImpl);
+  return arrayOf(body.contacts).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      peer: asString(row.peer) ?? "",
+      name: asString(row.name) ?? "",
+      note: asString(row.note) ?? "",
+      updatedAt: asNumber(row.updated_at) ?? 0,
     };
   });
 }
@@ -312,6 +352,8 @@ export async function fetchThread(
       encoding: asString(row.encoding) ?? "unknown",
       status: asString(row.status) ?? "",
       receivedAt: asNumber(row.received_at) ?? 0,
+      deliveredAt: asNumber(row.delivered_at),
+      readAt: asNumber(row.read_at),
       failureReason: asString(row.failure_reason),
     };
   });

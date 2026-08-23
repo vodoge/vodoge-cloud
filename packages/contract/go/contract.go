@@ -11,27 +11,28 @@ const WebSocketSubprotocol = "vodoge.edge.v1"
 type MessageKind string
 
 const (
-	MessageKindResume         MessageKind = "Resume"
-	MessageKindResumeAck      MessageKind = "ResumeAck"
-	MessageKindUplinkAck      MessageKind = "UplinkAck"
-	MessageKindUplinkGap      MessageKind = "UplinkGap"
-	MessageKindUplinkGapAck   MessageKind = "UplinkGapAck"
-	MessageKindPing           MessageKind = "Ping"
-	MessageKindPong           MessageKind = "Pong"
-	MessageKindCommandDeliver MessageKind = "CommandDeliver"
-	MessageKindCommandReceipt MessageKind = "CommandReceipt"
-	MessageKindSmsReceived    MessageKind = "SmsReceived"
-	MessageKindDeviceState    MessageKind = "DeviceState"
-	MessageKindCommandResult  MessageKind = "CommandResult"
-	MessageKindEsimInventory  MessageKind = "EsimInventory"
-	MessageKindAlert          MessageKind = "Alert"
-	MessageKindProxyTraffic   MessageKind = "ProxyTraffic"
-	MessageKindProtocolError  MessageKind = "ProtocolError"
+	MessageKindResume          MessageKind = "Resume"
+	MessageKindResumeAck       MessageKind = "ResumeAck"
+	MessageKindUplinkAck       MessageKind = "UplinkAck"
+	MessageKindUplinkGap       MessageKind = "UplinkGap"
+	MessageKindUplinkGapAck    MessageKind = "UplinkGapAck"
+	MessageKindPing            MessageKind = "Ping"
+	MessageKindPong            MessageKind = "Pong"
+	MessageKindCommandDeliver  MessageKind = "CommandDeliver"
+	MessageKindCommandReceipt  MessageKind = "CommandReceipt"
+	MessageKindSmsReceived     MessageKind = "SmsReceived"
+	MessageKindSmsStatusReport MessageKind = "SmsStatusReport"
+	MessageKindDeviceState     MessageKind = "DeviceState"
+	MessageKindCommandResult   MessageKind = "CommandResult"
+	MessageKindEsimInventory   MessageKind = "EsimInventory"
+	MessageKindAlert           MessageKind = "Alert"
+	MessageKindProxyTraffic    MessageKind = "ProxyTraffic"
+	MessageKindProtocolError   MessageKind = "ProtocolError"
 )
 
 func (kind MessageKind) Sequenced() bool {
 	switch kind {
-	case MessageKindSmsReceived, MessageKindDeviceState, MessageKindCommandResult, MessageKindEsimInventory, MessageKindAlert, MessageKindProxyTraffic:
+	case MessageKindSmsReceived, MessageKindSmsStatusReport, MessageKindDeviceState, MessageKindCommandResult, MessageKindEsimInventory, MessageKindAlert, MessageKindProxyTraffic:
 		return true
 	default:
 		return false
@@ -137,6 +138,17 @@ type SmsReceivedPayload struct {
 	Bearer            string `json:"bearer"`
 	Encoding          string `json:"encoding"`
 	ModemStorageIndex *int64 `json:"modem_storage_index,omitempty"`
+}
+
+type SmsStatusReportPayload struct {
+	ModemImei   string `json:"modem_imei"`
+	Peer        string `json:"peer"`
+	Reference   int64  `json:"reference"`
+	Status      string `json:"status"`
+	StatusCode  *int64 `json:"status_code,omitempty"`
+	ReportedAt  int64  `json:"reported_at"`
+	SubmittedAt *int64 `json:"submitted_at,omitempty"`
+	DeliveredAt *int64 `json:"delivered_at,omitempty"`
 }
 
 type ProxyTrafficPayload struct {
@@ -426,6 +438,9 @@ var PayloadConstraints = map[MessageKind][]FieldConstraint{
 	MessageKindSmsReceived: {
 		{Path: "bearer", Enum: []string{"cs", "ims", "nas", "unknown"}},
 		{Path: "encoding", Enum: []string{"gsm7", "ucs2", "8bit", "unknown"}},
+	},
+	MessageKindSmsStatusReport: {
+		{Path: "status", Enum: []string{"delivered", "pending", "failed", "unknown"}},
 	},
 	MessageKindDeviceState: {
 		{Path: "modems[].state", Enum: []string{"online", "offline", "recovering", "unknown"}},

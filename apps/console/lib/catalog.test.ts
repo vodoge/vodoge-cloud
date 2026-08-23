@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   fetchAudit,
+  fetchContacts,
   fetchDevices,
   fetchRules,
   fetchMessages,
   fetchSessions,
+  fetchThread,
+  fetchThreads,
   parseDevice,
   parseMessage,
   UnauthorizedError,
@@ -217,4 +220,161 @@ test("malformed rule and audit rows are dropped rather than rendered", async () 
 
   assert.equal((await fetchRules("a.vodoge.com", "t", fetchImpl)).length, 1);
   assert.equal((await fetchAudit("a.vodoge.com", "t", fetchImpl)).length, 1);
+});
+
+// The thread list is a closed object literal, same as parseDevice: a field the
+// gateway starts sending and this map does not name is dropped on the floor
+// with nothing to show for it. deepEqual is what makes that visible.
+test("fetchThreads carries the contact name and the unread count", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json({
+      threads: [
+        {
+          peer: "10086",
+          name: "ä¸­å½ç§»å¨",
+          device_id: "d1",
+          messages: 3,
+          unsent: 0,
+          unread: 2,
+          last_body: "ä½é¢ 12.34 å",
+          last_at: 500,
+          last_inbound: true,
+        },
+      ],
+    });
+
+  const threads = await fetchThreads("a.vodoge.com", "tok", fetchImpl);
+  assert.deepEqual(threads, [
+    {
+      peer: "10086",
+      name: "ä¸­å½ç§»å¨",
+      deviceId: "d1",
+      messages: 3,
+      unsent: 0,
+      unread: 2,
+      lastBody: "ä½é¢ 12.34 å",
+      lastAt: 500,
+      lastInbound: true,
+    },
+  ]);
+});
+
+// An unnamed number and an unread-free conversation are the common case, and
+// both have to survive an absent field as a usable value rather than as
+// undefined -- the page renders these directly.
+test("fetchThreads defaults an unnamed, fully read conversation", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json({
+      threads: [
+        {
+          peer: "10086",
+          device_id: "d1",
+          messages: 1,
+          unsent: 0,
+          last_body: "hi",
+          last_at: 1,
+          last_inbound: false,
+        },
+      ],
+    });
+
+  const threads = await fetchThreads("a.vodoge.com", "tok", fetchImpl);
+  assert.deepEqual(threads, [
+    {
+      peer: "10086",
+      name: "",
+      deviceId: "d1",
+      messages: 1,
+      unsent: 0,
+      unread: 0,
+      lastBody: "hi",
+      lastAt: 1,
+      lastInbound: false,
+    },
+  ]);
+});
+
+// Delivery is the field this whole slice exists to put on the screen, and it
+// arrives through the same closed literal.
+test("fetchThread carries delivery and read state", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json({
+      peer: "10086",
+      messages: [
+        {
+          id: "m1",
+          device_id: "d1",
+          direction: "outbound",
+          peer: "10086",
+          body: "CXYE",
+          bearer: "unknown",
+          encoding: "gsm7",
+          status: "delivered",
+          received_at: 100,
+          delivered_at: 250,
+        },
+      ],
+    });
+
+  const messages = await fetchThread("a.vodoge.com", "tok", "10086", fetchImpl);
+  assert.deepEqual(messages, [
+    {
+      id: "m1",
+      deviceId: "d1",
+      direction: "outbound",
+      peer: "10086",
+      body: "CXYE",
+      bearer: "unknown",
+      encoding: "gsm7",
+      status: "delivered",
+      receivedAt: 100,
+      deliveredAt: 250,
+      // An outbound message is never unread: it was written here.
+      readAt: null,
+      failureReason: null,
+    },
+  ]);
+});
+
+// A message the modem accepted and the network has said nothing about yet.
+// deliveredAt must be null, not zero: the badge decides whether to print a
+// time from exactly this, and 1970 would be printed as an answer.
+test("fetchThread leaves an undelivered send without a delivery time", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json({
+      peer: "10086",
+      messages: [
+        {
+          id: "m1",
+          device_id: "d1",
+          direction: "outbound",
+          peer: "10086",
+          body: "CXYE",
+          bearer: "unknown",
+          encoding: "gsm7",
+          status: "sent",
+          received_at: 100,
+        },
+      ],
+    });
+
+  const messages = await fetchThread("a.vodoge.com", "tok", "10086", fetchImpl);
+  assert.equal(messages[0]?.status, "sent");
+  assert.equal(messages[0]?.deliveredAt, null);
+});
+
+test("fetchContacts reads the phone book", async () => {
+  const calls: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    calls.push(String(input));
+    return Response.json({
+      contacts: [{ peer: "10086", name: "ä¸­å½ç§»å¨", note: "è¿è¥å", updated_at: 7 }],
+    });
+  };
+
+  const contacts = await fetchContacts("a.vodoge.com", "tok", fetchImpl);
+  assert.deepEqual(contacts, [
+    { peer: "10086", name: "ä¸­å½ç§»å¨", note: "è¿è¥å", updatedAt: 7 },
+  ]);
+  assert.equal(calls[0]?.split("/v1/")[1], "messages/contacts");
 });

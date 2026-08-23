@@ -12,6 +12,7 @@ import (
 type Memory struct {
 	mu       sync.Mutex
 	messages map[string][]Message
+	contacts map[string]map[string]Contact
 	nextID   int
 }
 
@@ -30,6 +31,9 @@ func (store *Memory) Threads(_ context.Context, tenantID string) ([]Thread, erro
 		if message.Status == "queued" || message.Status == "failed" {
 			thread.Unsent++
 		}
+		if message.Direction == "inbound" && message.ReadAt == nil {
+			thread.Unread++
+		}
 		if message.ReceivedAt >= thread.LastAt {
 			thread.LastAt = message.ReceivedAt
 			thread.LastBody = message.Body
@@ -38,6 +42,9 @@ func (store *Memory) Threads(_ context.Context, tenantID string) ([]Thread, erro
 	}
 	out := make([]Thread, 0, len(byPeer))
 	for _, thread := range byPeer {
+		if contact, ok := store.contacts[tenantID][thread.Peer]; ok {
+			thread.Name = contact.Name
+		}
 		out = append(out, *thread)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastAt > out[j].LastAt })
@@ -94,6 +101,7 @@ func (store *Memory) RecordOutbound(_ context.Context, tenantID string, message 
 func (store *Memory) SettleOutbound(
 	_ context.Context,
 	tenantID, commandID, status, reason string,
+	reference *int,
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -109,8 +117,98 @@ func (store *Memory) SettleOutbound(
 			value := reason
 			store.messages[tenantID][i].FailureReason = &value
 		}
+		if reference != nil {
+			value := *reference
+			store.messages[tenantID][i].ProviderReference = &value
+		}
 	}
 	return nil
+}
+
+func (store *Memory) MarkThreadRead(
+	_ context.Context,
+	tenantID, peer string,
+) (int64, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var marked int64
+	now := time.Now().UnixMilli()
+	for i, message := range store.messages[tenantID] {
+		if message.Peer != peer || message.Direction != "inbound" || message.ReadAt != nil {
+			continue
+		}
+		value := now
+		store.messages[tenantID][i].ReadAt = &value
+		marked++
+	}
+	return marked, nil
+}
+
+func (store *Memory) Contacts(_ context.Context, tenantID string) ([]Contact, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := []Contact{}
+	for _, contact := range store.contacts[tenantID] {
+		out = append(out, contact)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (store *Memory) SaveContact(_ context.Context, tenantID string, contact Contact) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.contacts == nil {
+		store.contacts = map[string]map[string]Contact{}
+	}
+	if store.contacts[tenantID] == nil {
+		store.contacts[tenantID] = map[string]Contact{}
+	}
+	contact.UpdatedAt = time.Now().UnixMilli()
+	store.contacts[tenantID][contact.Peer] = contact
+	return nil
+}
+
+func (store *Memory) DeleteContact(_ context.Context, tenantID, peer string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	delete(store.contacts[tenantID], peer)
+	return nil
+}
+
+// ApplyStatusReport is the in-memory stand-in for the SmsStatusReport branch
+// of accept_ingress. It exists so a test can drive the delivery path without
+// PostgreSQL; production settles delivery in the projection, which is the only
+// writer of these columns.
+func (store *Memory) ApplyStatusReport(
+	tenantID, peer string,
+	reference int,
+	status string,
+	deliveredAt int64,
+) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	newest := -1
+	for i, message := range store.messages[tenantID] {
+		if message.Direction != "outbound" || message.Peer != peer {
+			continue
+		}
+		if message.ProviderReference == nil || *message.ProviderReference != reference {
+			continue
+		}
+		newest = i
+	}
+	if newest < 0 {
+		return
+	}
+	switch status {
+	case "delivered":
+		store.messages[tenantID][newest].Status = "delivered"
+		value := deliveredAt
+		store.messages[tenantID][newest].DeliveredAt = &value
+	case "failed":
+		store.messages[tenantID][newest].Status = "undelivered"
+	}
 }
 
 func (store *Memory) DeleteMessage(_ context.Context, tenantID, id string) error {

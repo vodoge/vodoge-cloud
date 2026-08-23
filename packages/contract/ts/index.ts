@@ -26,6 +26,7 @@ export type MessageKind =
   | "CommandDeliver" |
   | "CommandReceipt" |
   | "SmsReceived" |
+  | "SmsStatusReport" |
   | "DeviceState" |
   | "CommandResult" |
   | "EsimInventory" |
@@ -35,6 +36,7 @@ export type MessageKind =
 
 export const SEQUENCED_KINDS: ReadonlySet<MessageKind> = new Set([
   "SmsReceived",
+  "SmsStatusReport",
   "DeviceState",
   "CommandResult",
   "EsimInventory",
@@ -149,6 +151,17 @@ export interface SmsReceivedPayload {
   bearer: "cs" | "ims" | "nas" | "unknown";
   encoding: "gsm7" | "ucs2" | "8bit" | "unknown";
   modem_storage_index?: number;
+}
+
+export interface SmsStatusReportPayload {
+  modem_imei: Imei;
+  peer: string;
+  reference: number;
+  status: "delivered" | "pending" | "failed" | "unknown";
+  status_code?: number;
+  reported_at: number;
+  submitted_at?: number;
+  delivered_at?: number;
 }
 
 export interface ProxyTrafficPayload {

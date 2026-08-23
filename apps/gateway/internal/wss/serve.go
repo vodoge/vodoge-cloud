@@ -286,7 +286,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			if err := server.Receipts.RecordReceipt(device.TenantID, receipt, server.now()); err != nil {
 				return err
 			}
-		case contract.MessageKindSmsReceived, contract.MessageKindDeviceState, contract.MessageKindCommandResult, contract.MessageKindEsimInventory, contract.MessageKindAlert, contract.MessageKindProxyTraffic:
+		case contract.MessageKindSmsReceived, contract.MessageKindSmsStatusReport, contract.MessageKindDeviceState, contract.MessageKindCommandResult, contract.MessageKindEsimInventory, contract.MessageKindAlert, contract.MessageKindProxyTraffic:
 			if envelope.Seq == nil {
 				return fmt.Errorf("%s requires seq", envelope.Kind)
 			}

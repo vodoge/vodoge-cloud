@@ -1361,11 +1361,41 @@ func (handler settlingResults) RecordResult(
 	defer cancel()
 	// Every command kind is offered; only one has a message waiting on it, and
 	// the update matches nothing for the rest.
-	if err := handler.inbox.SettleOutbound(ctx, tenantID, result.CommandID, status, reason); err != nil {
+	if err := handler.inbox.SettleOutbound(
+		ctx, tenantID, result.CommandID, status, reason,
+		messageReference(result.Details),
+	); err != nil {
 		slog.Warn("outbound message not settled",
 			"tenant_id", tenantID, "command_id", result.CommandID, "error", err)
 	}
 	return nil
+}
+
+// messageReference pulls the TP-MR out of a send's result details.
+//
+// This is the whole reason a send now reports details at all. The network's
+// later delivery report quotes this number and nothing else about the original
+// message, so a send whose reference was not written down can be observed to
+// arrive and never matched to the row the operator is looking at.
+//
+// Absent for every other command kind, and for an edge older than this change.
+// nil rather than zero: zero is a legitimate reference, and storing it for a
+// send that never reported one would make the first genuine reference-0
+// delivery settle the wrong message.
+func messageReference(details []byte) *int {
+	if len(details) == 0 {
+		return nil
+	}
+	var fields struct {
+		MessageReference *int `json:"message_reference"`
+	}
+	if err := json.Unmarshal(details, &fields); err != nil {
+		return nil
+	}
+	if fields.MessageReference == nil || *fields.MessageReference < 0 {
+		return nil
+	}
+	return fields.MessageReference
 }
 
 // recordResume stores what a device said about itself when it connected.
