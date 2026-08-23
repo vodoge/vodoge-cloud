@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModemRow } from "@/lib/catalog";
+import { DEFAULT_LOCALE, isLocale, LOCALE_COOKIE, t, type Locale } from "@/lib/i18n";
 import { operatorName } from "@/lib/plmn";
+import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 
 /**
  * One command's lifecycle as the console sees it.
@@ -77,6 +79,14 @@ export function DeviceConsole({
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "unknown" until the gateway has been asked, and the controls are drawn for
+  // "write" only. Closed by default on purpose: this component is rendered on
+  // the server before it can ask anything, and an account's controls appearing
+  // for one paint and then being taken away is a worse answer than appearing
+  // one paint late. What it costs is a moment of empty console for an operator
+  // who does have the rights.
+  const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
+  const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   // Polling stops once nothing is outstanding, so an idle page costs nothing.
   const pending = commands.some((row) => !TERMINAL.has(row.status));
   const mounted = useRef(true);
@@ -85,6 +95,27 @@ export function DeviceConsole({
     mounted.current = true;
     return () => {
       mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setLocale(localeFromCookie(document.cookie));
+    let alive = true;
+    void (async () => {
+      try {
+        const response = await fetch(SESSION_ENDPOINT, { cache: "no-store" });
+        if (!alive) return;
+        // A session the gateway will not confirm gets the smaller page. The
+        // buttons would only produce a refusal anyway.
+        setPermission(
+          response.ok && mayWrite(roleFromSessionBody(await response.json())) ? "write" : "read",
+        );
+      } catch {
+        if (alive) setPermission("read");
+      }
+    })();
+    return () => {
+      alive = false;
     };
   }, []);
 
@@ -139,6 +170,19 @@ export function DeviceConsole({
       {labels.refresh_modems ?? "refresh_modems"}
     </button>
   );
+
+  // Every control in this component issues POST /v1/commands, which the
+  // gateway refuses for a read-only session, so there is nothing here for one
+  // to press — but the history of what the device has done is exactly what
+  // such an account is for. The log stays.
+  if (permission !== "write") {
+    return (
+      <div className="stack">
+        {permission === "read" ? <p className="faint">{t("role.readOnlyDevice", locale)}</p> : null}
+        <CommandLog commands={commands} labels={labels} />
+      </div>
+    );
+  }
 
   if (modems.length === 0) {
     // The rescan stays reachable here on purpose. "Nothing is listed" is
@@ -439,4 +483,24 @@ function StatusPill({ status }: { status: string }) {
         ? "badge-bad"
         : "badge-warn";
   return <span className={`badge ${tone}`}>{status}</span>;
+}
+
+/**
+ * The chosen language, from the cookie the switch writes.
+ *
+ * The page passes this component its strings already translated, but it cannot
+ * pass one for a state it does not know about: whether the account is
+ * read-only is decided here, after the server has finished rendering. So the
+ * one string this component owns is looked up here, from the same cookie the
+ * server read.
+ */
+function localeFromCookie(cookies: string): Locale {
+  for (const part of cookies.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === LOCALE_COOKIE) {
+      const value = decodeURIComponent(rest.join("="));
+      if (isLocale(value)) return value;
+    }
+  }
+  return DEFAULT_LOCALE;
 }

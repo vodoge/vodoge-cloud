@@ -3,6 +3,14 @@ import { Card } from "@/components/ui";
 import { fetchSettings, type SettingsBySection } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
+import {
+  bearerHeader,
+  mayWrite,
+  roleFromSessionBody,
+  SESSION_ENDPOINT,
+  type ConsoleRole,
+} from "@/lib/session";
+import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 
 /**
@@ -68,8 +76,34 @@ export default async function SettingsPage() {
   } catch {
     loadError = true;
   }
+  const role = await currentRole(host, token);
+  const writable = mayWrite(role);
 
   const labels = fieldLabels(locale);
+
+  // Every field on this page saves through PUT /v1/settings/{section}, which
+  // the gateway refuses outright for a read-only session. Rendering the forms
+  // anyway would offer an operator a Save button whose only possible outcome
+  // is a 403 — so the values are rendered instead of the inputs. Read-only is
+  // not "cannot see"; hiding the section would take away the visibility the
+  // account exists to have.
+  function section(
+    fields: Field[],
+    values: Record<string, unknown>,
+    name: "notifications" | "sms" | "security",
+  ) {
+    return writable ? (
+      <SettingsForm
+        section={name}
+        initial={values}
+        fields={fields}
+        labels={labels}
+        testable={name === "notifications" ? NOTIFICATION_CHANNELS : undefined}
+      />
+    ) : (
+      <ReadOnlyFields fields={fields} values={values} labels={labels} />
+    );
+  }
 
   return (
     <>
@@ -78,9 +112,11 @@ export default async function SettingsPage() {
           <h1 className="page-title">{t("settings.title", locale)}</h1>
           <p className="page-desc">{t("settings.desc", locale)}</p>
         </div>
+        {writable ? null : <span className="badge badge-warn">{t("role.readOnlyBadge", locale)}</span>}
       </div>
 
       {loadError ? <p className="danger">{t("settings.loadError", locale)}</p> : null}
+      {writable ? null : <p className="faint">{t("role.readOnlySettings", locale)}</p>}
 
       <div className="card-grid">
         <Card
@@ -88,42 +124,95 @@ export default async function SettingsPage() {
           title={t("settings.notifications", locale)}
           note={t("settings.notificationsNote", locale)}
         >
-          <SettingsForm
-            section="notifications"
-            initial={settings.notifications ?? {}}
-            fields={NOTIFICATION_FIELDS}
-            labels={labels}
-            // Only the channels the gateway can actually deliver through.
-            // Offering a test for one it cannot send is a button that can
-            // only fail.
-            testable={NOTIFICATION_CHANNELS}
-          />
+          {section(NOTIFICATION_FIELDS, settings.notifications ?? {}, "notifications")}
         </Card>
 
         <Card title={t("settings.sms", locale)} note={t("settings.smsNote", locale)}>
-          <SettingsForm
-            section="sms"
-            initial={settings.sms ?? {}}
-            fields={SMS_FIELDS}
-            labels={labels}
-          />
+          {section(SMS_FIELDS, settings.sms ?? {}, "sms")}
         </Card>
 
         <Card title={t("settings.security", locale)} note={t("settings.securityNote", locale)}>
-          <SettingsForm
-            section="security"
-            initial={settings.security ?? {}}
-            fields={SECURITY_FIELDS}
-            labels={labels}
-          />
+          {section(SECURITY_FIELDS, settings.security ?? {}, "security")}
         </Card>
 
+        {/* Not gated. Rotating your own password is not a tenant write, the
+            gateway lets a read-only session do it, and an account that cannot
+            respond to its own credential leaking is worse off with nobody
+            safer. */}
         <Card title={t("settings.account", locale)} note={t("settings.accountNote", locale)}>
           <PasswordForm labels={labels} />
         </Card>
       </div>
     </>
   );
+}
+
+/**
+ * The role for this request, from the gateway.
+ *
+ * Failing closed. If the gateway cannot be asked, the page draws its read-only
+ * form: the account may lose a Save button it was entitled to, which is
+ * recoverable by reloading, and the gateway is the thing that actually decides.
+ */
+async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
+  try {
+    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
+      headers: {
+        accept: "application/json",
+        "x-forwarded-host": host,
+        ...bearerHeader(token),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return "readonly";
+    return roleFromSessionBody(await response.json());
+  } catch {
+    return "readonly";
+  }
+}
+
+/** The same fields a form would render, as values. */
+function ReadOnlyFields({
+  fields,
+  values,
+  labels,
+}: {
+  fields: Field[];
+  values: Record<string, unknown>;
+  labels: Record<string, string>;
+}) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <tbody>
+          {fields.map((field) => (
+            <tr key={field.path}>
+              <td>{labels[field.path] ?? field.path}</td>
+              <td className="mono">{display(read(values, field.path))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A stored value at a dotted path, the same way the form reads it. */
+function read(source: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = source;
+  for (const key of path.split(".")) {
+    if (!cursor || typeof cursor !== "object") return undefined;
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return cursor;
+}
+
+function display(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "—";
+  if (Array.isArray(value)) return value.length === 0 ? "—" : value.join(", ");
+  if (typeof value === "boolean") return value ? "on" : "off";
+  return String(value);
 }
 
 /**

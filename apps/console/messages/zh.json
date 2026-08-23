@@ -371,5 +371,8 @@
   "empty.schedule.title": "还没有定时任务",
   "empty.schedule.desc": "定时任务按周期自动下发命令，例如给服务号发一条保号短信。用 POST /v1/schedules 创建。",
   "rules.schedules": "定时任务",
-  "rules.schedulesHint": "周期性自动下发的任务在这里。"
+  "rules.schedulesHint": "周期性自动下发的任务在这里。",
+  "role.readOnlyDevice": "只读账号：可以查看这台设备，不能下发命令。",
+  "role.readOnlySettings": "只读账号：设置只能查看，不能修改。密码仍可自行修改。",
+  "role.readOnlyBadge": "只读"
 }

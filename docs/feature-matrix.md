@@ -8,11 +8,13 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 38） | 66 条路由 |
+| 我们的云端 | `apps/gateway`（schema 39） | 66 条路由（去重后 64 条模式，其中 33 条是写） |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
-`messaging_routes.go` / `proxy_routes.go` 五个文件里）。
+`messaging_routes.go` / `proxy_routes.go` / `schedule_routes.go` 六个文件里）。
+写路由的只读拒绝不靠人工清单：`cmd/gateway/main_test.go` 从这张表里现取，
+新增一条没被挡住的写路由，测试就红。
 
 三项能力已定案，全部要做：**VoWiFi 与 E911（仅美国）**、**语音通话**、**SM-DP+ 下载**。
 决策依据见 [decisions.md](decisions.md)，分阶段计划见 [execution-plan.md](execution-plan.md)。
@@ -170,7 +172,7 @@
 | 日志保留策略 | 无 | 有 | **无** | `app.ingress` 稳态约 2 万行/天 ≈ 11 MB/天 |
 | 审计日志 | 有 | 有 | **有** | — |
 | 登录限流 | 无 | 有 | **有** | — |
-| 访问策略 / 多角色 | 有 | 有 | **半** | 只有单一操作员角色，无只读账号 |
+| 访问策略 / 多角色 | 有 | 有 | **有** | `app.users.role` = admin / readonly；只读会话被网关在整张路由表外侧一处拒绝，30 条写路由逐条验过，只有本人的登出与改密除外 |
 | 系统信息与版本 | 有 | 有 | **半** | 有设备版本，无边缘主机信息 |
 | 检查更新 / 应用更新 | 有 | 有 | **半** | 有 `self_update` 命令，无制品发布与检查 |
 | 指标端点 | 无 | 有 | **有** | — |

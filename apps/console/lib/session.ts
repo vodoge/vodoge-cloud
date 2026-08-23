@@ -137,3 +137,37 @@ export function safeNext(next: string | null | undefined): string {
   }
   return next;
 }
+
+/**
+ * What the signed-in account may do.
+ *
+ * The console renders by this. It does not enforce by it: the gateway refuses
+ * every state-changing request from a read-only session at one chokepoint
+ * around its whole route table, and /v1 is reachable with curl and a token
+ * whatever this page decides to draw. Hiding a button an account cannot use is
+ * courtesy, not a permission model, and the two must not be confused — the
+ * previous shape of this feature was buttons alone.
+ */
+export type ConsoleRole = "admin" | "readonly";
+
+/** Whether a role may change anything. */
+export function mayWrite(role: ConsoleRole): boolean {
+  return role === "admin";
+}
+
+/**
+ * The role in a /v1/auth/session body.
+ *
+ * Anything unrecognised reads as read-only. A page that cannot tell what the
+ * account is should draw the smaller of the two versions of itself: the cost
+ * of being wrong that way is a missing button, and the cost of being wrong the
+ * other way is an operator clicking something that then fails at the gateway
+ * with a message they cannot act on.
+ */
+export function roleFromSessionBody(body: unknown): ConsoleRole {
+  if (!body || typeof body !== "object") return "readonly";
+  return (body as { role?: unknown }).role === "admin" ? "admin" : "readonly";
+}
+
+/** Where the role is read from, on the server and in the browser alike. */
+export const SESSION_ENDPOINT = "/v1/auth/session";

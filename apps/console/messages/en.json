@@ -371,5 +371,8 @@
   "empty.schedule.title": "No scheduled tasks yet",
   "empty.schedule.desc": "A scheduled task issues a command on a cadence -- one keep-alive message to a service number, for instance. Create one with POST /v1/schedules.",
   "rules.schedules": "Scheduled tasks",
-  "rules.schedulesHint": "Recurring work that runs without an operator lives here."
+  "rules.schedulesHint": "Recurring work that runs without an operator lives here.",
+  "role.readOnlyDevice": "Read-only account: this device can be watched, not operated.",
+  "role.readOnlySettings": "Read-only account: settings are shown but cannot be changed. Your own password still can be.",
+  "role.readOnlyBadge": "read-only"
 }

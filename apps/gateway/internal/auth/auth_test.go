@@ -435,3 +435,82 @@ func TestAChangedPasswordKeepsOnlyTheCallersSession(t *testing.T) {
 		t.Fatal("the caller's own session was not the one spared")
 	}
 }
+
+// A role is a property of the account, so it has to survive the trip from the
+// account into the session the caller then presents.
+func TestSignInCarriesTheAccountsRole(t *testing.T) {
+	for _, role := range []string{RoleAdmin, RoleReadOnly} {
+		store := newMemoryStore()
+		hasher := &plainHasher{}
+		store.users["tenant-a|viewer@example.com"] = User{
+			ID:           "user-2",
+			TenantID:     "tenant-a",
+			Email:        "viewer@example.com",
+			PasswordHash: "hash:correct-horse",
+			Status:       "active",
+			Role:         role,
+		}
+		_, session, err := SignIn(
+			context.Background(), store, store, hasher,
+			"tenant-a", "viewer@example.com", "correct-horse", time.Now(), time.Hour,
+		)
+		if err != nil {
+			t.Fatalf("SignIn: %v", err)
+		}
+		if session.Role != role {
+			t.Errorf("role = %q, want %q", session.Role, role)
+		}
+	}
+}
+
+// The safe methods are the list, not the write ones. A route registered with a
+// verb nobody anticipated has to land on the refusing side.
+func TestOnlyTheSafeMethodsAreReads(t *testing.T) {
+	for _, method := range []string{"GET", "get", "HEAD", "OPTIONS", " get "} {
+		if ChangesState(method) {
+			t.Errorf("%q was treated as a write", method)
+		}
+	}
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "patch", "PURGE", ""} {
+		if !ChangesState(method) {
+			t.Errorf("%q was treated as a read", method)
+		}
+	}
+}
+
+// An unrecognised role must not read as admin. A newer build writing a role
+// this one has never heard of would otherwise widen the account instead of
+// narrowing it.
+func TestOnlyAdminAndTheEmptyRoleMayWrite(t *testing.T) {
+	for _, role := range []string{RoleAdmin, ""} {
+		if !(Session{Role: role}).MayWrite() {
+			t.Errorf("role %q could not write", role)
+		}
+	}
+	for _, role := range []string{RoleReadOnly, "auditor", "Admin", "ADMIN"} {
+		if (Session{Role: role}).MayWrite() {
+			t.Errorf("role %q could write", role)
+		}
+	}
+	if KnownRole("auditor") || !KnownRole(RoleReadOnly) || !KnownRole(RoleAdmin) {
+		t.Error("KnownRole disagrees with the roles that exist")
+	}
+}
+
+// The exemption is the caller's own credential and nothing else. Written out
+// so that widening it is a visible edit rather than a prefix quietly growing.
+func TestOnlyTheCallersOwnCredentialIsExempt(t *testing.T) {
+	for _, path := range []string{"/v1/auth/login", "/v1/auth/logout", "/v1/auth/password"} {
+		if !OwnCredential(path) {
+			t.Errorf("%s: an account that cannot sign out or rotate its password is stuck", path)
+		}
+	}
+	for _, path := range []string{
+		"/v1/auth", "/v1/auth/", "/v1/auth/password/reset", "/v1/authx/password",
+		"/v1/commands", "/v1/devices/d-1", "/v1/auth/users",
+	} {
+		if OwnCredential(path) {
+			t.Errorf("%s: exempt from the read-only guard", path)
+		}
+	}
+}

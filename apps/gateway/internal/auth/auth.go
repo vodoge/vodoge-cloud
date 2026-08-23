@@ -49,6 +49,7 @@ const DefaultSessionTTL = 12 * time.Hour
 type Session struct {
 	UserID    string
 	TenantID  string
+	Role      string
 	ExpiresAt time.Time
 }
 
@@ -59,6 +60,75 @@ type User struct {
 	Email        string
 	PasswordHash string
 	Status       string
+	Role         string
+}
+
+// Roles a console operator can hold.
+//
+// Two, because the distinction that matters to an operator is "can this
+// account change anything". A finer grid (per-feature grants) would be a
+// second permission model beside the tenant boundary, and each new route would
+// need someone to remember to place it in the grid.
+const (
+	// RoleAdmin may do anything inside its own tenant. The default: every
+	// account that existed before roles did was one of these.
+	RoleAdmin = "admin"
+	// RoleReadOnly may read and may not change anything.
+	RoleReadOnly = "readonly"
+)
+
+// KnownRole reports whether role is one this build understands.
+//
+// An unknown value is not treated as admin anywhere: MayWrite only lets
+// RoleAdmin through, so a role written by a newer build reads as read-only
+// here rather than as full access.
+func KnownRole(role string) bool {
+	return role == RoleAdmin || role == RoleReadOnly
+}
+
+// MayWrite reports whether this session may change anything.
+//
+// The empty role is admin on purpose and only there: sessions minted before
+// app.users.role existed carry no role, and the column defaults to admin, so
+// the two agree. Any other unrecognised value is refused.
+func (session Session) MayWrite() bool {
+	return session.Role == RoleAdmin || session.Role == ""
+}
+
+// ChangesState reports whether a request method asks for a change.
+//
+// Defined by the safe methods rather than by listing the write ones: a route
+// added later with a method nobody thought of (or a client that invents one)
+// is refused to a read-only session instead of slipping past a list.
+func ChangesState(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS", "TRACE":
+		return false
+	default:
+		return true
+	}
+}
+
+// OwnCredential reports whether a path only acts on the caller's own
+// credential rather than on tenant data.
+//
+// These stay open to a read-only session because closing them takes nothing
+// away from an attacker and takes something real from the operator: an account
+// that cannot sign out is stuck on a shared screen, and one that cannot rotate
+// its own password cannot respond to that password leaking. Neither widens
+// what the account may do — a password change requires the current password
+// and returns the same role.
+//
+// A rule, not a list of routes, but a narrow one: it is exactly the three
+// endpoints under /v1/auth/, and a new write route under that prefix would be
+// let through by this function, which is why a test pins the set.
+func OwnCredential(path string) bool {
+	switch path {
+	case "/v1/auth/login", "/v1/auth/logout", "/v1/auth/password":
+		return true
+	default:
+		return false
+	}
 }
 
 // Active reports whether this account may sign in.
@@ -209,6 +279,7 @@ func SignIn(
 	session := Session{
 		UserID:    user.ID,
 		TenantID:  user.TenantID,
+		Role:      user.Role,
 		ExpiresAt: now.Add(ttl),
 	}
 	if err := sessions.CreateSession(ctx, Fingerprint(token), session); err != nil {

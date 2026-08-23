@@ -826,8 +826,61 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/enrollment-codes", process.listEnrollmentCodes)
 	mux.HandleFunc("POST /v1/enrollment-codes", process.createEnrollmentCode)
 	// Metrics wrap the mux rather than each handler, so a route added later
-	// is measured without anyone remembering to measure it.
-	return securityHeaders(observe.Middleware(process.metrics, mux))
+	// is measured without anyone remembering to measure it. The read-only
+	// guard is inside them for the same reason, and so a refusal is counted.
+	return securityHeaders(observe.Middleware(process.metrics, process.readOnly(mux)))
+}
+
+// readOnly refuses state-changing requests made with a read-only session.
+//
+// One chokepoint rather than a check inside each handler. There are sixty-odd
+// routes across six files; a per-handler check would be correct on the day it
+// was written and wrong the first time someone added a route without reading
+// this comment, and the failure mode — a read-only account quietly able to
+// restart a modem — is invisible until it is used. Placed around the mux so it
+// applies to every route registered anywhere, including the ones added after
+// this was written.
+//
+// Hiding the buttons in the console is not this. The console is a client like
+// any other and /v1 is reachable without it.
+func (process *process) readOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !auth.ChangesState(request.Method) || auth.OwnCredential(request.URL.Path) {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		// No session store means no session, and every tenant-scoped handler
+		// already refuses in that state; the device routes authenticate with a
+		// client certificate and carry no bearer token at all.
+		token := auth.BearerToken(request.Header.Get("Authorization"))
+		if process.authSessions == nil || token == "" {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		session, found, err := process.authSessions.Session(request.Context(), auth.Fingerprint(token))
+		if err != nil {
+			// Refuse rather than pass through. The handler behind this would
+			// look the same session up again and probably fail too, but
+			// "probably" is not what a permission check may rest on.
+			slog.Warn("read-only check could not resolve the session", "error", err)
+			http.Error(writer, "authentication unavailable", http.StatusInternalServerError)
+			return
+		}
+		// An unknown token is not this middleware's business: the handler
+		// answers 401, and answering 403 here would tell an unauthenticated
+		// caller which routes exist.
+		if found && !session.MayWrite() {
+			slog.Info("refused a write to a read-only session",
+				"tenant_id", session.TenantID,
+				"user_id", session.UserID,
+				"method", request.Method,
+				"path", request.URL.Path,
+			)
+			http.Error(writer, "this account is read-only", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
 }
 
 // login exchanges a credential for a session token.
@@ -893,7 +946,25 @@ func (process *process) login(writer http.ResponseWriter, request *http.Request)
 		"expires_at": session.ExpiresAt.UTC().Format(time.RFC3339),
 		"tenant_id":  session.TenantID,
 		"user_id":    session.UserID,
+		"role":       consoleRole(session),
 	})
+}
+
+// consoleRole is the role to report to a client.
+//
+// A session minted before roles existed carries none, and the column it now
+// comes from defaults to admin, so the two agree. Reporting "" instead would
+// make every caller invent its own default, and the safe default for drawing a
+// page (hide everything) is the opposite of the safe default for a permission
+// check (allow nothing) — one of the two would have been wrong.
+func consoleRole(session auth.Session) string {
+	if auth.KnownRole(session.Role) {
+		return session.Role
+	}
+	if session.MayWrite() {
+		return auth.RoleAdmin
+	}
+	return auth.RoleReadOnly
 }
 
 // logout drops the presented session. It does not require the session to be
@@ -909,14 +980,19 @@ func (process *process) logout(writer http.ResponseWriter, request *http.Request
 }
 
 // currentSession lets the console check a cookie without fetching tenant data.
+//
+// It also carries the role, which is what a page renders by: this is the one
+// call the console can make to find out whether the account it is drawing for
+// may change anything.
 func (process *process) currentSession(writer http.ResponseWriter, request *http.Request) {
-	entry, ok := process.tenantFromRequest(writer, request)
+	entry, session, ok := process.tenantAndSession(writer, request)
 	if !ok {
 		return
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"role":      consoleRole(session),
 		"tenant_id": entry.TenantID,
 		"slug":      entry.Slug,
 		"region":    entry.Region,

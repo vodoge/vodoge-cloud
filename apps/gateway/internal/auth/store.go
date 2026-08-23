@@ -27,12 +27,12 @@ func (store SQL) User(ctx context.Context, tenantID, email string) (User, bool, 
 	}
 	row := store.DB.QueryRowContext(
 		ctx,
-		`SELECT id, tenant_id, email, password_hash, status FROM app.resolve_user($1, $2)`,
+		`SELECT id, tenant_id, email, password_hash, status, role FROM app.resolve_user($1, $2)`,
 		tenantID, email,
 	)
 	var user User
 	switch err := row.Scan(
-		&user.ID, &user.TenantID, &user.Email, &user.PasswordHash, &user.Status,
+		&user.ID, &user.TenantID, &user.Email, &user.PasswordHash, &user.Status, &user.Role,
 	); {
 	case errors.Is(err, sql.ErrNoRows):
 		return User{}, false, nil
@@ -44,17 +44,23 @@ func (store SQL) User(ctx context.Context, tenantID, email string) (User, bool, 
 
 // Session returns the live session for a fingerprint. Expired rows are already
 // filtered by the resolver.
+//
+// The role comes from the account rather than from the session row, so
+// demoting an operator takes effect on their next request instead of whenever
+// they next sign in. A role copied into app.sessions would have made
+// "make this account read-only" a promise the product could not keep while a
+// twelve-hour session was open.
 func (store SQL) Session(ctx context.Context, fingerprint []byte) (Session, bool, error) {
 	if store.DB == nil {
 		return Session{}, false, nil
 	}
 	row := store.DB.QueryRowContext(
 		ctx,
-		`SELECT user_id, tenant_id, expires_at FROM app.resolve_session($1)`,
+		`SELECT user_id, tenant_id, expires_at, role FROM app.resolve_session($1)`,
 		fingerprint,
 	)
 	var session Session
-	switch err := row.Scan(&session.UserID, &session.TenantID, &session.ExpiresAt); {
+	switch err := row.Scan(&session.UserID, &session.TenantID, &session.ExpiresAt, &session.Role); {
 	case errors.Is(err, sql.ErrNoRows):
 		return Session{}, false, nil
 	case err != nil:
@@ -162,9 +168,9 @@ func (store SQL) UserByID(ctx context.Context, tenantID, userID string) (User, b
 	var user User
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`SELECT id::text, tenant_id::text, email, password_hash, status
+			`SELECT id::text, tenant_id::text, email, password_hash, status, role
 			   FROM app.users WHERE id = $1::uuid`, userID,
-		).Scan(&user.ID, &user.TenantID, &user.Email, &user.PasswordHash, &user.Status)
+		).Scan(&user.ID, &user.TenantID, &user.Email, &user.PasswordHash, &user.Status, &user.Role)
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

@@ -4,10 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +26,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
@@ -25,6 +35,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
 )
 
 func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
@@ -341,7 +352,8 @@ func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
 // testSessions authenticates the fixtures without a database.
 //
 // A token is "session-<tenantID>", so a test can present the wrong tenant's
-// token on purpose and watch it be refused.
+// token on purpose and watch it be refused. "readonly-<tenantID>" is the same
+// session held by an account that may not change anything.
 type testSessions struct{}
 
 func (testSessions) Session(_ context.Context, fingerprint []byte) (auth.Session, bool, error) {
@@ -350,6 +362,15 @@ func (testSessions) Session(_ context.Context, fingerprint []byte) (auth.Session
 			return auth.Session{
 				UserID:    "user-" + tenantID,
 				TenantID:  tenantID,
+				Role:      auth.RoleAdmin,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, true, nil
+		}
+		if string(auth.Fingerprint("readonly-"+tenantID)) == string(fingerprint) {
+			return auth.Session{
+				UserID:    "viewer-" + tenantID,
+				TenantID:  tenantID,
+				Role:      auth.RoleReadOnly,
 				ExpiresAt: time.Now().Add(time.Hour),
 			}, true, nil
 		}
@@ -1436,5 +1457,327 @@ func TestLiveDevicesReportsTenantsAndForgetsDisconnected(t *testing.T) {
 func TestSchedulerOwnersAreDistinctPerProcess(t *testing.T) {
 	if a, b := schedulerOwner(), schedulerOwner(); a == b {
 		t.Fatalf("two processes would claim leases as %q", a)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read-only accounts, checked against the route table rather than a list.
+//
+// The list is the whole problem. A hand-written set of "the dangerous routes"
+// is correct until the next route is added, and nothing fails when it is not
+// updated -- the account simply gains a power nobody meant to give it, and it
+// stays invisible until it is used. So the routes come out of the source that
+// registers them: add one and it is exercised here on the next run, and if the
+// guard does not cover it this test fails.
+// ---------------------------------------------------------------------------
+
+// route is one registered mux pattern.
+type route struct {
+	method string
+	path   string
+	source string
+}
+
+// packageRouteConstants resolves the route patterns that are not written out
+// as literals.
+//
+// Only two exist. Anything else that appears makes routesFromSource fail
+// loudly rather than skip the route: a pattern this test cannot read is a
+// pattern it cannot check, and skipping it quietly is exactly the hole the
+// whole exercise is here to close.
+var packageRouteConstants = map[string]string{
+	"enroll.Path": enroll.Path,
+	"wss.Path":    wss.Path,
+}
+
+// routesFromSource reads every mux registration in this package.
+//
+// Parsing the source rather than asking the ServeMux, because http.ServeMux
+// does not enumerate what has been registered; and rather than keeping a
+// second list, because a second list is the thing that goes stale.
+func routesFromSource(t *testing.T) []route {
+	t.Helper()
+
+	fileSet := token.NewFileSet()
+	packages, err := parser.ParseDir(fileSet, ".", func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse package source: %v", err)
+	}
+
+	seen := map[string]bool{}
+	var routes []route
+	for _, pkg := range packages {
+		for name, file := range pkg.Files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) == 0 {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				receiver, ok := selector.X.(*ast.Ident)
+				if !ok || receiver.Name != "mux" {
+					return true
+				}
+				if selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc" {
+					return true
+				}
+				pattern, ok := routePattern(call.Args[0])
+				if !ok {
+					t.Fatalf("%s: cannot read the route pattern at %s. Add it to "+
+						"packageRouteConstants -- a route this test cannot read "+
+						"is a route it cannot check.",
+						name, fileSet.Position(call.Args[0].Pos()))
+				}
+				method, path, found := strings.Cut(pattern, " ")
+				if !found {
+					t.Fatalf("%s: route %q has no method", name, pattern)
+				}
+				if seen[pattern] {
+					// Registered twice behind an if/else: the configured and
+					// unconfigured forms of the same endpoint.
+					return true
+				}
+				seen[pattern] = true
+				routes = append(routes, route{
+					method: method,
+					path:   path,
+					source: filepath.Base(name),
+				})
+				return true
+			})
+		}
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].path != routes[j].path {
+			return routes[i].path < routes[j].path
+		}
+		return routes[i].method < routes[j].method
+	})
+	return routes
+}
+
+// routePattern evaluates the first argument of a mux registration.
+func routePattern(expr ast.Expr) (string, bool) {
+	switch node := expr.(type) {
+	case *ast.BasicLit:
+		if node.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(node.Value)
+		if err != nil {
+			return "", false
+		}
+		return value, true
+	case *ast.BinaryExpr:
+		if node.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := routePattern(node.X)
+		right, rightOK := routePattern(node.Y)
+		if !leftOK || !rightOK {
+			return "", false
+		}
+		return left + right, true
+	case *ast.SelectorExpr:
+		pkg, ok := node.X.(*ast.Ident)
+		if !ok {
+			return "", false
+		}
+		value, known := packageRouteConstants[pkg.Name+"."+node.Sel.Name]
+		return value, known
+	}
+	return "", false
+}
+
+// wildcards is every {name} placeholder in a mux pattern.
+var wildcards = regexp.MustCompile(`\{[^}]*\}`)
+
+// requestPath turns a registered pattern into a path that can be requested.
+// The value substituted does not matter: the refusal happens before any
+// handler looks at it.
+func requestPath(pattern string) string {
+	return wildcards.ReplaceAllString(pattern, "sample")
+}
+
+// The floor exists so that a refactor moving registration off mux.HandleFunc
+// cannot turn this suite into one that enumerates nothing and passes. It is a
+// floor, not the count: removing a route is allowed, quietly finding none is
+// not.
+const fewestRoutesEverRegistered = 60
+
+// Every write route, one request each, with a read-only session.
+//
+// Not a sample. The tempting version of this rule is "the console does not
+// draw the dangerous buttons", which is not a permission check at all: /v1 is
+// reachable with curl and a token.
+func TestEveryWriteRouteRefusesAReadOnlySession(t *testing.T) {
+	t.Parallel()
+
+	routes := routesFromSource(t)
+	if len(routes) < fewestRoutesEverRegistered {
+		t.Fatalf("found %d routes, expected at least %d -- registration probably "+
+			"moved and this test is now checking nothing",
+			len(routes), fewestRoutesEverRegistered)
+	}
+
+	handler := tenantFixture(t).handler()
+	var checked, exempt []string
+	for _, registered := range routes {
+		if !auth.ChangesState(registered.method) {
+			continue
+		}
+		if auth.OwnCredential(registered.path) {
+			exempt = append(exempt, registered.method+" "+registered.path)
+			continue
+		}
+		checked = append(checked, registered.method+" "+registered.path)
+
+		request := httptest.NewRequest(
+			registered.method,
+			"http://a.vodoge.com"+requestPath(registered.path),
+			strings.NewReader("{}"),
+		)
+		request.Header.Set("Authorization", "Bearer readonly-t-a")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusForbidden {
+			t.Errorf("%s %s (%s): status = %d, want 403 -- a read-only account "+
+				"can reach this route", registered.method, registered.path,
+				registered.source, response.Code)
+			continue
+		}
+		// A 403 for some other reason would pass a status-only check even with
+		// the guard missing entirely.
+		if !strings.Contains(response.Body.String(), "read-only") {
+			t.Errorf("%s %s: 403 body = %q, want the read-only refusal",
+				registered.method, registered.path,
+				strings.TrimSpace(response.Body.String()))
+		}
+	}
+
+	if len(checked) == 0 {
+		t.Fatal("no write routes were exercised")
+	}
+	t.Logf("%d write routes refused, %d exempt, %d routes registered",
+		len(checked), len(exempt), len(routes))
+
+	// The exemptions are pinned rather than trusted. auth.OwnCredential lets a
+	// path through; if a write route appears that it also lets through, this
+	// fails and someone has to decide on purpose.
+	sort.Strings(exempt)
+	want := []string{
+		"POST /v1/auth/login",
+		"POST /v1/auth/logout",
+		"POST /v1/auth/password",
+	}
+	if !slices.Equal(exempt, want) {
+		t.Errorf("exempt write routes = %v, want %v -- either a new route under "+
+			"/v1/auth/ became exempt by accident, or an exemption was removed",
+			exempt, want)
+	}
+}
+
+// The other half: refusing writes must not turn into refusing the account.
+func TestAReadOnlySessionCanStillRead(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	for _, registered := range routesFromSource(t) {
+		if auth.ChangesState(registered.method) {
+			continue
+		}
+		// The device WebSocket is not a console route: it authenticates with a
+		// client certificate and answers an upgrade, not a body.
+		if registered.path == wss.Path {
+			continue
+		}
+		// Bounded, because /v1/events is a stream: it answers and then holds
+		// the connection open until the caller goes away, and a recorder never
+		// does. The deadline is the caller going away.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		request := httptest.NewRequest(
+			registered.method,
+			"http://a.vodoge.com"+requestPath(registered.path),
+			nil,
+		).WithContext(ctx)
+		request.Header.Set("Authorization", "Bearer readonly-t-a")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		cancel()
+		if response.Code == http.StatusForbidden {
+			t.Errorf("%s %s: read-only session refused a read (%s)",
+				registered.method, registered.path,
+				strings.TrimSpace(response.Body.String()))
+		}
+	}
+}
+
+// Signing out and rotating your own password are not tenant writes, and an
+// account that can do neither is worse off with nobody safer.
+func TestAReadOnlySessionKeepsItsOwnCredential(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	for _, path := range []string{"/v1/auth/logout", "/v1/auth/password"} {
+		request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com"+path,
+			strings.NewReader("{}"))
+		request.Header.Set("Authorization", "Bearer readonly-t-a")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code == http.StatusForbidden {
+			t.Errorf("%s: a read-only session was locked out of its own credential", path)
+		}
+	}
+}
+
+// An admin session is unaffected. Without this the guard could refuse
+// everyone and every other assertion here would still pass.
+func TestAnAdminSessionIsNotRefusedByTheReadOnlyGuard(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/rules",
+		strings.NewReader(`{"name":"r","event":"device.offline","channel":"webhook"}`))
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusForbidden {
+		t.Fatalf("admin write refused: %s", strings.TrimSpace(response.Body.String()))
+	}
+}
+
+// The console renders by this, so it has to be there and it has to be right.
+func TestTheSessionEndpointReportsTheRole(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	for token, want := range map[string]string{
+		"session-t-a":  auth.RoleAdmin,
+		"readonly-t-a": auth.RoleReadOnly,
+	} {
+		request := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/auth/session", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", token, response.Code)
+		}
+		var body struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Role != want {
+			t.Errorf("%s: role = %q, want %q", token, body.Role, want)
+		}
 	}
 }
