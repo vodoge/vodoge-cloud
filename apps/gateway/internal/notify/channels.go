@@ -404,7 +404,13 @@ func (channel Feishu) Send(ctx context.Context, config map[string]any, event Eve
 		StatusCode    int    `json:"StatusCode"`
 		StatusMessage string `json:"StatusMessage"`
 	}
-	_ = json.Unmarshal(body, &answer)
+	// An answer that is not the documented JSON object did not come from
+	// Feishu: a captive portal, a proxy error page, the wrong host entirely.
+	// Letting it through as a zero code would report a delivery that never
+	// happened, which is the exact failure being removed here.
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return fmt.Errorf("feishu: unreadable answer: %.120q", body)
+	}
 	if answer.Code != 0 {
 		return fmt.Errorf("feishu: code %d%s", answer.Code, because(answer.Msg))
 	}
@@ -449,7 +455,9 @@ func (channel WeCom) Send(ctx context.Context, config map[string]any, event Even
 		ErrCode int    `json:"errcode"`
 		ErrMsg  string `json:"errmsg"`
 	}
-	_ = json.Unmarshal(body, &answer)
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return fmt.Errorf("wecom: unreadable answer: %.120q", body)
+	}
 	if answer.ErrCode != 0 {
 		return fmt.Errorf("wecom: errcode %d%s", answer.ErrCode, because(answer.ErrMsg))
 	}

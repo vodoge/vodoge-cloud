@@ -259,6 +259,32 @@ func TestFeishuTreatsATwoHundredWithACodeAsFailure(t *testing.T) {
 	}
 }
 
+// A 200 carrying something that is not the documented object did not come from
+// Feishu or WeCom — a captive portal, a proxy error page, a webhook URL with a
+// typo that lands on someone's homepage. Accepting it as a zero code would
+// report a delivery that never happened.
+func TestATwoHundredThatIsNotTheDocumentedAnswerIsNotADelivery(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html><body>Sign in to continue</body></html>"))
+	}))
+	defer server.Close()
+
+	config := map[string]any{"enabled": true, "webhook_url": server.URL}
+	event := Event{Kind: KindTest, Title: "x"}
+
+	if err := (Feishu{}).Send(context.Background(), config, event); err == nil ||
+		!strings.Contains(err.Error(), "unreadable") {
+		t.Fatalf("feishu err = %v, want it refused", err)
+	}
+	if err := (WeCom{}).Send(context.Background(), config, event); err == nil ||
+		!strings.Contains(err.Error(), "unreadable") {
+		t.Fatalf("wecom err = %v, want it refused", err)
+	}
+}
+
 // ── 企业微信 ─────────────────────────────────────────────────────────────
 
 func TestWeComPostsTextToTheRobot(t *testing.T) {
