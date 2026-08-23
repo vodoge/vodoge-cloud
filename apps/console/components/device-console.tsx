@@ -44,7 +44,25 @@ const DISRUPTIVE = [
   "scan_operators",
   "rotate_ip",
   "set_radio",
+  "set_data_network",
+  "reregister_network",
 ] as const;
+
+/**
+ * Disruptive actions whose button means "off".
+ *
+ * Both of these can take a working module off the air, and both have a plain
+ * companion button below that turns them back on. Kept as data rather than a
+ * condition inside the loop: the second one is where a ternary would have
+ * quietly started turning the radio off for the wrong command.
+ */
+const TURNS_OFF: Record<string, Record<string, unknown>> = {
+  set_radio: { enabled: false },
+  set_data_network: { enabled: false },
+};
+
+/** What the module can be told to expose over USB. */
+const USBNET_MODES = ["rmnet", "ecm", "mbim", "rndis"] as const;
 
 export function DeviceConsole({
   deviceId,
@@ -116,8 +134,25 @@ export function DeviceConsole({
     [deviceId, imei, labels.failed, refresh],
   );
 
+  const rescan = (
+    <button type="button" disabled={busy} onClick={() => void issue("refresh_modems")}>
+      {labels.refresh_modems ?? "refresh_modems"}
+    </button>
+  );
+
   if (modems.length === 0) {
-    return <p className="faint">{labels.noModems}</p>;
+    // The rescan stays reachable here on purpose. "Nothing is listed" is
+    // exactly the situation the button exists for, and hiding it behind a
+    // device that already has a modem would put it everywhere except where
+    // someone is looking for it.
+    return (
+      <div className="stack">
+        <p className="faint">{labels.noModems}</p>
+        <div className="button-row">{rescan}</div>
+        {error ? <p className="error">{error}</p> : null}
+        <CommandLog commands={commands} labels={labels} />
+      </div>
+    );
   }
 
   return (
@@ -140,11 +175,13 @@ export function DeviceConsole({
             {labels[kind] ?? kind}
           </button>
         ))}
+        {rescan}
       </div>
 
       <AtConsole busy={busy} labels={labels} onRun={issue} />
       <UssdConsole busy={busy} labels={labels} onRun={issue} />
       <OperatorControls busy={busy} labels={labels} onRun={issue} />
+      <UsbnetControls busy={busy} labels={labels} onRun={issue} />
 
       <div className="button-row">
         {DISRUPTIVE.map((kind) => (
@@ -157,7 +194,7 @@ export function DeviceConsole({
               // These take the module off the network. The confirmation is
               // deliberate friction, not decoration.
               if (!window.confirm(labels.confirmDisruptive)) return;
-              void issue(kind, kind === "set_radio" ? { enabled: false } : {});
+              void issue(kind, TURNS_OFF[kind] ?? {});
             }}
           >
             {labels[kind] ?? kind}
@@ -169,6 +206,13 @@ export function DeviceConsole({
           onClick={() => void issue("set_radio", { enabled: true })}
         >
           {labels.radioOn}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void issue("set_data_network", { enabled: true })}
+        >
+          {labels.dataOn}
         </button>
       </div>
 
@@ -289,6 +333,55 @@ function OperatorControls({
       >
         {labels.automatic}
       </button>
+    </form>
+  );
+}
+
+/**
+ * Which USB function the module exposes.
+ *
+ * Deliberately not one of the disruptive buttons above. The change does not
+ * take effect until the module restarts, so it does nothing visible now and
+ * then removes the modem later — the opposite shape from every other button
+ * on this page, and not something a generic "are you sure" describes.
+ */
+function UsbnetControls({
+  busy,
+  labels,
+  onRun,
+}: {
+  busy: boolean;
+  labels: Labels;
+  onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<string>("rmnet");
+  // rmnet is the QMI mode this agent speaks. Any other choice means the
+  // module stops answering after its next restart, and getting it back needs
+  // someone at the machine.
+  const strands = mode !== "rmnet";
+  return (
+    <form
+      className="inline-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (strands && !window.confirm(labels.confirmUsbnet)) return;
+        void onRun("set_usbnet_mode", { usbnet_mode: mode });
+      }}
+    >
+      <label className="field grow">
+        <span>{labels.usbnetMode}</span>
+        <select value={mode} onChange={(event) => setMode(event.target.value)}>
+          {USBNET_MODES.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" className={strands ? "risk" : undefined} disabled={busy}>
+        {labels.run}
+      </button>
+      {strands ? <p className="error">{labels.usbnetWarning}</p> : null}
     </form>
   );
 }

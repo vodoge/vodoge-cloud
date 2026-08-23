@@ -140,6 +140,14 @@ export default async function DevicePage({
               select_operator: t("cmd.select_operator", locale),
               send_sms: t("cmd.send_sms", locale),
               switch_esim_profile: t("cmd.switch_esim_profile", locale),
+              set_data_network: t("cmd.set_data_network", locale),
+              reregister_network: t("cmd.reregister_network", locale),
+              refresh_modems: t("cmd.refresh_modems", locale),
+              set_usbnet_mode: t("cmd.set_usbnet_mode", locale),
+              dataOn: t("device.dataOn", locale),
+              usbnetMode: t("device.usbnetMode", locale),
+              usbnetWarning: t("device.usbnetWarning", locale),
+              confirmUsbnet: t("device.confirmUsbnet", locale),
             }}
           />
         </Card>
