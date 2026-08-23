@@ -14,6 +14,11 @@ export type DeviceRow = {
   queueRecords: number | null;
   queueBytes: number | null;
   resumedAt: number | null;
+  publicIp: string | null;
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  hostReportedAt: number | null;
 };
 
 export type MessageRow = {
@@ -44,6 +49,12 @@ export type ModemRow = {
   state: string | null;
   registration: string | null;
   signalDbm: number | null;
+  rsrp: number | null;
+  rsrq: number | null;
+  sinr: number | null;
+  discovery: string | null;
+  /** null when the reporting agent predates the second enumeration. */
+  manageable: boolean | null;
   homePlmn: string | null;
   servingPlmn: string | null;
   smsMo: string | null;
@@ -75,6 +86,11 @@ export function parseModem(value: unknown): ModemRow | null {
     state: asString(row.state),
     registration: asString(row.registration),
     signalDbm: asNumber(row.signal_dbm),
+    rsrp: asNumber(row.rsrp),
+    rsrq: asNumber(row.rsrq),
+    sinr: asNumber(row.sinr),
+    discovery: asString(row.discovery),
+    manageable: asBoolean(row.manageable),
     homePlmn: asString(row.home_plmn),
     servingPlmn: asString(row.serving_plmn),
     smsMo: asString(row.sms_mo),
@@ -506,6 +522,15 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/**
+ * Tri-state on purpose. `manageable` absent means the agent that wrote the
+ * row predates the second enumeration and has no opinion, which is not the
+ * same as it saying the module cannot be driven.
+ */
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -531,6 +556,11 @@ export function parseDevice(value: unknown): DeviceRow | null {
     queueRecords: asNumber(record.queue_records),
     queueBytes: asNumber(record.queue_bytes),
     resumedAt: asNumber(record.resumed_at),
+    publicIp: asString(record.public_ip),
+    cpuPercent: asNumber(record.cpu_percent),
+    memoryUsedBytes: asNumber(record.memory_used_bytes),
+    memoryTotalBytes: asNumber(record.memory_total_bytes),
+    hostReportedAt: asNumber(record.host_reported_at),
   };
 }
 

@@ -167,6 +167,14 @@ export interface ProxyTrafficEntry {
 export interface DeviceStatePayload {
   observed_at: number;
   modems: Array<ModemState>;
+  host?: HostState | null;
+}
+
+export interface HostState {
+  public_ip?: string | null;
+  cpu_percent?: number | null;
+  memory_used_bytes?: number | null;
+  memory_total_bytes?: number | null;
 }
 
 export interface ModemState {
@@ -175,6 +183,11 @@ export interface ModemState {
   registration: "registered" | "searching" | "denied" | "unregistered" | "unknown";
   iccid?: Iccid | null;
   signal_dbm?: number | null;
+  rsrp?: number | null;
+  rsrq?: number | null;
+  sinr?: number | null;
+  discovery?: "qmi" | "at";
+  manageable?: boolean;
   family?: string | null;
   imsi?: Imsi | null;
   home_plmn?: Plmn | null;

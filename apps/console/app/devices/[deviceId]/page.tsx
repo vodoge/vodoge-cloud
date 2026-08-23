@@ -83,18 +83,38 @@ export default async function DevicePage({
                     <th>{t("modems.colIccid", locale)}</th>
                     <th>{t("modems.colNetwork", locale)}</th>
                     <th>{t("modems.colSignal", locale)}</th>
+                    <th title={t("modems.qualityHint", locale)}>
+                      {t("modems.colQuality", locale)}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {own.map((modem) => (
                     <tr key={modem.id}>
-                      <td className="mono">{modem.imei}</td>
+                      <td className="mono">
+                        {modem.imei}
+                        {/* Present but out of reach: the edge found it on its
+                            AT port and QMI is unreachable, so it can be seen
+                            and not operated. */}
+                        {modem.manageable === false ? (
+                          <span
+                            className="badge badge-warn"
+                            style={{ marginLeft: "var(--s2)" }}
+                            title={t("modems.unmanagedHint", locale)}
+                          >
+                            {t("modems.unmanaged", locale)}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="mono faint">{modem.iccid ?? "—"}</td>
                       <td>
                         <Network home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
                       </td>
                       <td className="mono">
                         {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
+                      </td>
+                      <td className="mono">
+                        <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
                       </td>
                     </tr>
                   ))}
@@ -104,6 +124,47 @@ export default async function DevicePage({
           )}
         </Card>
 
+
+        <Card title={t("device.host", locale)} note={t("device.hostNote", locale)}>
+          {device && device.hostReportedAt !== null ? (
+            <div className="table-wrap">
+              <table>
+                <tbody>
+                  <tr>
+                    <td>{t("device.hostPublicIp", locale)}</td>
+                    <td className="mono">{device.publicIp ?? "—"}</td>
+                  </tr>
+                  <tr>
+                    <td>{t("device.hostCpu", locale)}</td>
+                    <td className="mono">
+                      {device.cpuPercent === null ? "—" : `${device.cpuPercent.toFixed(1)}%`}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>{t("device.hostMemory", locale)}</td>
+                    <td className="mono">
+                      <HostMemory used={device.memoryUsedBytes} total={device.memoryTotalBytes} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>{t("device.hostReportedAt", locale)}</td>
+                    <td className="mono faint">
+                      {new Date(device.hostReportedAt)
+                        .toISOString()
+                        .replace("T", " ")
+                        .slice(0, 19)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            // Distinguished from a device with nothing to say: an agent older
+            // than the host block checks in on every poll and would otherwise
+            // render as a box reporting zeroes.
+            <p className="faint">{t("device.hostUnreported", locale)}</p>
+          )}
+        </Card>
         <Card
           className="card-span-all"
           title={t("device.console", locale)}
@@ -217,4 +278,66 @@ function Network({
       ) : null}
     </span>
   );
+}
+
+/**
+ * RSRP / RSRQ / SINR as one cell.
+ *
+ * Kept together because no one of them means much alone: a strong RSRP with a
+ * poor SINR is a loud cell with interference on it, and that is a different
+ * problem from a weak signal. Each is rendered independently so a module that
+ * reported two of the three does not show as having reported none.
+ */
+function ModemQuality({
+  rsrp,
+  rsrq,
+  sinr,
+}: {
+  rsrp: number | null;
+  rsrq: number | null;
+  sinr: number | null;
+}) {
+  if (rsrp === null && rsrq === null && sinr === null) {
+    return <span className="faint">—</span>;
+  }
+  return (
+    <span>
+      {rsrp === null ? "—" : `${rsrp}`}
+      <span className="faint"> / </span>
+      {rsrq === null ? "—" : `${rsrq}`}
+      <span className="faint"> / </span>
+      {sinr === null ? "—" : `${sinr}`}
+      <span className="faint"> dB</span>
+    </span>
+  );
+}
+
+/**
+ * Memory in bytes and as a share, because this page has room for both.
+ *
+ * The share is what says whether the box is in trouble; the absolute figures
+ * are what say whether it is the box that is too small.
+ */
+function HostMemory({ used, total }: { used: number | null; total: number | null }) {
+  if (used === null || total === null || total === 0) {
+    return <span className="faint">—</span>;
+  }
+  return (
+    <span>
+      {formatBytes(used)} / {formatBytes(total)}
+      <span className="faint"> ({Math.round((used / total) * 100)}%)</span>
+    </span>
+  );
+}
+
+/** Binary units, matching what `free -h` on the box itself reports. */
+function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }

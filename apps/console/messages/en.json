@@ -305,5 +305,20 @@
   "settings.test": "Send test",
   "settings.testSent": "delivered",
   "settings.testFailed": "The test could not be delivered.",
-  "inbox.encoding8bit": "Binary message (SIM toolkit / OTA), shown as hex"
+  "inbox.encoding8bit": "Binary message (SIM toolkit / OTA), shown as hex",
+  "modems.colQuality": "LTE quality",
+  "modems.unmanaged": "Unmanaged",
+  "modems.unmanagedHint": "The edge can only see this module over its AT port; QMI is unreachable, so it is visible but cannot be driven.",
+  "modems.qualityHint": "RSRP / RSRQ / SINR, from AT+QCSQ",
+  "devices.colVersionShort": "Version",
+  "devices.colPublicIp": "Public IP",
+  "devices.colHostCpu": "CPU",
+  "devices.colHostMemory": "Memory",
+  "device.host": "Host",
+  "device.hostNote": "The edge host itself, not the modules plugged into it",
+  "device.hostPublicIp": "Egress public IP",
+  "device.hostCpu": "CPU in use",
+  "device.hostMemory": "Memory",
+  "device.hostReportedAt": "Reported at",
+  "device.hostUnreported": "This device has not reported host vitals yet."
 }

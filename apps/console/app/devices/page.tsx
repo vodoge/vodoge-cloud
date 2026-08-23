@@ -58,6 +58,11 @@ export default async function DevicesPage() {
                   <th>{t("devices.colName", locale)}</th>
                   <th>{t("devices.colId", locale)}</th>
                   <th>{t("devices.colState", locale)}</th>
+                  <th>{t("devices.colVersionShort", locale)}</th>
+                  <th>{t("devices.colQueue", locale)}</th>
+                  <th>{t("devices.colPublicIp", locale)}</th>
+                  <th>{t("devices.colHostCpu", locale)}</th>
+                  <th>{t("devices.colHostMemory", locale)}</th>
                   <th>{t("devices.colLastSeen", locale)}</th>
                 </tr>
               </thead>
@@ -86,6 +91,19 @@ export default async function DevicesPage() {
                       ) : (
                         <span className="faint">0</span>
                       )}
+                    </td>
+                    {/* The one fact about the egress path the box cannot
+                        work out for itself: every interface it owns has a
+                        private address. */}
+                    <td className="mono">{device.publicIp ?? "—"}</td>
+                    <td className="mono">
+                      {device.cpuPercent === null ? "—" : `${device.cpuPercent.toFixed(1)}%`}
+                    </td>
+                    <td className="mono">
+                      <HostMemory
+                        used={device.memoryUsedBytes}
+                        total={device.memoryTotalBytes}
+                      />
                     </td>
                     <td className="mono faint">
                       {device.lastSeen
@@ -121,6 +139,9 @@ export default async function DevicesPage() {
                     <th>{t("modems.colNetwork", locale)}</th>
                     <th>{t("modems.colState", locale)}</th>
                     <th>{t("modems.colSignal", locale)}</th>
+                    <th title={t("modems.qualityHint", locale)}>
+                      {t("modems.colQuality", locale)}
+                    </th>
                     <th>{t("modems.colSms", locale)}</th>
                     <th>{t("modems.colSeen", locale)}</th>
                   </tr>
@@ -128,7 +149,21 @@ export default async function DevicesPage() {
                 <tbody>
                   {modems.map((modem) => (
                     <tr key={modem.id}>
-                      <td className="mono">{modem.imei}</td>
+                      <td className="mono">
+                        {modem.imei}
+                        {/* Visible but not drivable. Before the edge enumerated
+                            AT ports as a second path, a module in this state
+                            did not appear at all. */}
+                        {modem.manageable === false ? (
+                          <span
+                            className="badge badge-warn"
+                            style={{ marginLeft: "var(--s2)" }}
+                            title={t("modems.unmanagedHint", locale)}
+                          >
+                            {t("modems.unmanaged", locale)}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="mono faint">{modem.iccid ?? "—"}</td>
                       <td>
                         <ModemNetwork
@@ -142,6 +177,9 @@ export default async function DevicesPage() {
                       </td>
                       <td className="mono">
                         {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
+                      </td>
+                      <td className="mono">
+                        <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
                       </td>
                       <td>
                         {/* The bearer the edge resolved. A blank here means the
@@ -228,4 +266,50 @@ function ModemNetwork({
       ) : null}
     </span>
   );
+}
+
+/**
+ * RSRP / RSRQ / SINR as one cell.
+ *
+ * Kept together because no one of them means much alone: a strong RSRP with a
+ * poor SINR is a loud cell with interference on it, and that is a different
+ * problem from a weak signal. Each is rendered independently so a module that
+ * reported two of the three does not show as having reported none.
+ */
+function ModemQuality({
+  rsrp,
+  rsrq,
+  sinr,
+}: {
+  rsrp: number | null;
+  rsrq: number | null;
+  sinr: number | null;
+}) {
+  if (rsrp === null && rsrq === null && sinr === null) {
+    return <span className="faint">—</span>;
+  }
+  return (
+    <span>
+      {rsrp === null ? "—" : `${rsrp}`}
+      <span className="faint"> / </span>
+      {rsrq === null ? "—" : `${rsrq}`}
+      <span className="faint"> / </span>
+      {sinr === null ? "—" : `${sinr}`}
+      <span className="faint"> dB</span>
+    </span>
+  );
+}
+
+/**
+ * Memory as a share of the box rather than a byte count.
+ *
+ * A raw figure means nothing without knowing the machine; a percentage is
+ * comparable across a fleet at a glance. The exact bytes are on the device
+ * page, where there is room to say what they are out of.
+ */
+function HostMemory({ used, total }: { used: number | null; total: number | null }) {
+  if (used === null || total === null || total === 0) {
+    return <span className="faint">—</span>;
+  }
+  return <span>{Math.round((used / total) * 100)}%</span>;
 }

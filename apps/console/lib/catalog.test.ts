@@ -27,6 +27,14 @@ test("parseDevice ignores malformed rows", () => {
     queueRecords: null,
     queueBytes: null,
     resumedAt: null,
+    // Host vitals are absent for the same reason and in the same way: an
+    // agent that has not reported them is not an agent reporting an idle
+    // CPU on an empty box.
+    publicIp: null,
+    cpuPercent: null,
+    memoryUsedBytes: null,
+    memoryTotalBytes: null,
+    hostReportedAt: null,
   });
 
   assert.deepEqual(
@@ -53,6 +61,11 @@ test("parseDevice ignores malformed rows", () => {
       queueRecords: 0,
       queueBytes: 0,
       resumedAt: 99,
+      publicIp: null,
+      cpuPercent: null,
+      memoryUsedBytes: null,
+      memoryTotalBytes: null,
+      hostReportedAt: null,
     },
   );
 });

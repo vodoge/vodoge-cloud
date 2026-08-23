@@ -305,5 +305,20 @@
   "settings.test": "发送测试",
   "settings.testSent": "已送达",
   "settings.testFailed": "测试没能送达。",
-  "inbox.encoding8bit": "二进制消息（SIM 卡应用 / OTA），以十六进制显示"
+  "inbox.encoding8bit": "二进制消息（SIM 卡应用 / OTA），以十六进制显示",
+  "modems.colQuality": "LTE 质量",
+  "modems.unmanaged": "待纳管",
+  "modems.unmanagedHint": "边缘只能通过 AT 口看到它，QMI 不可达 —— 能看见，不能操作。",
+  "modems.qualityHint": "RSRP / RSRQ / SINR，来自 AT+QCSQ",
+  "devices.colVersionShort": "版本",
+  "devices.colPublicIp": "公网 IP",
+  "devices.colHostCpu": "CPU",
+  "devices.colHostMemory": "内存",
+  "device.host": "主机状态",
+  "device.hostNote": "边缘主机自身，不是插在上面的模组",
+  "device.hostPublicIp": "出口公网 IP",
+  "device.hostCpu": "CPU 占用",
+  "device.hostMemory": "内存",
+  "device.hostReportedAt": "本次上报时间",
+  "device.hostUnreported": "该设备还没有上报过主机状态。"
 }

@@ -155,6 +155,14 @@ type ProxyTrafficEntry struct {
 type DeviceStatePayload struct {
 	ObservedAt int64        `json:"observed_at"`
 	Modems     []ModemState `json:"modems"`
+	Host       *HostState   `json:"host,omitempty"`
+}
+
+type HostState struct {
+	PublicIp         *string  `json:"public_ip,omitempty"`
+	CpuPercent       *float64 `json:"cpu_percent,omitempty"`
+	MemoryUsedBytes  *int64   `json:"memory_used_bytes,omitempty"`
+	MemoryTotalBytes *int64   `json:"memory_total_bytes,omitempty"`
 }
 
 type ModemState struct {
@@ -163,6 +171,11 @@ type ModemState struct {
 	Registration string            `json:"registration"`
 	Iccid        *string           `json:"iccid,omitempty"`
 	SignalDbm    *int64            `json:"signal_dbm,omitempty"`
+	Rsrp         *int64            `json:"rsrp,omitempty"`
+	Rsrq         *int64            `json:"rsrq,omitempty"`
+	Sinr         *int64            `json:"sinr,omitempty"`
+	Discovery    *string           `json:"discovery,omitempty"`
+	Manageable   *bool             `json:"manageable,omitempty"`
 	Family       *string           `json:"family,omitempty"`
 	Imsi         *string           `json:"imsi,omitempty"`
 	HomePlmn     *string           `json:"home_plmn,omitempty"`
@@ -417,6 +430,7 @@ var PayloadConstraints = map[MessageKind][]FieldConstraint{
 	MessageKindDeviceState: {
 		{Path: "modems[].state", Enum: []string{"online", "offline", "recovering", "unknown"}},
 		{Path: "modems[].registration", Enum: []string{"registered", "searching", "denied", "unregistered", "unknown"}},
+		{Path: "modems[].discovery", Enum: []string{"qmi", "at"}},
 		{Path: "modems[].capability.sms_mo", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
 		{Path: "modems[].capability.sms_mt", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
 	},

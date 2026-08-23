@@ -24,6 +24,18 @@ type Device struct {
 	QueueRecords  *int64  `json:"queue_records,omitempty"`
 	QueueBytes    *int64  `json:"queue_bytes,omitempty"`
 	ResumedAt     *int64  `json:"resumed_at,omitempty"`
+	// The edge host itself. PublicIP is the one fact about the egress path
+	// the box cannot work out locally -- every interface it owns has a
+	// private address -- so the agent asks an outside service and reports the
+	// answer. HostReportedAt is when the block was last carried, which is not
+	// LastSeen: an agent too old to report vitals still checks in every poll,
+	// and without it a reading frozen at the moment of an upgrade looks
+	// current.
+	PublicIP         *string  `json:"public_ip,omitempty"`
+	CPUPercent       *float64 `json:"cpu_percent,omitempty"`
+	MemoryUsedBytes  *int64   `json:"memory_used_bytes,omitempty"`
+	MemoryTotalBytes *int64   `json:"memory_total_bytes,omitempty"`
+	HostReportedAt   *int64   `json:"host_reported_at,omitempty"`
 }
 
 // Message is one SMS row in the tenant inbox.
@@ -79,11 +91,24 @@ type Modem struct {
 	State        *string `json:"state"`
 	Registration *string `json:"registration"`
 	SignalDbm    *int64  `json:"signal_dbm"`
-	HomePlmn     *string `json:"home_plmn"`
-	ServingPlmn  *string `json:"serving_plmn"`
-	SmsMo        *string `json:"sms_mo"`
-	SmsMt        *string `json:"sms_mt"`
-	LastSeen     *int64  `json:"last_seen"`
+	// Quality figures from AT+QCSQ. SignalDbm comes from AT+CSQ, whose index
+	// pegs at 31 next to a tower and reports -51 dBm for every module on the
+	// bench; these vary, so they are what says whether a link is good.
+	Rsrp *int64 `json:"rsrp"`
+	Rsrq *int64 `json:"rsrq"`
+	Sinr *int64 `json:"sinr"`
+	// How the edge found this module, and whether it can act on it. A module
+	// discovered over its AT port alone is present and out of reach: every
+	// structured operation the agent performs goes over QMI. Both are nil for
+	// a row last written by an agent that predates the second enumeration,
+	// which is not the same as false.
+	Discovery   *string `json:"discovery"`
+	Manageable  *bool   `json:"manageable"`
+	HomePlmn    *string `json:"home_plmn"`
+	ServingPlmn *string `json:"serving_plmn"`
+	SmsMo       *string `json:"sms_mo"`
+	SmsMt       *string `json:"sms_mt"`
+	LastSeen    *int64  `json:"last_seen"`
 }
 
 // CommandRow is one issued command and, once it lands, what came back.
@@ -591,6 +616,11 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       state,
 			       registration,
 			       signal_dbm,
+			       rsrp,
+			       rsrq,
+			       sinr,
+			       discovery,
+			       manageable,
 			       home_plmn,
 			       serving_plmn,
 			       capability ->> 'sms_mo',
@@ -605,11 +635,15 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 		for rows.Next() {
 			var item Modem
 			var iccid, state, registration, homePlmn, servingPlmn, smsMo, smsMt sql.NullString
+			var discovery sql.NullString
+			var manageable sql.NullBool
+			var rsrp, rsrq, sinr sql.NullInt64
 			var signal sql.NullInt64
 			var lastSeen sql.NullTime
 			if err := rows.Scan(
 				&item.ID, &item.DeviceID, &item.IMEI, &item.Family,
 				&iccid, &state, &registration, &signal,
+				&rsrp, &rsrq, &sinr, &discovery, &manageable,
 				&homePlmn, &servingPlmn, &smsMo, &smsMt, &lastSeen,
 			); err != nil {
 				return err
@@ -617,6 +651,14 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			item.ICCID = nullableString(iccid)
 			item.State = nullableString(state)
 			item.Registration = nullableString(registration)
+			item.Discovery = nullableString(discovery)
+			item.Rsrp = nullableInt(rsrp)
+			item.Rsrq = nullableInt(rsrq)
+			item.Sinr = nullableInt(sinr)
+			if manageable.Valid {
+				value := manageable.Bool
+				item.Manageable = &value
+			}
 			item.HomePlmn = nullableString(homePlmn)
 			item.ServingPlmn = nullableString(servingPlmn)
 			item.SmsMo = nullableString(smsMo)
@@ -650,6 +692,22 @@ func nullableString(value sql.NullString) *string {
 	return &out
 }
 
+func nullableInt(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	out := value.Int64
+	return &out
+}
+
+func nullableFloat(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	out := value.Float64
+	return &out
+}
+
 // ListDevices returns the tenant's devices ordered by name.
 func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, error) {
 	var devices []Device
@@ -663,7 +721,9 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			         ELSE 'offline'
 			       END,
 			       last_seen_at,
-			       edge_version, matrix_version, queue_records, queue_bytes, resumed_at
+			       edge_version, matrix_version, queue_records, queue_bytes, resumed_at,
+			       public_ip, cpu_percent, memory_used_bytes, memory_total_bytes,
+			       host_reported_at
 			  FROM app.devices
 			 ORDER BY name`)
 		if err != nil {
@@ -675,8 +735,13 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			var lastSeen, resumed sql.NullTime
 			var edgeVersion, matrixVersion sql.NullString
 			var queueRecords, queueBytes sql.NullInt64
+			var publicIP sql.NullString
+			var cpuPercent sql.NullFloat64
+			var memoryUsed, memoryTotal sql.NullInt64
+			var hostReported sql.NullTime
 			if err := rows.Scan(&item.ID, &item.Name, &item.State, &lastSeen,
-				&edgeVersion, &matrixVersion, &queueRecords, &queueBytes, &resumed); err != nil {
+				&edgeVersion, &matrixVersion, &queueRecords, &queueBytes, &resumed,
+				&publicIP, &cpuPercent, &memoryUsed, &memoryTotal, &hostReported); err != nil {
 				return err
 			}
 			if lastSeen.Valid {
@@ -685,6 +750,14 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			}
 			item.EdgeVersion = nullableString(edgeVersion)
 			item.MatrixVersion = nullableString(matrixVersion)
+			item.PublicIP = nullableString(publicIP)
+			item.CPUPercent = nullableFloat(cpuPercent)
+			item.MemoryUsedBytes = nullableInt(memoryUsed)
+			item.MemoryTotalBytes = nullableInt(memoryTotal)
+			if hostReported.Valid {
+				ms := hostReported.Time.UnixMilli()
+				item.HostReportedAt = &ms
+			}
 			if queueRecords.Valid {
 				value := queueRecords.Int64
 				item.QueueRecords = &value

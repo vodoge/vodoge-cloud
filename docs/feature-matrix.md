@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 33） | 56 条路由 |
+| 我们的云端 | `apps/gateway`（schema 35） | 58 条路由 |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
@@ -45,12 +45,12 @@
 | 设备列表与在线状态 | 有 | 有 | **有** | 另有版本与积压列，两边都没有 |
 | 改名 / 删除 | 有 | 有 | **有** | 删除走 SECURITY DEFINER，已演练 |
 | 新增设备 | 有 | 有 | **半** | 只能靠注册码自注册，不能手工建 |
-| 发现未注册硬件 | 有 | 有 | **无** | 边缘知道有几根棒子，云端看不到未纳管的 |
+| 发现未注册硬件 | 有 | 有 | **有** | 边缘第二路枚举 AT 控制口，QMI 够不到的棒子以「待纳管」上报并带 IMEI；真机 ECM 往返验过 |
 | 手动重扫描 | 有 | 有 | **有** | `refresh_modems`，真机回执 `found: 3` |
 | 设备配置读取 | 有 | 有 | **无** | 边缘的运行配置无法从云端查看 |
 | 刷新设备缓存 | 有 | 有 | **有** | 同一条 `refresh_modems`，见下方注 |
 | 单设备实时流 | 有 | 有 | **半** | 有租户级 SSE，无按设备订阅 |
-| 主机资源统计 | 无 | 有 | **无** | VoCat 能看边缘机的 CPU / 内存 |
+| 主机资源统计 | 无 | 有 | **有** | CPU 取两次 /proc/stat 之差，内存用 MemAvailable；设备页「主机状态」卡 |
 
 > **「手动重扫描」与「刷新设备缓存」是同一条 `refresh_modems` 命令。**
 > 这两行在别家产品里是两件事，在我们这里不是：`poll_modems` 每一轮都重新
@@ -67,13 +67,13 @@
 | USSD 发起 / 继续 / 取消 | 有 | 有 | **有** | — |
 | 模组重启 / 飞行模式 | 有 | 有 | **有** | — |
 | 运营商扫描与选网 | 有 | 有 | **有** | 自动与手动 PLMN 都有 |
-| 信号指标 RSRP/RSRQ/SINR | 有 | 有 | **半** | 只有 CSQ 换算的 dBm，无 LTE 三项 |
+| 信号指标 RSRP/RSRQ/SINR | 有 | 有 | **有** | `AT+QCSQ` 解析在 edge-core；CSQ 在本台面三根都打满 -51 dBm，RSRP 才分得开 |
 | 频段 / 信道选择 | 无 | 有 | **无** | VoCat 可锁频段 |
 | 数据网络启停 | 有 | 有 | **有** | 真机往返 `+CGACT: 1,1` ↔ `1,0` |
 | USBNET 模式切换 | 有 | 有 | **有** | rmnet ↔ ecm 真机往返；VoCat 还能自动修复错误的 USBNET |
 | APN 管理 | 无 | 有 | **半** | 卡策略里能带 APN，但没有独立管理 |
 | 重新注册网络 | 无 | 有 | **有** | 回执带 `serving` 与 `waited_ms`，不是光秃秃的 `+COPS: 0` |
-| 出口公网 IP 查询 | 无 | 有 | **无** | 代理场景里这是最常问的一个数 |
+| 出口公网 IP 查询 | 无 | 有 | **有** | 边缘随 DeviceState 上报，与边缘机 `curl -s ifconfig.me` 同分钟核对一致 |
 | 换 IP | 有 | 有 | **有** | — |
 
 ## 短信
@@ -167,7 +167,7 @@
 | 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户 |
 | 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复 |
 | PWA / 离线外壳 | 无 | 无 | **有** | — |
-| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 56 条 HTTP 路由没有机器可读描述 |
+| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 58 条 HTTP 路由没有机器可读描述 |
 | 插件 / 扩展 | 有 | 有 | **不适用** | 已决定砍掉，理由见 [plugins-not-ported.md](plugins-not-ported.md) |
 | 自签 HTTPS 设置 | 有 | 有 | **不适用** | TLS 在网关与 Caddy 终结，不是租户的事 |
 | 卸载 / 自毁 | 有 | 无 | **不适用** | 单机概念 |
