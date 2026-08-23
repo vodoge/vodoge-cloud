@@ -134,6 +134,76 @@ func (store SQLLifecycle) RecordReceipt(tenantID string, receipt dispatch.Receip
 	})
 }
 
+// settleOutboxSQL retires the wakeup row for a command that has reached a
+// terminal state.
+//
+// The status column is driven to 'published', not left where it was. It used to
+// write only resolved_at, and the production consequence was that app.outbox_status
+// never left 'pending': 97 of 97 rows pending, 96 of them already resolved, zero
+// ever published. app.command_outbox_pending_idx is a partial index on
+// `status = 'pending'`, so it covered every wakeup this deployment had ever
+// created and could never shrink. At today's volume that is dirty data; once
+// scheduled jobs issue commands in batches it is an index that only grows.
+//
+// The reason nothing published them is that nothing leases them. The two
+// existing settle paths in 0002/0033 advance the status with
+// `CASE WHEN status = 'leased' THEN 'published' ELSE status END`, which assumes
+// every wakeup passes through dispatch.Dispatcher first. Dispatcher has no live
+// implementation of OutboxStore.MarkWakeupPublished outside tests, so a row goes
+// straight from 'pending' to settled without ever being leased and the CASE
+// falls through. Making the settle path unconditional is right regardless of
+// whether a publisher appears later: a command with a terminal result has no
+// wakeup left to send, and both claim_command_outbox and
+// requeue_unresolved_outbox already refuse rows with resolved_at set, so the
+// row is unreachable by every scheduler either way.
+//
+// published_at is deliberately left NULL. Nothing was published. resolved_at
+// carries when the row settled, and requeue_unresolved_outbox reads published_at
+// only for rows with resolved_at IS NULL, so the NULL is never compared.
+// Writing a fabricated publish timestamp would destroy the only evidence that
+// distinguishes a wakeup that was really sent from one that never was.
+//
+// Clearing the lease columns is mandatory, not tidiness:
+// command_outbox_lease_shape requires lease_owner and lease_expires_at to be
+// NULL for any status other than 'leased'. Forcing 'published' on a leased row
+// without clearing them would raise a check violation inside the settle
+// transaction -- a database error on the result path, which is how device
+// sessions get killed.
+const settleOutboxSQL = `
+	UPDATE app.command_outbox
+	   SET resolved_at = COALESCE(resolved_at, now()),
+	       status = 'published',
+	       lease_owner = NULL,
+	       lease_expires_at = NULL
+	 WHERE command_id = $1::uuid
+	   AND resolved_at IS NULL`
+
+// recordLateResultSQL preserves a device answer that arrived after the cloud
+// already retired the command.
+//
+// 0037 lets app.expire_overdue_commands retire commands in status 'accepted',
+// which opens a window that did not exist before: the device took the command,
+// said nothing until after expires_at, and then answered. The primary UPDATE
+// above refuses to overwrite a terminal row, so without this the answer would
+// be dropped on the floor -- no error, no 500, and no record either.
+//
+// Only 'expired' and 'cancelled' qualify. Those are the two terminal states the
+// cloud assigns on its own, so a later device answer is new information rather
+// than a contradiction. 'succeeded', 'failed' and 'unknown' came from the device
+// itself; a differing result there is an integrity conflict, and quietly merging
+// it would paper over exactly the disagreement worth seeing.
+//
+// The answer is merged under its own key instead of replacing the row's status.
+// The command really did expire -- that is what the cloud decided and acted on,
+// and rewriting it to 'succeeded' would make the timeout unauditable.
+const recordLateResultSQL = `
+	UPDATE app.commands
+	   SET result = COALESCE(result, '{}'::jsonb)
+	                || jsonb_build_object('late_result', $1::jsonb),
+	       updated_at = now()
+	 WHERE id = $2::uuid
+	   AND status IN ('expired', 'cancelled')`
+
 // RecordResult applies a sequenced CommandResult to app.commands.
 func (store SQLLifecycle) RecordResult(tenantID string, result dispatch.CommandResult) error {
 	if store.DB == nil {
@@ -159,7 +229,7 @@ func (store SQLLifecycle) RecordResult(tenantID string, result dispatch.CommandR
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		applied, err := tx.ExecContext(ctx, `
 			UPDATE app.commands
 			   SET status = $1::app.command_status,
 			       completed_at = $2,
@@ -170,11 +240,25 @@ func (store SQLLifecycle) RecordResult(tenantID string, result dispatch.CommandR
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `
-			UPDATE app.command_outbox
-			   SET resolved_at = now()
-			 WHERE command_id = $1::uuid
-			   AND resolved_at IS NULL`, result.CommandID)
+		changed, err := applied.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			// Either the command is already terminal or it does not exist. The
+			// first case is the one worth handling: a device that answered a
+			// command the cloud had already given up on.
+			late, err := tx.ExecContext(ctx, recordLateResultSQL, string(detail), result.CommandID)
+			if err != nil {
+				return err
+			}
+			if recorded, err := late.RowsAffected(); err == nil && recorded > 0 {
+				slog.Warn("device answered a command the cloud had already retired",
+					"tenant_id", tenantID, "command_id", result.CommandID,
+					"late_status", status, "reason_code", result.ReasonCode)
+			}
+		}
+		_, err = tx.ExecContext(ctx, settleOutboxSQL, result.CommandID)
 		return err
 	})
 }

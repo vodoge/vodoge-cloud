@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 36） | 62 条路由 |
+| 我们的云端 | `apps/gateway`（schema 37） | 62 条路由 |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
@@ -178,7 +178,7 @@
 | 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户 |
 | 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复 |
 | PWA / 离线外壳 | 无 | 无 | **有** | — |
-| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 58 条 HTTP 路由没有机器可读描述 |
+| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 62 条 HTTP 路由没有机器可读描述 |
 | 插件 / 扩展 | 有 | 有 | **不适用** | 已决定砍掉，理由见 [plugins-not-ported.md](plugins-not-ported.md) |
 | 自签 HTTPS 设置 | 有 | 有 | **不适用** | TLS 在网关与 Caddy 终结，不是租户的事 |
 | 卸载 / 自毁 | 有 | 无 | **不适用** | 单机概念 |
