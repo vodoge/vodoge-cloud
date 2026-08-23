@@ -58,6 +58,14 @@ type Request struct {
 	Mode string `json:"mode"`
 	PLMN string `json:"plmn"`
 
+	// SetUsbnetMode
+	//
+	// Not folded into Mode above. Both are "a mode", but the value sets are
+	// disjoint, and one shared field would mean no single request could be
+	// valid for both commands — which is the failure this struct's comment
+	// already describes for an earlier field that meant two things.
+	UsbnetMode string `json:"usbnet_mode"`
+
 	// SwitchEsimProfile
 	TargetICCID string `json:"target_iccid"`
 
@@ -80,6 +88,13 @@ var (
 	plmnPattern   = regexp.MustCompile(`^[0-9]{3}-[0-9]{2,3}$`)
 	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
+
+// The USB network functions a module can expose. Quectel's `usbnet` setting
+// accepts a fifth value, but it is NCM on some firmware and undefined on
+// others, so it is not offered.
+var usbnetModes = map[string]bool{
+	"rmnet": true, "ecm": true, "mbim": true, "rndis": true,
+}
 
 var catalogue = map[string]Spec{
 	"send_sms": {
@@ -194,6 +209,50 @@ var catalogue = map[string]Spec{
 		Kind: "reset_modem_usb", ContractKind: "ResetModemUsb", NeedsModem: true, Mutating: true,
 		Build: func(request Request) (map[string]any, error) {
 			return map[string]any{"kind": "ResetModemUsb", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
+	"set_data_network": {
+		Kind: "set_data_network", ContractKind: "SetDataNetwork", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			// Same reasoning as set_radio: an omitted field must not read as
+			// "off". These two are the only commands that can take a working
+			// modem off the air by saying nothing at all.
+			if request.Enabled == nil {
+				return nil, ErrInvalid{"enabled must be given explicitly"}
+			}
+			return map[string]any{
+				"kind": "SetDataNetwork", "modem_imei": request.ModemIMEI, "enabled": *request.Enabled,
+			}, nil
+		},
+	},
+	"set_usbnet_mode": {
+		Kind: "set_usbnet_mode", ContractKind: "SetUsbnetMode", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			// No default. Every value here changes which USB function the
+			// module exposes at its next restart, and three of the four take
+			// away the QMI port the agent reaches it through, so guessing one
+			// is how a modem leaves the fleet.
+			if !usbnetModes[request.UsbnetMode] {
+				return nil, ErrInvalid{"usbnet_mode must be one of rmnet, ecm, mbim, rndis"}
+			}
+			return map[string]any{
+				"kind": "SetUsbnetMode", "modem_imei": request.ModemIMEI, "mode": request.UsbnetMode,
+			}, nil
+		},
+	},
+	"reregister_network": {
+		Kind: "reregister_network", ContractKind: "ReregisterNetwork", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			return map[string]any{"kind": "ReregisterNetwork", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
+	"refresh_modems": {
+		// No modem: the point is the module that is not in the inventory yet,
+		// so there is no IMEI to name. Not mutating either — it asks the edge
+		// to look, and looking is what the poll loop does anyway.
+		Kind: "refresh_modems", ContractKind: "RefreshModems",
+		Build: func(Request) (map[string]any, error) {
+			return map[string]any{"kind": "RefreshModems"}, nil
 		},
 	},
 	"list_esim_profiles": {

@@ -49,6 +49,34 @@ func TestValidationRejectsWhatTheEdgeCannotRun(t *testing.T) {
 			"code is required",
 		},
 		{
+			"usbnet mode left out",
+			Request{DeviceID: "d", Kind: "set_usbnet_mode", ModemIMEI: benchIMEI},
+			"usbnet_mode must be one of",
+		},
+		{
+			"usbnet mode the module has never heard of",
+			Request{
+				DeviceID: "d", Kind: "set_usbnet_mode",
+				ModemIMEI: benchIMEI, UsbnetMode: "ncm",
+			},
+			"usbnet_mode must be one of",
+		},
+		{
+			// The operator's vocabulary reaching the wrong command. Sharing one
+			// Mode field between these two would have made this request valid.
+			"an operator selection mode sent to usbnet",
+			Request{
+				DeviceID: "d", Kind: "set_usbnet_mode",
+				ModemIMEI: benchIMEI, Mode: "automatic",
+			},
+			"usbnet_mode must be one of",
+		},
+		{
+			"data network with no direction",
+			Request{DeviceID: "d", Kind: "set_data_network", ModemIMEI: benchIMEI},
+			"enabled must be given explicitly",
+		},
+		{
 			"sms to something that is not a number",
 			Request{DeviceID: "d", Kind: "send_sms", ModemIMEI: benchIMEI, To: "not-a-number", Body: "hi"},
 			"must be a phone number",
@@ -101,6 +129,51 @@ func TestSetRadioNeedsAnExplicitValue(t *testing.T) {
 	}
 }
 
+// Every mode the contract offers has to survive validation. A typo in the
+// allowed set would show up as one button that never works, which is the kind
+// of thing that gets found by a customer rather than by a test.
+func TestEveryUsbnetModeTheContractOffersIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"rmnet", "ecm", "mbim", "rndis"} {
+		_, payload, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "set_usbnet_mode", ModemIMEI: benchIMEI, UsbnetMode: mode,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		// The console's field is usbnet_mode; the contract's is mode.
+		if decoded["mode"] != mode {
+			t.Fatalf("%s produced mode %v", mode, decoded["mode"])
+		}
+	}
+}
+
+// A rescan is about the module that has not been seen yet, so requiring the
+// IMEI of one would make the command useless exactly when it is wanted.
+func TestARescanDoesNotNeedAModem(t *testing.T) {
+	t.Parallel()
+
+	spec, payload, err := BuildPayload(Request{DeviceID: "d", Kind: "refresh_modems"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.NeedsModem {
+		t.Fatal("refresh_modems must not require an imei")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, named := decoded["modem_imei"]; named {
+		t.Fatalf("payload names a modem: %v", decoded)
+	}
+}
+
 // The payload the edge receives has to name a contract command kind, not the
 // console's snake_case one.
 func TestPayloadsUseTheContractKind(t *testing.T) {
@@ -116,6 +189,7 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		request.Command = "AT+CSQ"
 		request.Code = "*101#"
 		request.TargetICCID = "89852351225042214201"
+		request.UsbnetMode = "rmnet"
 		request.Version = "0.2.0"
 		request.URL = "https://releases.example.com/vodoge-edge"
 		request.SHA256 = strings.Repeat("a", 64)
@@ -157,9 +231,12 @@ func TestAnOmittedKindIsStillSms(t *testing.T) {
 func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	t.Parallel()
 
-	readOnly := map[string]bool{"modem_report": true, "list_esim_profiles": true}
-	// rotate_ip drops the data session, so it belongs with the disruptive
-	// actions even though it reads as a small thing.
+	// refresh_modems asks the edge to look at /dev, which is what its poll
+	// loop does every eight seconds regardless. Nothing on the device
+	// changes, so confirming it would be noise.
+	readOnly := map[string]bool{
+		"modem_report": true, "list_esim_profiles": true, "refresh_modems": true,
+	}
 	// rotate_ip drops the data session, so it belongs with the disruptive
 	// actions even though it reads as a small thing.
 	for _, kind := range Kinds() {
