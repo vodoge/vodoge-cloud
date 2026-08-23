@@ -340,10 +340,10 @@ function OperatorControls({
 /**
  * Which USB function the module exposes.
  *
- * Deliberately not one of the disruptive buttons above. The change does not
- * take effect until the module restarts, so it does nothing visible now and
- * then removes the modem later — the opposite shape from every other button
- * on this page, and not something a generic "are you sure" describes.
+ * Deliberately not one of the disruptive buttons above. Those take a module
+ * off the air and leave it in the list; this one takes it out of the list
+ * altogether, because the port the fleet is indexed by stops existing. That
+ * is not something a generic "are you sure" describes.
  */
 function UsbnetControls({
   busy,
@@ -355,9 +355,10 @@ function UsbnetControls({
   onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
 }) {
   const [mode, setMode] = useState<string>("rmnet");
-  // rmnet is the QMI mode this agent speaks. Any other choice means the
-  // module stops answering after its next restart, and getting it back needs
-  // someone at the machine.
+  // rmnet is the QMI mode this agent speaks. Any other choice re-enumerates
+  // the module on the spot — not at its next restart — and it drops out of
+  // the device list until this same control puts it back, which the agent
+  // can do because it falls back to finding the module over its AT port.
   const strands = mode !== "rmnet";
   return (
     <form
