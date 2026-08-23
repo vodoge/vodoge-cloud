@@ -21,6 +21,26 @@ func Sections() []string {
 	return []string{SectionNotifications, SectionSMS, SectionSecurity, SectionDevices}
 }
 
+// notificationChannels is every channel the notifications section can hold
+// configuration for.
+//
+// This list is one half of a pair: the gateway must have a sender for each of
+// these names, or the console offers a form that quietly does nothing when
+// saved. That is not hypothetical — telegram and pushplus had slots here, and
+// redaction rules for their credentials, for as long as the section has
+// existed, with no sender behind either. Nothing complained; notifications
+// simply never arrived. notify.Registry() is the other half, and a test in that
+// package compares the two sets.
+var notificationChannels = []string{
+	"webhook", "email", "bark", "telegram", "feishu", "wecom", "pushplus",
+}
+
+// NotificationChannels lists the channel keys the notifications section
+// accepts, in the order the console renders them.
+func NotificationChannels() []string {
+	return append([]string(nil), notificationChannels...)
+}
+
 // Redacted is what a stored secret looks like on the way out, and what the
 // console sends back to mean "leave it alone".
 //
@@ -37,8 +57,16 @@ var secretFields = map[string][]string{
 		"email.password",
 		"bark.token",
 		"telegram.bot_token",
+		"feishu.secret",
 		"pushplus.token",
 	},
+}
+
+// SecretPaths lists a section's stored secrets, as section-relative dotted
+// paths. Exported so the notify package's drift test can check that every
+// redaction rule belongs to a channel that still exists.
+func SecretPaths(section string) []string {
+	return append([]string(nil), secretFields[section]...)
 }
 
 // ErrInvalid explains a rejected settings document to whoever sent it.
@@ -72,7 +100,7 @@ func Validate(section string, document map[string]any) (map[string]any, error) {
 }
 
 func validateNotifications(document map[string]any) (map[string]any, error) {
-	for _, channel := range []string{"webhook", "email", "bark", "telegram", "pushplus"} {
+	for _, channel := range notificationChannels {
 		raw, present := document[channel]
 		if !present {
 			continue
@@ -101,12 +129,8 @@ func validateEnabledChannel(channel string, config map[string]any) error {
 			return ErrInvalid{"webhook is enabled but has no urls"}
 		}
 		for _, raw := range urls {
-			parsed, err := url.Parse(raw)
-			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-				return ErrInvalid{fmt.Sprintf("webhook url %q must be http or https", raw)}
-			}
-			if parsed.Host == "" {
-				return ErrInvalid{fmt.Sprintf("webhook url %q has no host", raw)}
+			if err := checkHTTPURL("webhook", "url", raw); err != nil {
+				return err
 			}
 		}
 	case "email":
@@ -128,9 +152,47 @@ func validateEnabledChannel(channel string, config map[string]any) error {
 		if asString(config["chat_id"]) == "" {
 			return ErrInvalid{"telegram is enabled but has no chat_id"}
 		}
+		// Secrets are merged in before validation runs, so an empty one here
+		// means nothing was ever stored — the tenant enabled a channel that
+		// cannot send. Saying so at the point of saving is the whole reason
+		// this section is validated at all.
+		if asString(config["bot_token"]) == "" {
+			return ErrInvalid{"telegram is enabled but has no bot_token"}
+		}
+	case "feishu":
+		raw := asString(config["webhook_url"])
+		if raw == "" {
+			return ErrInvalid{"feishu is enabled but has no webhook_url"}
+		}
+		if err := checkHTTPURL("feishu", "webhook_url", raw); err != nil {
+			return err
+		}
+	case "wecom":
+		raw := asString(config["webhook_url"])
+		if raw == "" {
+			return ErrInvalid{"wecom is enabled but has no webhook_url"}
+		}
+		if err := checkHTTPURL("wecom", "webhook_url", raw); err != nil {
+			return err
+		}
 	case "pushplus":
-		// The token is a secret, so an unchanged one arrives redacted and is
-		// merged in afterwards; emptiness cannot be judged here.
+		if asString(config["token"]) == "" {
+			return ErrInvalid{"pushplus is enabled but has no token"}
+		}
+	}
+	return nil
+}
+
+// checkHTTPURL rejects an address nothing could be posted to. A channel whose
+// URL has no scheme fails at delivery time with an error that reads like a
+// network fault, hours after the person who typed it has moved on.
+func checkHTTPURL(channel, field, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ErrInvalid{fmt.Sprintf("%s %s %q must be http or https", channel, field, raw)}
+	}
+	if parsed.Host == "" {
+		return ErrInvalid{fmt.Sprintf("%s %s %q has no host", channel, field, raw)}
 	}
 	return nil
 }

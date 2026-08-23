@@ -30,6 +30,27 @@ const NOTIFICATION_FIELDS: Field[] = [
   { path: "telegram.enabled", kind: "boolean" },
   { path: "telegram.chat_id", kind: "text" },
   { path: "telegram.bot_token", kind: "secret" },
+  { path: "feishu.enabled", kind: "boolean" },
+  { path: "feishu.webhook_url", kind: "text" },
+  { path: "feishu.secret", kind: "secret" },
+  { path: "wecom.enabled", kind: "boolean" },
+  { path: "wecom.webhook_url", kind: "text" },
+  { path: "pushplus.enabled", kind: "boolean" },
+  { path: "pushplus.token", kind: "secret" },
+  { path: "pushplus.topic", kind: "text" },
+];
+
+/**
+ * The channels above, derived rather than listed a second time.
+ *
+ * Every one of them can be tested, because the gateway has a sender for every
+ * one of them — `settings.NotificationChannels()` and `notify.Registry()` are
+ * held equal by a test on that side. Writing the testable set out by hand is
+ * how the last drift started: telegram had fields here and no sender there, so
+ * configuring it did nothing at all and said nothing about it.
+ */
+const NOTIFICATION_CHANNELS = [
+  ...new Set(NOTIFICATION_FIELDS.map((field) => field.path.split(".")[0]!)),
 ];
 
 const SMS_FIELDS: Field[] = [{ path: "hourly_limit", kind: "number" }];
@@ -75,7 +96,7 @@ export default async function SettingsPage() {
             // Only the channels the gateway can actually deliver through.
             // Offering a test for one it cannot send is a button that can
             // only fail.
-            testable={["webhook", "bark", "email"]}
+            testable={NOTIFICATION_CHANNELS}
           />
         </Card>
 

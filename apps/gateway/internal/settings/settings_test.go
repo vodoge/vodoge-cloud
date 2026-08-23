@@ -93,6 +93,19 @@ func TestValidationRejectsChannelsThatCannotDeliver(t *testing.T) {
 		{"email on an impossible port", SectionNotifications,
 			`{"email":{"enabled":true,"smtp_host":"h","to_addresses":["a@b.c"],"smtp_port":70000}}`,
 			"between 1 and 65535"},
+		{"telegram with a chat but no bot", SectionNotifications,
+			`{"telegram":{"enabled":true,"chat_id":"-100777"}}`, "no bot_token"},
+		{"telegram with a bot but no chat", SectionNotifications,
+			`{"telegram":{"enabled":true,"bot_token":"1234:AAE"}}`, "no chat_id"},
+		{"feishu with no webhook", SectionNotifications,
+			`{"feishu":{"enabled":true}}`, "no webhook_url"},
+		{"feishu pointing nowhere", SectionNotifications,
+			`{"feishu":{"enabled":true,"webhook_url":"open.feishu.cn/hook/x"}}`,
+			"must be http or https"},
+		{"wecom with no webhook", SectionNotifications,
+			`{"wecom":{"enabled":true}}`, "no webhook_url"},
+		{"pushplus with no token", SectionNotifications,
+			`{"pushplus":{"enabled":true}}`, "no token"},
 		{"negative rate limit", SectionSMS, `{"hourly_limit":-1}`, "zero or more"},
 		{"a session that never expires", SectionSecurity,
 			`{"session_ttl_hours":0}`, "between 1 and 720"},
@@ -122,6 +135,61 @@ func TestADisabledChannelIsNotChecked(t *testing.T) {
 	if _, err := Validate(SectionNotifications,
 		decode(t, `{"webhook":{"enabled":false,"urls":[]}}`)); err != nil {
 		t.Fatalf("a disabled channel should save as a draft: %v", err)
+	}
+}
+
+// Requiring a credential is only safe because the caller merges the stored one
+// in first: the console never holds a secret, so it posts the placeholder back,
+// and by the time validation runs the real value is there again. If that order
+// were ever reversed, saving an unchanged telegram configuration would start
+// failing with "has no bot_token" — a rejection with no field to fix.
+func TestASavedCredentialSurvivesAResaveThroughTheMergeThenValidateOrder(t *testing.T) {
+	t.Parallel()
+
+	stored := decode(t, `{"telegram":{"enabled":true,"chat_id":"-100777","bot_token":"1234:AAE"}}`)
+	// What the console sends back after showing the redacted form.
+	incoming := decode(t, `{"telegram":{"enabled":true,"chat_id":"-100777","bot_token":"`+
+		Redacted+`"}}`)
+
+	merged := Merge(SectionNotifications, incoming, stored)
+	saved, err := Validate(SectionNotifications, merged)
+	if err != nil {
+		t.Fatalf("resaving an unchanged channel was rejected: %v", err)
+	}
+	if got := saved["telegram"].(map[string]any)["bot_token"]; got != "1234:AAE" {
+		t.Fatalf("bot_token = %v, want the stored one", got)
+	}
+
+	// Validating the console's document on its own must fail, which is the
+	// same check seen from the other side: the placeholder is not a token.
+	if _, err := Validate(SectionNotifications,
+		decode(t, `{"telegram":{"enabled":true,"chat_id":"1"}}`)); err == nil {
+		t.Fatal("a channel with no credential at all should be refused")
+	}
+}
+
+// Every channel the console can configure is one the gateway can deliver
+// through, and every stored secret belongs to one of them. The equality with
+// notify.Registry() is asserted in that package, where both sides are visible;
+// this end holds the list itself steady.
+func TestTheNotificationChannelListCoversItsSecrets(t *testing.T) {
+	t.Parallel()
+
+	known := map[string]bool{}
+	for _, channel := range NotificationChannels() {
+		known[channel] = true
+	}
+	for _, path := range SecretPaths(SectionNotifications) {
+		channel := strings.SplitN(path, ".", 2)[0]
+		if !known[channel] {
+			t.Fatalf("secret %q belongs to %q, which is not a configurable channel",
+				path, channel)
+		}
+	}
+	// A caller must not be able to shorten the list for everyone else.
+	NotificationChannels()[0] = "mutated"
+	if NotificationChannels()[0] == "mutated" {
+		t.Fatal("NotificationChannels returned the package's own slice")
 	}
 }
 

@@ -5,15 +5,20 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // httpClient is shared by every HTTP-shaped channel.
@@ -199,7 +204,323 @@ func (channel Email) Send(ctx context.Context, config map[string]any, event Even
 	}
 }
 
+// ── Shared plumbing for the JSON-over-HTTP channels ──────────────────────
+
+// maxResponseBody caps what a channel reads back.
+//
+// These services answer with a short status object. Anything larger is a
+// captive portal, a proxy error page or something hostile, and none of them
+// are worth pulling into memory whole.
+const maxResponseBody = 8 << 10
+
+// postJSON sends one document and returns the answer.
+//
+// Every channel below has to read its response body rather than trust the
+// status code, so unlike the webhook sender this one keeps the body.
+func postJSON(
+	ctx context.Context,
+	endpoint string,
+	payload any,
+) (body []byte, status int, err error) {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, 0, err
+	}
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	request.Header.Set("User-Agent", "vodoge-cloud")
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err = io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
+	if err != nil {
+		return nil, response.StatusCode, err
+	}
+	return body, response.StatusCode, nil
+}
+
+// endpointBase lets a test — or a tenant behind a relay — point a channel at
+// something other than the vendor's own host. Absent, the real service is used.
+func endpointBase(config map[string]any, key, fallback string) string {
+	if custom := asString(config, key); custom != "" {
+		return strings.TrimRight(custom, "/")
+	}
+	return fallback
+}
+
+// hide keeps a credential out of an error string.
+//
+// Telegram carries the bot token in the URL path, so net/http quotes it back in
+// its own errors: Post "https://api.telegram.org/bot123:AA.../sendMessage":
+// dial tcp ... Those errors are logged by the dispatcher and shown by the test
+// button, so without this the token ends up in the log of every failed send and
+// in any screenshot of the settings page.
+func hide(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error()
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, secret, "[redacted]")
+	}
+	return errors.New(text)
+}
+
+// clip shortens a message to a service's own limit.
+//
+// Some of these reject an oversized message outright, which would turn a long
+// notification into no notification. The cut lands on a rune boundary because
+// half a UTF-8 sequence is not a character, and anything strict would reject
+// the truncated text as invalid.
+func clip(text string, limitBytes int) string {
+	if len(text) <= limitBytes {
+		return text
+	}
+	const ellipsis = "…"
+	cut := max(limitBytes-len(ellipsis), 0)
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + ellipsis
+}
+
+// because renders a service's own explanation, when it gave one.
+func because(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	return ": " + reason
+}
+
+// ── Telegram ─────────────────────────────────────────────────────────────
+
+// Telegram sends through a bot to one chat.
+//
+// The settings page has offered bot_token and chat_id since the section was
+// written and nothing ever read either one. A tenant could fill both in, save
+// without complaint, see no error anywhere, and never receive a notification —
+// which is worse than the fields not existing at all.
+type Telegram struct{}
+
+func (Telegram) Name() string { return "telegram" }
+
+func (Telegram) Configured(config map[string]any) bool {
+	return asBool(config, "enabled") &&
+		asString(config, "bot_token") != "" &&
+		asString(config, "chat_id") != ""
+}
+
+// telegramLimit is Telegram's own ceiling on a text message.
+const telegramLimit = 4096
+
+func (channel Telegram) Send(ctx context.Context, config map[string]any, event Event) error {
+	if !channel.Configured(config) {
+		return ErrNotConfigured
+	}
+	token := asString(config, "bot_token")
+	endpoint := endpointBase(config, "api_base", "https://api.telegram.org") +
+		"/bot" + token + "/sendMessage"
+
+	body, status, err := postJSON(ctx, endpoint, map[string]any{
+		"chat_id": asString(config, "chat_id"),
+		"text":    clip(Text(event), telegramLimit),
+		// A link in a notification is for the reader to follow. Letting
+		// Telegram's servers fetch it first would have a third party visiting
+		// the tenant's console URLs on every message.
+		"link_preview_options": map[string]any{"is_disabled": true},
+	})
+	if err != nil {
+		return fmt.Errorf("telegram: %w", hide(err, token))
+	}
+	// Telegram is honest with status codes, but the body says why — "chat not
+	// found", "bot was blocked by the user" — and those need different fixes.
+	var answer struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal(body, &answer)
+	if status >= 300 || !answer.OK {
+		return fmt.Errorf("telegram: HTTP %d%s", status, because(answer.Description))
+	}
+	return nil
+}
+
+// ── 飞书 / Lark ──────────────────────────────────────────────────────────
+
+// Feishu posts to a group chat's custom bot webhook.
+type Feishu struct{}
+
+func (Feishu) Name() string { return "feishu" }
+
+func (Feishu) Configured(config map[string]any) bool {
+	return asBool(config, "enabled") && asString(config, "webhook_url") != ""
+}
+
+func (channel Feishu) Send(ctx context.Context, config map[string]any, event Event) error {
+	if !channel.Configured(config) {
+		return ErrNotConfigured
+	}
+	payload := map[string]any{
+		"msg_type": "text",
+		"content":  map[string]any{"text": Text(event)},
+	}
+	// Signing is optional on Feishu's side and worth turning on: without it the
+	// webhook URL is the only thing between the group and anyone who has ever
+	// seen it. The scheme is Feishu's own — an HMAC over an empty message, keyed
+	// by "<timestamp>\n<secret>" — and the timestamp has to be close to now, so
+	// it comes from the clock rather than from the event, which may have spent
+	// minutes in the retry window.
+	if secret := asString(config, "secret"); secret != "" {
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		mac := hmac.New(sha256.New, []byte(timestamp+"\n"+secret))
+		payload["timestamp"] = timestamp
+		payload["sign"] = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	}
+
+	body, status, err := postJSON(ctx, asString(config, "webhook_url"), payload)
+	if err != nil {
+		return fmt.Errorf("feishu: %w", err)
+	}
+	if status >= 300 {
+		return fmt.Errorf("feishu: HTTP %d", status)
+	}
+	// Feishu answers 200 to a message it refused and puts the refusal in the
+	// body: a stale signature, a bot removed from the group, a webhook that was
+	// reset. Trusting the status code would report every one of those as
+	// delivered — the same shape of lie as a settings slot with no sender.
+	var answer struct {
+		Code          int    `json:"code"`
+		Msg           string `json:"msg"`
+		StatusCode    int    `json:"StatusCode"`
+		StatusMessage string `json:"StatusMessage"`
+	}
+	_ = json.Unmarshal(body, &answer)
+	if answer.Code != 0 {
+		return fmt.Errorf("feishu: code %d%s", answer.Code, because(answer.Msg))
+	}
+	if answer.StatusCode != 0 {
+		return fmt.Errorf("feishu: code %d%s", answer.StatusCode, because(answer.StatusMessage))
+	}
+	return nil
+}
+
+// ── 企业微信 / WeCom ─────────────────────────────────────────────────────
+
+// WeCom posts to a group robot's webhook.
+type WeCom struct{}
+
+func (WeCom) Name() string { return "wecom" }
+
+func (WeCom) Configured(config map[string]any) bool {
+	return asBool(config, "enabled") && asString(config, "webhook_url") != ""
+}
+
+// wecomLimit is the documented ceiling on a text message, in bytes rather than
+// characters — so a Chinese notification runs out of room three times sooner
+// than an English one.
+const wecomLimit = 2048
+
+func (channel WeCom) Send(ctx context.Context, config map[string]any, event Event) error {
+	if !channel.Configured(config) {
+		return ErrNotConfigured
+	}
+	body, status, err := postJSON(ctx, asString(config, "webhook_url"), map[string]any{
+		"msgtype": "text",
+		"text":    map[string]any{"content": clip(Text(event), wecomLimit)},
+	})
+	if err != nil {
+		return fmt.Errorf("wecom: %w", err)
+	}
+	if status >= 300 {
+		return fmt.Errorf("wecom: HTTP %d", status)
+	}
+	// Same trap as Feishu: 200 with a non-zero errcode is a rejection.
+	var answer struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	_ = json.Unmarshal(body, &answer)
+	if answer.ErrCode != 0 {
+		return fmt.Errorf("wecom: errcode %d%s", answer.ErrCode, because(answer.ErrMsg))
+	}
+	return nil
+}
+
+// ── Pushplus ─────────────────────────────────────────────────────────────
+
+// Pushplus relays to WeChat through pushplus.plus.
+//
+// Like Telegram, its token has had a settings slot and a redaction rule since
+// the section was written, and no sender behind it.
+type Pushplus struct{}
+
+func (Pushplus) Name() string { return "pushplus" }
+
+func (Pushplus) Configured(config map[string]any) bool {
+	return asBool(config, "enabled") && asString(config, "token") != ""
+}
+
+func (channel Pushplus) Send(ctx context.Context, config map[string]any, event Event) error {
+	if !channel.Configured(config) {
+		return ErrNotConfigured
+	}
+	token := asString(config, "token")
+	payload := map[string]any{
+		"token": token,
+		"title": event.Title,
+		// "txt" rather than the default HTML template: the body is plain text
+		// that may contain an ampersand or a number in angle brackets, and
+		// rendering it as markup would silently eat either.
+		"template": "txt",
+		"content":  Text(event),
+	}
+	// A topic fans the message out to a group of subscribers. Omitted rather
+	// than sent empty, because an empty topic is not the same request.
+	if topic := asString(config, "topic"); topic != "" {
+		payload["topic"] = topic
+	}
+
+	body, status, err := postJSON(ctx,
+		endpointBase(config, "api_base", "https://www.pushplus.plus")+"/send", payload)
+	if err != nil {
+		return fmt.Errorf("pushplus: %w", hide(err, token))
+	}
+	if status >= 300 {
+		return fmt.Errorf("pushplus: HTTP %d", status)
+	}
+	// 200 in the envelope, the real answer in the body — and here the success
+	// value is 200 as well, so an unparseable body reads as failure rather than
+	// as success.
+	var answer struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(body, &answer)
+	if answer.Code != 200 {
+		return fmt.Errorf("pushplus: code %d%s", answer.Code, because(answer.Msg))
+	}
+	return nil
+}
+
 // Registry is every channel this build knows how to deliver through.
+//
+// settings.NotificationChannels() must name exactly these. The two lists are
+// held together by TestEveryConfigurableChannelHasASender, because the drift
+// between them is invisible from either side alone: the console will happily
+// configure a channel nothing delivers.
 func Registry() []Channel {
-	return []Channel{Webhook{}, Bark{}, Email{}}
+	return []Channel{
+		Webhook{}, Bark{}, Email{},
+		Telegram{}, Feishu{}, WeCom{}, Pushplus{},
+	}
 }
