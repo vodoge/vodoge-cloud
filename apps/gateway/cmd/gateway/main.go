@@ -89,7 +89,8 @@ func main() {
 		// Constructed here rather than later: everything wired below captures
 		// it by value, so a dispatcher created after them would leave each one
 		// holding nil and every notification silently unsent.
-		proc.notify = notify.New(proc.config, notify.Registry(), notify.Options{})
+		proc.notify = notify.New(proc.config, notify.Registry(),
+			notify.Options{Metrics: proc.metrics})
 		defer proc.notify.Close()
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.cards = cards.SQL{DB: sqlStore.DB}
@@ -1391,6 +1392,7 @@ func (process *process) recordResume(tenantID, deviceID string, report wss.Devic
 func newRegistry() *observe.Registry {
 	registry := observe.New()
 	observe.Declare(registry)
+	observe.DeclareNotifications(registry)
 	return registry
 }
 

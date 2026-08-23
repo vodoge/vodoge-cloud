@@ -145,7 +145,7 @@
 | 设备掉线通知 | 有 | 有 | **有** | 按**缺席时长**判定而非会话结束即报，否则每次部署都告警。演练实测 179 秒送达 |
 | 契约违规通知 | 有 | 无 | **有** | 同一 (租户, kind, 违规字段) 一小时内只报一次——一个坏 enum 会让每条报文都违规 |
 | 备份失败通知 | 无 | 无 | **有** | `backup.sh` 的 trap 上报到 `/v1/ops/backup-failed`；备份不属于任何租户，收件人由 `VODOGE_OPS_TENANT` 指定 |
-| 通知投递重试 | 有 | 有 | **无** | 现在是尽力而为，队列满就丢（故意的：反压会拖垮 ingest） |
+| 通知投递重试 | 有 | 有 | **有** | 每渠道指数退避，重试窗口约 6 分钟（1s 起翻倍、封顶 45s）——此前是 3 次 × 2s，只扛得住约 4 秒中断。投递按 (租户, 渠道) 分道并行，一个卡住的渠道不再独占唯一的投递 goroutine 把别人的事件挤出队列。队列满仍然丢弃且是**故意的**（反压会拖垮 ingest），但丢了多少、重试了多少次现在可查：`/metrics` 的 `vodoge_notifications_dropped_total`、`vodoge_notification_retries_total`、`vodoge_notifications_total` |
 | Telegram / 飞书 / 企微 / Pushplus | 半 | 有 | **无** | `settings.go` 里已有 `telegram.bot_token`、`pushplus.token` 配置槽位，但 `channels.go` 里没有实现 —— **配了也不会发** |
 | Telegram 机器人远程控制 | 无 | 有 | **无** | 状态、切卡、发短信、通话，敏感操作二次确认 |
 | 定时自动任务 | 无 | 有 | **无** | 定时发短信 / 拨号 / 查公网 IP，保号场景的核心 |
