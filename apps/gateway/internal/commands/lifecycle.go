@@ -101,40 +101,82 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 	return pending
 }
 
-// ExpireTenantCommands retires every overdue command in one tenant.
+// SweepResult is what one tenant's housekeeping pass reclaimed.
 //
-// The per-device form above runs on resume, which 0033 picked because resume
-// was the only tenant-scoped path that ran on its own -- app.tenants is under
-// FORCE row-level security keyed to the current tenant, so nothing can
+// A struct rather than a count because the pass now does two unrelated jobs
+// that happen to need the same scarce thing -- a tenant id -- and collapsing
+// them into one number would make "nothing expired" and "nothing was pruned"
+// indistinguishable in the tick report.
+type SweepResult struct {
+	// ExpiredCommands is how many commands outlived expires_at (L3).
+	ExpiredCommands int
+	// PrunedIngress is how many app.ingress rows fell outside the retention
+	// window (1.8).
+	PrunedIngress int
+}
+
+// ExpireTenantCommands runs one tenant's periodic housekeeping: it retires
+// overdue commands (L3) and enforces the app.ingress retention window (1.8).
+//
+// The name is narrower than the job. It is the identifier cmd/gateway/main.go
+// binds to the scheduler's Sweep hook, and that file is outside this change;
+// renaming it is a one-line follow-up for whoever next touches main.go.
+//
+// # Why both jobs live here
+//
+// The per-device command sweep above runs on resume, which 0033 picked because
+// resume was the only tenant-scoped path that ran on its own -- app.tenants is
+// under FORCE row-level security keyed to the current tenant, so nothing can
 // enumerate tenants to sweep them globally. Its stated cost was that a device
 // which never reconnects keeps its stale rows until it does, and that is
 // exactly the device whose rows go stale.
 //
-// The scheduler tick is the second such path (L3). It holds a tenant id taken
-// from a live mTLS session, and unlike resume it does not have to be the
-// device being swept that supplied it -- so this form drops the device filter
-// and reaches the ones that never come back.
+// The scheduler tick is the second such path. It holds a tenant id taken from
+// a live mTLS session, and unlike resume it does not have to be the device
+// being swept that supplied it -- so this form drops the device filter and
+// reaches the ones that never come back. Ingress retention needs precisely the
+// same thing and has no other way to get it, so it rides the same tick rather
+// than growing a second timer that would need a second answer to tenant
+// enumeration.
 //
 // Deliberately not merged with PendingForDevice's call: resume must keep
 // sweeping on its own, because a tenant whose only device is mid-reconnect has
 // no live session for the scheduler to ride on at that moment.
+//
+// # Two transactions, not one
+//
+// A retention failure must not roll back command expiry, and vice versa: they
+// share a trigger and nothing else, and one temporary fault in either should
+// not stall the other indefinitely. The result carries whatever completed
+// before the error so the caller can report it.
+//
+// The retention window itself is not passed from here. It is the default on
+// app.prune_ingress, which keeps the policy in one place next to the deletion
+// it authorises instead of in a Go constant that a psql session would not see.
 func (store SQLPending) ExpireTenantCommands(
 	ctx context.Context, tenantID string, now time.Time,
-) (int, error) {
+) (SweepResult, error) {
+	var result SweepResult
 	if store.DB == nil {
-		return 0, nil
+		return result, nil
 	}
-	var expired int
-	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+	if err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
 			`SELECT app.expire_overdue_tenant_commands($1::uuid, $2)`,
 			tenantID, now,
-		).Scan(&expired)
-	})
-	if err != nil {
-		return 0, err
+		).Scan(&result.ExpiredCommands)
+	}); err != nil {
+		return result, err
 	}
-	return expired, nil
+	if err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT app.prune_ingress($1::uuid, $2)`,
+			tenantID, now,
+		).Scan(&result.PrunedIngress)
+	}); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // SQLLifecycle records receipts and terminal results.

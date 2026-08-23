@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 39） | 66 条路由（去重后 64 条模式，其中 33 条是写） |
+| 我们的云端 | `apps/gateway`（schema 40） | 66 条路由（去重后 64 条模式，其中 33 条是写） |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
@@ -169,7 +169,7 @@
 | --- | --- | --- | --- | --- |
 | 实时日志流 | 有 | 有 | **有** | — |
 | 历史日志 / 原始报文 | 有 | 有 | **有** | 云端可展开设备原始 envelope |
-| 日志保留策略 | 无 | 有 | **无** | `app.ingress` 稳态约 2 万行/天 ≈ 11 MB/天 |
+| 日志保留策略 | 无 | 有 | **有** | `app.prune_ingress` 删除超过 **30 天**的 `DeviceState` 行（实测 2.6 万行/天、715 B/行，占 `app.ingress` 的 99.6%，且每个字段的当前值都在 `app.devices`/`app.modems` 里）。**SmsReceived / SmsStatusReport / CommandResult / Alert / Unstorable 一行都不删** —— 约 90 行/天，正是排障真正回头看的那些。挂在 2.1 调度器的每租户 tick 上（`app.tenants` 枚举不了，没有全局清扫这条路）。**要点**：`app.ingress_window` 的 committed_through 是从表里数出来的连续前缀，裸删一行就会让它塌成 0、设备重放整个 outbox；所以 0040 同时引入 `app.ingress_pruned` 高水位并让窗口函数从它起算，且水位只在证明该区间连续之后才前移 |
 | 审计日志 | 有 | 有 | **有** | — |
 | 登录限流 | 无 | 有 | **有** | — |
 | 访问策略 / 多角色 | 有 | 有 | **有** | `app.users.role` = admin / readonly；只读会话被网关在整张路由表外侧一处拒绝，30 条写路由逐条验过，只有本人的登出与改密除外 |

@@ -37,6 +37,14 @@ type execRecorder struct {
 	// rows answers RowsAffected per statement, which is how the settle path
 	// learns that the command row was already terminal.
 	rows func(query string) int64
+	// counts answers the single integer a counting SELECT returns, per
+	// statement. The housekeeping pass calls two counting functions, and a
+	// shared constant would let a test pass while reading the wrong one.
+	counts func(query string) int64
+	// fail turns one statement into a database error, which is how a pass that
+	// spans two transactions can be caught keeping or losing the first one's
+	// result.
+	fail func(query string) error
 }
 
 func (r *execRecorder) record(query string, args []driver.NamedValue) int64 {
@@ -65,6 +73,26 @@ func (r *execRecorder) find(t *testing.T, needle string) recordedExec {
 		t.Fatalf("statements mentioning %q = %d, want 1; executed:\n%s", needle, len(found), r.dumpLocked())
 	}
 	return found[0]
+}
+
+// countFor is the value a counting SELECT reports back.
+func (r *execRecorder) countFor(query string) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.counts == nil {
+		return 4
+	}
+	return r.counts(query)
+}
+
+// errorFor is the database error a statement raises, if any.
+func (r *execRecorder) errorFor(query string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fail == nil {
+		return nil
+	}
+	return r.fail(query)
 }
 
 func (r *execRecorder) count(needle string) int {
@@ -267,7 +295,10 @@ func (c recordingConn) QueryContext(
 	_ context.Context, query string, args []driver.NamedValue,
 ) (driver.Rows, error) {
 	c.rec.record(query, args)
-	return &singleIntRows{value: 4}, nil
+	if err := c.rec.errorFor(query); err != nil {
+		return nil, err
+	}
+	return &singleIntRows{value: c.rec.countFor(query)}, nil
 }
 
 type singleIntRows struct {
@@ -292,13 +323,14 @@ func TestTheTenantSweepIsNotScopedToOneDevice(t *testing.T) {
 	t.Parallel()
 
 	db, rec := newRecordingDB(t, nil)
-	expired, err := (SQLPending{DB: db}).ExpireTenantCommands(
+	swept, err := (SQLPending{DB: db}).ExpireTenantCommands(
 		context.Background(), "t-a", time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if expired != 4 {
-		t.Fatalf("expired = %d, want the count the function returned (4)", expired)
+	if swept.ExpiredCommands != 4 {
+		t.Fatalf("expired = %d, want the count the function returned (4)",
+			swept.ExpiredCommands)
 	}
 
 	sweep := rec.find(t, "expire_overdue_tenant_commands")
@@ -336,5 +368,105 @@ func TestTheTenantSweepBindsTheTenantFirst(t *testing.T) {
 	}
 	if !strings.Contains(rec.execs[0].query, "true") {
 		t.Fatal("the tenant bind is not SET LOCAL; a pooled connection would keep it")
+	}
+}
+
+// 1.8: the same tenant-scoped pass enforces the ingress retention window.
+//
+// There is no other place to put it. app.tenants is under FORCE row-level
+// security keyed to app.current_tenant_id(), so a global cleanup job cannot
+// find out which tenants exist; the scheduler tick holds a tenant id taken
+// from a live mTLS session, and this pass is what it calls.
+func TestTheTenantSweepAlsoEnforcesTheIngressRetentionWindow(t *testing.T) {
+	t.Parallel()
+
+	db, rec := newRecordingDB(t, nil)
+	rec.counts = func(query string) int64 {
+		if strings.Contains(query, "prune_ingress") {
+			return 7
+		}
+		return 4
+	}
+
+	swept, err := (SQLPending{DB: db}).ExpireTenantCommands(
+		context.Background(), "t-a", time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if swept.PrunedIngress != 7 {
+		t.Fatalf("pruned = %d, want the count app.prune_ingress returned (7). "+
+			"Without this call app.ingress grows forever: it is append-only and "+
+			"nothing else in the gateway may delete from it",
+			swept.PrunedIngress)
+	}
+	if swept.ExpiredCommands != 4 {
+		t.Fatalf("expired = %d, want 4; the two counts must not be conflated",
+			swept.ExpiredCommands)
+	}
+
+	prune := rec.find(t, "prune_ingress")
+	// Two arguments. The retention window is the default on the function, so
+	// psql and the gateway cannot disagree about how long a record is kept --
+	// passing it from here would create a second copy of the policy that only
+	// one of the two callers would ever read.
+	if len(prune.args) != 2 {
+		t.Fatalf("prune called with %d arguments, want 2 (tenant, now): %+v",
+			len(prune.args), prune.args)
+	}
+	if got := prune.args[0].Value; got != "t-a" {
+		t.Errorf("prune tenant argument = %v, want t-a", got)
+	}
+}
+
+// The two jobs commit separately, so one failing cannot undo the other.
+//
+// They share a trigger and nothing else. Retiring commands inside the same
+// transaction as a bulk delete would mean a retention fault -- a lock timeout
+// on a large first catch-up is the obvious one -- silently rolling back the
+// command ledger fix that had already succeeded, every tick, forever.
+func TestHousekeepingCommitsCommandExpiryAndRetentionSeparately(t *testing.T) {
+	t.Parallel()
+
+	db, rec := newRecordingDB(t, nil)
+	if _, err := (SQLPending{DB: db}).ExpireTenantCommands(
+		context.Background(), "t-a", time.Now()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := rec.count("set_config('app.tenant_id'"); got != 2 {
+		t.Fatalf("tenant binds = %d, want 2 -- one per transaction. A single "+
+			"bind means both jobs share a transaction and roll back together",
+			got)
+	}
+}
+
+// Whatever the pass managed before an error is still reported.
+//
+// The caller adds these counts to the tick report before it looks at the
+// error, so returning a zeroed result on failure would make the report
+// understate what the database really holds.
+func TestAFailedHousekeepingPassStillReportsTheWorkThatCommitted(t *testing.T) {
+	t.Parallel()
+
+	db, rec := newRecordingDB(t, nil)
+	rec.fail = func(query string) error {
+		if strings.Contains(query, "prune_ingress") {
+			return errors.New("canceling statement due to lock timeout")
+		}
+		return nil
+	}
+
+	swept, err := (SQLPending{DB: db}).ExpireTenantCommands(
+		context.Background(), "t-a", time.Now())
+	if err == nil {
+		t.Fatal("a failed prune must be reported, not swallowed")
+	}
+	if swept.ExpiredCommands != 4 {
+		t.Fatalf("expired = %d, want 4. The command sweep committed in its own "+
+			"transaction before the prune failed; dropping its count makes the "+
+			"tick report disagree with the database", swept.ExpiredCommands)
+	}
+	if swept.PrunedIngress != 0 {
+		t.Fatalf("pruned = %d, want 0 when the prune never returned a count",
+			swept.PrunedIngress)
 	}
 }

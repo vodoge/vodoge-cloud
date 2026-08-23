@@ -371,8 +371,14 @@ func buildRequest(task Task, target Target) ([]byte, error) {
 	return payload, nil
 }
 
-// Sweeper retires a tenant's overdue commands. Optional.
-type Sweeper func(ctx context.Context, tenantID string, now time.Time) (int, error)
+// Sweeper does one tenant's periodic housekeeping. Optional.
+//
+// It returns what it reclaimed even alongside an error, because the jobs
+// behind it run in separate transactions and a later failure does not undo an
+// earlier success.
+type Sweeper func(
+	ctx context.Context, tenantID string, now time.Time,
+) (commands.SweepResult, error)
 
 // Runner drives one tick of the scheduler.
 type Runner struct {
@@ -385,9 +391,12 @@ type Runner struct {
 	// Owner names this process in a lease so a stalled worker's tasks become
 	// claimable again without anything having to notice it stalled.
 	Owner string
-	// Sweep is L3: overdue command recovery, run once per tenant per tick.
-	// Kept here rather than on its own timer because this is the only place
-	// that holds a tenant id without a device having just reconnected.
+	// Sweep is the tenant-scoped housekeeping pass: overdue command recovery
+	// (L3) and the app.ingress retention window (1.8), run once per tenant per
+	// tick. Kept here rather than on its own timer because this is the only
+	// place that holds a tenant id without a device having just reconnected --
+	// app.tenants cannot be enumerated, so a global cleanup job has nowhere to
+	// stand.
 	Sweep Sweeper
 	// OnCommandIssued lets a caller mirror a scheduled command elsewhere -- a
 	// scheduled SMS belongs in the conversation the same as a clicked one.
@@ -410,6 +419,7 @@ type Report struct {
 	Skipped  int
 	Failed   int
 	Expired  int
+	Pruned   int
 	Conflict int
 }
 
@@ -442,7 +452,8 @@ func (runner *Runner) lease() time.Duration {
 }
 
 // Tick runs every due task for every tenant that currently has a device
-// connected, and sweeps those tenants' overdue commands.
+// connected, and runs those tenants' housekeeping: overdue command recovery
+// and the ingress retention window.
 func (runner *Runner) Tick(ctx context.Context) Report {
 	var report Report
 	if runner == nil || runner.Store == nil || runner.Live == nil {
@@ -456,15 +467,29 @@ func (runner *Runner) Tick(ctx context.Context) Report {
 		}
 		now := runner.now()
 		if runner.Sweep != nil {
-			expired, err := runner.Sweep(ctx, tenantID, now)
-			switch {
-			case err != nil:
-				runner.logger().Warn("overdue commands could not be swept",
-					"tenant_id", tenantID, "error", err)
-			case expired > 0:
-				report.Expired += expired
+			// Counted before the error is examined. The sweep's jobs commit
+			// separately, so a failure in the second one leaves the first one's
+			// work done, and a report that dropped it would understate what the
+			// database actually holds.
+			swept, err := runner.Sweep(ctx, tenantID, now)
+			report.Expired += swept.ExpiredCommands
+			report.Pruned += swept.PrunedIngress
+			if err != nil {
+				runner.logger().Warn("tenant housekeeping did not finish",
+					"tenant_id", tenantID,
+					"expired", swept.ExpiredCommands,
+					"pruned", swept.PrunedIngress,
+					"error", err)
+			}
+			if swept.ExpiredCommands > 0 {
 				runner.logger().Info("retired commands that outlived their expiry",
-					"tenant_id", tenantID, "count", expired, "trigger", "schedule_tick")
+					"tenant_id", tenantID, "count", swept.ExpiredCommands,
+					"trigger", "schedule_tick")
+			}
+			if swept.PrunedIngress > 0 {
+				runner.logger().Info("pruned ingress records past the retention window",
+					"tenant_id", tenantID, "count", swept.PrunedIngress,
+					"trigger", "schedule_tick")
 			}
 		}
 		claims, err := runner.Store.ClaimDue(

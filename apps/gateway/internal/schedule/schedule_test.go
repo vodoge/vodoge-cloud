@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 )
 
 func quiet() *slog.Logger {
@@ -383,9 +385,9 @@ func TestTheTickSweepsOverdueCommandsForEveryLiveTenant(t *testing.T) {
 		Live: func() map[string][]string {
 			return map[string][]string{"t1": {"d1"}, "t2": {"d2"}}
 		},
-		Sweep: func(_ context.Context, tenantID string, _ time.Time) (int, error) {
+		Sweep: func(_ context.Context, tenantID string, _ time.Time) (commands.SweepResult, error) {
 			swept[tenantID]++
-			return 3, nil
+			return commands.SweepResult{ExpiredCommands: 3}, nil
 		},
 	}
 	report := runner.Tick(context.Background())
@@ -394,6 +396,58 @@ func TestTheTickSweepsOverdueCommandsForEveryLiveTenant(t *testing.T) {
 	}
 	if report.Expired != 6 {
 		t.Fatalf("report says %d expired, want 6", report.Expired)
+	}
+}
+
+// 1.8: ingress retention rides the same pass, and is counted separately.
+//
+// Separately because the two jobs fail for unrelated reasons. A single number
+// would make "no commands were overdue" and "retention deleted nothing"
+// indistinguishable, and retention deleting nothing for weeks is exactly how
+// this would rot unnoticed -- there is no operator watching a table shrink.
+func TestTheTickReportsPrunedIngressApartFromExpiredCommands(t *testing.T) {
+	runner := &Runner{
+		Store:  bench(),
+		Owner:  "test",
+		Logger: quiet(),
+		Live: func() map[string][]string {
+			return map[string][]string{"t1": {"d1"}, "t2": {"d2"}}
+		},
+		Sweep: func(_ context.Context, _ string, _ time.Time) (commands.SweepResult, error) {
+			return commands.SweepResult{ExpiredCommands: 1, PrunedIngress: 250}, nil
+		},
+	}
+
+	report := runner.Tick(context.Background())
+	if report.Pruned != 500 {
+		t.Fatalf("report says %d ingress rows pruned, want 500 (250 per live "+
+			"tenant). The scheduler tick is the only path that holds a tenant "+
+			"id, so an uncounted prune here is an unobservable one",
+			report.Pruned)
+	}
+	if report.Expired != 2 {
+		t.Fatalf("report says %d expired, want 2; the counts are conflated",
+			report.Expired)
+	}
+}
+
+// A housekeeping error does not discard what the pass already committed.
+func TestAFailedSweepStillContributesWhatItReclaimed(t *testing.T) {
+	runner := &Runner{
+		Store:  bench(),
+		Owner:  "test",
+		Logger: quiet(),
+		Live:   func() map[string][]string { return map[string][]string{"t1": {"d1"}} },
+		Sweep: func(_ context.Context, _ string, _ time.Time) (commands.SweepResult, error) {
+			return commands.SweepResult{ExpiredCommands: 5},
+				errors.New("canceling statement due to lock timeout")
+		},
+	}
+
+	report := runner.Tick(context.Background())
+	if report.Expired != 5 {
+		t.Fatalf("report says %d expired, want 5. The command sweep committed "+
+			"in its own transaction before the prune failed", report.Expired)
 	}
 }
 
