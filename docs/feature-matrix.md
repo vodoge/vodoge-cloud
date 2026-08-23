@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 35） | 58 条路由 |
+| 我们的云端 | `apps/gateway`（schema 36） | 62 条路由 |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
@@ -84,9 +84,9 @@
 | 长短信分片合并 | 有 | 有 | **有** | UDH 剥离与重组已覆盖 GSM-7 / UCS-2 |
 | 会话视图与历史 | 有 | 有 | **有** | 收发双向都记录 |
 | 字符集标注 | 无 | 无 | **有** | `messages.encoding`，二进制正文显示为十六进制并说明 |
-| 送达回执 | 有 | 有 | **半** | 有命令级成败，无网络侧 `+CDS` 回执 |
-| 联系人列表 | 有 | 有 | **无** | — |
-| 未读状态 | 无 | 有 | **无** | — |
+| 送达回执 | 有 | 有 | **有** | 命令回执与网络侧 `+CDS` 是两条路：前者 `queued`→`sent`，后者 `sent`→`delivered`／`undelivered`，各自的时间戳都留着 |
+| 联系人列表 | 有 | 有 | **有** | `app.contacts`，按号码命名；名字不随会话删除而消失 |
+| 未读状态 | 无 | 有 | **有** | 仅入站计数，打开会话即已读；迁移把存量一次性标为已读 |
 | IMS 短信 | 有 | 有 | **无** | 依赖 VoWiFi 栈 |
 | 发送限额 | 有 | 有 | **有** | 按 `messages.created_at` 计数（`received_at` 会被回执改写），超限返回 429 |
 
@@ -96,6 +96,17 @@
 > 地址忽略 TOA 靠"以 8 开头"猜 `+`（美国号码永远拿不到前缀）、截断 PDU 会 panic。
 > 解码器已从 `#[cfg(target_os = "linux")]` 里搬进 `edge-core`，任何机器上都能测。
 > **注意**：库里 2026-08-22 之前的短信是旧二进制入队的存量，`encoding` 标签不可信。
+> 2026-08-23 用一条**真实新到**的短信核对过：agent 日志记下 `dcs=0x08`，
+> 同一条在 `app.messages` 里是 `ucs2`（DCS 位 3-2 = `10` 即 UCS-2，23.038），两者相符。
+
+> **送达回执注**：`+CDS` 要三样东西同时成立，缺一样就永远等不到回执，而且都不报错。
+> ① SUBMIT 的首字节要置 TP-SRR（原先是写死的 `0x01`）；② `AT+CSMS=1`（台面三根都是 0）；
+> ③ `AT+CNMI` 的第四个参数要非 0（台面三根都是 0）。回执**不在收件箱**：
+> `AT+CPMS=?` 的四个存储区里它进 `SR`，而 QMI WMS 的存储枚举只有 UIM/NV，
+> 走 QMI 永远看不见 —— 所以收取走 AT。`SR` 在这批 EC20 上**只有 5 条容量**，
+> 读完必须删干净，否则几天后表现为「回执偶尔丢失」。
+> 关联靠 TP-MR：一根模组会用自己的编号覆盖我们写进 PDU 的（实测 0→103），
+> 另一根照用不误（实测 2→2），所以以模组 `RAW_SEND` 的回答为准。
 
 ## eSIM / eUICC
 

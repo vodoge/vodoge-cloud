@@ -231,12 +231,12 @@ test("fetchThreads carries the contact name and the unread count", async () => {
       threads: [
         {
           peer: "10086",
-          name: "ä¸­å½ç§»å¨",
+          name: "中国移动",
           device_id: "d1",
           messages: 3,
           unsent: 0,
           unread: 2,
-          last_body: "ä½é¢ 12.34 å",
+          last_body: "余额 12.34 元",
           last_at: 500,
           last_inbound: true,
         },
@@ -247,12 +247,12 @@ test("fetchThreads carries the contact name and the unread count", async () => {
   assert.deepEqual(threads, [
     {
       peer: "10086",
-      name: "ä¸­å½ç§»å¨",
+      name: "中国移动",
       deviceId: "d1",
       messages: 3,
       unsent: 0,
       unread: 2,
-      lastBody: "ä½é¢ 12.34 å",
+      lastBody: "余额 12.34 元",
       lastAt: 500,
       lastInbound: true,
     },
@@ -368,13 +368,13 @@ test("fetchContacts reads the phone book", async () => {
   const fetchImpl: typeof fetch = async (input) => {
     calls.push(String(input));
     return Response.json({
-      contacts: [{ peer: "10086", name: "ä¸­å½ç§»å¨", note: "è¿è¥å", updated_at: 7 }],
+      contacts: [{ peer: "10086", name: "中国移动", note: "运营商", updated_at: 7 }],
     });
   };
 
   const contacts = await fetchContacts("a.vodoge.com", "tok", fetchImpl);
   assert.deepEqual(contacts, [
-    { peer: "10086", name: "ä¸­å½ç§»å¨", note: "è¿è¥å", updatedAt: 7 },
+    { peer: "10086", name: "中国移动", note: "运营商", updatedAt: 7 },
   ]);
   assert.equal(calls[0]?.split("/v1/")[1], "messages/contacts");
 });
