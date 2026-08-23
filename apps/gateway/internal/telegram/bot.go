@@ -892,21 +892,18 @@ func (bot *Bot) say(ctx context.Context, config Config, chatID int64, text strin
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	err := bot.Telegram.Call(ctx, config, "sendMessage", map[string]any{
+	bot.send(ctx, config, "reply", map[string]any{
 		"chat_id": chatID,
 		"text":    clip(text, telegramTextLimit),
 		// No parse mode. Device names, operator names and message bodies are
 		// arbitrary text; rendering them as Markdown means every unbalanced
 		// asterisk in a real SMS becomes a message Telegram refuses to send.
 		"link_preview_options": map[string]any{"is_disabled": true},
-	}, nil)
-	if err != nil {
-		bot.log().Warn("telegram reply failed", "error", err)
-	}
+	})
 }
 
 func (bot *Bot) ask(ctx context.Context, config Config, chatID int64, quote, nonce string) {
-	err := bot.Telegram.Call(ctx, config, "sendMessage", map[string]any{
+	bot.send(ctx, config, "confirmation prompt", map[string]any{
 		"chat_id": chatID,
 		"text":    clip(quote, telegramTextLimit),
 		"reply_markup": map[string]any{
@@ -916,10 +913,26 @@ func (bot *Bot) ask(ctx context.Context, config Config, chatID int64, quote, non
 			}},
 		},
 		"link_preview_options": map[string]any{"is_disabled": true},
-	}, nil)
-	if err != nil {
-		bot.log().Warn("telegram confirmation prompt failed", "error", err)
+	})
+}
+
+// send posts one message and records what Telegram made of it.
+//
+// The message id is logged because "the bot answered" is otherwise only
+// inferable from the absence of an error. An operator asking why they got no
+// reply needs to know whether the reply was refused, or sent to a chat they
+// are not looking at. The text is not logged: it carries fleet state and, for
+// a send, the body of an SMS.
+func (bot *Bot) send(ctx context.Context, config Config, what string, body map[string]any) {
+	var answer struct {
+		MessageID int64 `json:"message_id"`
 	}
+	if err := bot.Telegram.Call(ctx, config, "sendMessage", body, &answer); err != nil {
+		bot.log().Warn("telegram "+what+" failed", "error", err)
+		return
+	}
+	bot.log().Info("telegram "+what+" sent",
+		"chat_id", body["chat_id"], "message_id", answer.MessageID)
 }
 
 func (bot *Bot) acknowledge(ctx context.Context, config Config, queryID, text string) {
