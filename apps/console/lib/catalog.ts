@@ -450,6 +450,77 @@ export async function fetchEsimProfiles(
   });
 }
 
+export type ScheduleRow = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  action: string;
+  commandKind: string | null;
+  /** How the target is chosen, rendered verbatim: an ICCID is the answer. */
+  selector: { mode: string; deviceId: string | null; iccid: string | null; modemImei: string | null };
+  intervalSeconds: number;
+  nextDueAt: number | null;
+  lastRunAt: number | null;
+  lastStatus: string | null;
+  lastCommandId: string | null;
+  /**
+   * The run's own record, kept as text rather than parsed into fields.
+   *
+   * What it holds differs per outcome -- an address for a public IP check, a
+   * reason for a preparation failure, how many occurrences a skip covered --
+   * and a page that only rendered the keys it knew about would silently drop
+   * the one that explains an unfamiliar failure.
+   */
+  lastDetail: string | null;
+};
+
+export async function fetchSchedules(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ScheduleRow[]> {
+  const body = await getCatalog(host, "/v1/schedules", token, fetchImpl);
+  return arrayOf(body.schedules)
+    .map(parseSchedule)
+    .filter((row): row is ScheduleRow => row !== null);
+}
+
+export function parseSchedule(value: unknown): ScheduleRow | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = asString(record.id);
+  const name = asString(record.name);
+  if (!id || !name) {
+    return null;
+  }
+  const selector = (record.selector ?? {}) as Record<string, unknown>;
+  const detail = record.last_detail;
+  return {
+    id,
+    name,
+    enabled: record.enabled === true,
+    action: asString(record.action) ?? "command",
+    commandKind: asString(record.command_kind),
+    selector: {
+      mode: asString(selector.mode) ?? "unknown",
+      deviceId: asString(selector.device_id),
+      iccid: asString(selector.iccid),
+      modemImei: asString(selector.modem_imei),
+    },
+    intervalSeconds: asNumber(record.interval_seconds) ?? 0,
+    nextDueAt: asNumber(record.next_due_at),
+    lastRunAt: asNumber(record.last_run_at),
+    lastStatus: asString(record.last_status),
+    lastCommandId: asString(record.last_command_id),
+    lastDetail:
+      detail && typeof detail === "object" && Object.keys(detail).length > 0
+        ? JSON.stringify(detail)
+        : null,
+  };
+}
+
 export type RuleRow = { id: string; name: string; enabled: boolean };
 export type AuditRow = { actor: string; action: string; target: string };
 

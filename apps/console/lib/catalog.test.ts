@@ -6,11 +6,13 @@ import {
   fetchDevices,
   fetchRules,
   fetchMessages,
+  fetchSchedules,
   fetchSessions,
   fetchThread,
   fetchThreads,
   parseDevice,
   parseMessage,
+  parseSchedule,
   UnauthorizedError,
 } from "./catalog.ts";
 
@@ -377,4 +379,102 @@ test("fetchContacts reads the phone book", async () => {
     { peer: "10086", name: "中国移动", note: "运营商", updatedAt: 7 },
   ]);
   assert.equal(calls[0]?.split("/v1/")[1], "messages/contacts");
+});
+
+// The schedule row is a closed literal like every other parse here: a field the
+// gateway starts sending and this map does not name is dropped, so the shape is
+// pinned rather than trusted.
+test("parseSchedule keeps the target, the cadence and the last outcome", () => {
+  assert.equal(parseSchedule(null), null);
+  assert.equal(parseSchedule({ name: "keepalive" }), null);
+  assert.deepEqual(
+    parseSchedule({
+      id: "s1",
+      name: "keepalive",
+      enabled: true,
+      action: "command",
+      command_kind: "send_sms",
+      selector: { mode: "card", iccid: "8986003031401770106" },
+      request: { to: "10086", body: "1" },
+      interval_seconds: 7200,
+      anchor_at: 1000,
+      last_occurrence: 4,
+      next_due_at: 2000,
+      last_run_at: 1500,
+      last_status: "issued",
+      last_command_id: "c1",
+      last_detail: { command_id: "c1", occurrence: 4 },
+    }),
+    {
+      id: "s1",
+      name: "keepalive",
+      enabled: true,
+      action: "command",
+      commandKind: "send_sms",
+      selector: {
+        mode: "card",
+        deviceId: null,
+        iccid: "8986003031401770106",
+        modemImei: null,
+      },
+      intervalSeconds: 7200,
+      nextDueAt: 2000,
+      lastRunAt: 1500,
+      lastStatus: "issued",
+      lastCommandId: "c1",
+      lastDetail: '{"command_id":"c1","occurrence":4}',
+    },
+  );
+});
+
+// A schedule that has never run must not read as one that ran and reported
+// nothing: the page says "never" for the first and shows an outcome for the
+// second, and conflating them hides a schedule that is not ticking at all.
+test("parseSchedule leaves a schedule that has never run without an outcome", () => {
+  const row = parseSchedule({
+    id: "s2",
+    name: "egress",
+    enabled: false,
+    action: "public_ip_check",
+    selector: { mode: "device", device_id: "d1" },
+    interval_seconds: 3600,
+    next_due_at: 5000,
+    last_detail: {},
+  });
+  assert.equal(row?.lastRunAt, null);
+  assert.equal(row?.lastStatus, null);
+  assert.equal(row?.lastDetail, null);
+  assert.equal(row?.commandKind, null);
+  assert.equal(row?.enabled, false);
+});
+
+test("fetchSchedules carries the session and drops malformed rows", async () => {
+  const seen: Array<Record<string, string>> = [];
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    seen.push((init?.headers ?? {}) as Record<string, string>);
+    return new Response(
+      JSON.stringify({
+        schedules: [
+          { id: "s1", name: "keepalive", enabled: true, interval_seconds: 7200 },
+          { id: 7 },
+          null,
+        ],
+      }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  const rows = await fetchSchedules("a.vodoge.com", "tok-a", fetchImpl);
+  assert.equal(rows.length, 1);
+  assert.equal(seen[0].authorization, "Bearer tok-a");
+  assert.equal(seen[0]["x-forwarded-host"], "a.vodoge.com");
+});
+
+test("a rejected schedules request is an error, not an empty list", async () => {
+  const fetchImpl = (async () =>
+    new Response("sign in required", { status: 401 })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => fetchSchedules("a.vodoge.com", undefined, fetchImpl),
+    UnauthorizedError,
+  );
 });

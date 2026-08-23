@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
 import { fetchRules, type RuleRow } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
@@ -25,6 +26,17 @@ export default async function RulesPage() {
         </div>
       </div>
       {loadError ? <p className="danger">{t("rules.loadError", locale)}</p> : null}
+
+      {/*
+        Scheduled tasks reach the operator from here rather than from the top
+        nav. Rules and schedules are the two halves of automation -- one reacts
+        to what arrives, the other acts on a clock -- and this is the page an
+        operator is already on when they go looking for the second one.
+      */}
+      <p className="hint">
+        <Link href="/schedule">{t("rules.schedules", locale)}</Link>{" "}
+        {t("rules.schedulesHint", locale)}
+      </p>
 
       <Card bodyless>
         {rules.length === 0 ? (

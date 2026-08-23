@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 37） | 62 条路由 |
+| 我们的云端 | `apps/gateway`（schema 38） | 66 条路由 |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
@@ -159,7 +159,7 @@
 | 通知投递重试 | 有 | 有 | **有** | 每渠道指数退避，重试窗口约 6 分钟（1s 起翻倍、封顶 45s）——此前是 3 次 × 2s，只扛得住约 4 秒中断。投递按 (租户, 渠道) 分道并行，一个卡住的渠道不再独占唯一的投递 goroutine 把别人的事件挤出队列。队列满仍然丢弃且是**故意的**（反压会拖垮 ingest），但丢了多少、重试了多少次现在可查：`/metrics` 的 `vodoge_notifications_dropped_total`、`vodoge_notification_retries_total`、`vodoge_notifications_total` |
 | Telegram / 飞书 / 企微 / Pushplus | 半 | 有 | **无** | `settings.go` 里已有 `telegram.bot_token`、`pushplus.token` 配置槽位，但 `channels.go` 里没有实现 —— **配了也不会发** |
 | Telegram 机器人远程控制 | 无 | 有 | **无** | 状态、切卡、发短信、通话，敏感操作二次确认 |
-| 定时自动任务 | 无 | 有 | **无** | 定时发短信 / 拨号 / 查公网 IP，保号场景的核心 |
+| 定时自动任务 | 无 | 有 | **有** | `app.scheduled_tasks` + `internal/schedule`：按卡（ICCID）或按设备编排定时短信与公网 IP 巡检。**拨号仍缺**，因为契约里还没有 dial 命令 kind（阶段 4）；调度器不解释 kind，那一天到了不用改它 |
 
 ## 运维与平台
 
@@ -178,7 +178,7 @@
 | 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户 |
 | 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复 |
 | PWA / 离线外壳 | 无 | 无 | **有** | — |
-| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 62 条 HTTP 路由没有机器可读描述 |
+| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 66 条 HTTP 路由没有机器可读描述 |
 | 插件 / 扩展 | 有 | 有 | **不适用** | 已决定砍掉，理由见 [plugins-not-ported.md](plugins-not-ported.md) |
 | 自签 HTTPS 设置 | 有 | 有 | **不适用** | TLS 在网关与 Caddy 终结，不是租户的事 |
 | 卸载 / 自毁 | 有 | 无 | **不适用** | 单机概念 |
@@ -197,6 +197,18 @@
 VoCat 的实现还处理了一个真问题：**一旦消息进入了模组或 IMS 事务，
 重试整条会造成重复投递**，所以只有准备阶段的失败才可以安全重试。
 这个教训要照抄。
+
+已照抄，并且做成了结构而不是纪律：幂等键由 **(任务 id, 第几次触发)** 推导，
+不含时间戳、随机数与 payload。`app.enqueue_command` 对已绑定的键返回已存在的命令，
+所以「重放一次触发」在任何情况下都收敛到同一条命令，而不是造出第二条。
+只有解析计划、选设备、构造 payload 这些还没碰到模组的阶段会被重试；
+一旦进了 `app.enqueue_command`，无论成功还是撞键，那一次触发就此结账。
+
+**租户枚举是硬约束**：`app.tenants` 带 FORCE RLS，连表属主的 SECURITY DEFINER
+函数都枚举不了，所以不存在全局 cron。调度器骑在**在线设备会话**上取租户上下文
+（证书主题里就带 tenant_id，不用查库），代价是：某租户一台设备都不在线时它不推进，
+过期的触发记为 `skipped_stale` 而不是补发一串。这条同时给 L3 提供了第二条
+带租户上下文的路径 —— 过期命令回收不再只能等设备重连。
 
 ### Telegram 机器人
 
