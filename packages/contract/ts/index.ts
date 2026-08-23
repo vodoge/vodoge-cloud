@@ -275,6 +275,27 @@ export interface ResetModemUsbCommand {
   modem_imei: Imei;
 }
 
+export interface SetDataNetworkCommand {
+  kind: "SetDataNetwork";
+  modem_imei: Imei;
+  enabled: boolean;
+}
+
+export interface SetUsbnetModeCommand {
+  kind: "SetUsbnetMode";
+  modem_imei: Imei;
+  mode: "rmnet" | "ecm" | "mbim" | "rndis";
+}
+
+export interface ReregisterNetworkCommand {
+  kind: "ReregisterNetwork";
+  modem_imei: Imei;
+}
+
+export interface RefreshModemsCommand {
+  kind: "RefreshModems";
+}
+
 export interface ListEsimProfilesCommand {
   kind: "ListEsimProfiles";
   modem_imei: Imei;
@@ -380,6 +401,10 @@ export type Command =
   | SelectOperatorCommand |
   | ModemReportCommand |
   | ResetModemUsbCommand |
+  | SetDataNetworkCommand |
+  | SetUsbnetModeCommand |
+  | ReregisterNetworkCommand |
+  | RefreshModemsCommand |
   | ConfigureProxyCommand |
   | ProxyLifecycleCommand |
   | ProbeUpstreamProxyCommand |

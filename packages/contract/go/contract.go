@@ -263,6 +263,27 @@ type ResetModemUsbCommand struct {
 	ModemImei string `json:"modem_imei"`
 }
 
+type SetDataNetworkCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type SetUsbnetModeCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Mode      string `json:"mode"`
+}
+
+type ReregisterNetworkCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
+type RefreshModemsCommand struct {
+	Kind string `json:"kind"`
+}
+
 type ListEsimProfilesCommand struct {
 	Kind      string `json:"kind"`
 	ModemImei string `json:"modem_imei"`
