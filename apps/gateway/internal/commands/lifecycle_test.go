@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -256,5 +257,84 @@ func TestRecordResultBindsTheTenantBeforeTouchingAnyTable(t *testing.T) {
 	}
 	if !strings.Contains(rec.execs[0].query, "set_config('app.tenant_id'") {
 		t.Fatalf("first statement = %q; every business table here is under FORCE row-level security", rec.execs[0].query)
+	}
+}
+
+// QueryContext support was added for the tenant-wide sweep, which reads a count
+// back rather than only executing. Recorded the same way as an exec so the
+// assertions below can be about the statement that was really sent.
+func (c recordingConn) QueryContext(
+	_ context.Context, query string, args []driver.NamedValue,
+) (driver.Rows, error) {
+	c.rec.record(query, args)
+	return &singleIntRows{value: 4}, nil
+}
+
+type singleIntRows struct {
+	value int64
+	done  bool
+}
+
+func (*singleIntRows) Columns() []string { return []string{"count"} }
+func (*singleIntRows) Close() error      { return nil }
+func (r *singleIntRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = r.value
+	return nil
+}
+
+// L3: the scheduler's sweep must reach commands belonging to devices that never
+// reconnect, which is the gap the per-device form on resume cannot close.
+func TestTheTenantSweepIsNotScopedToOneDevice(t *testing.T) {
+	t.Parallel()
+
+	db, rec := newRecordingDB(t, nil)
+	expired, err := (SQLPending{DB: db}).ExpireTenantCommands(
+		context.Background(), "t-a", time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if expired != 4 {
+		t.Fatalf("expired = %d, want the count the function returned (4)", expired)
+	}
+
+	sweep := rec.find(t, "expire_overdue_tenant_commands")
+	// Two arguments, not three. A device_id parameter here would silently
+	// reintroduce the very limitation this exists to remove -- 0033 could only
+	// sweep the device that had just resumed, so a device that never comes back
+	// kept its stale rows forever.
+	if len(sweep.args) != 2 {
+		t.Fatalf("sweep called with %d arguments, want 2 (tenant, now): %+v",
+			len(sweep.args), sweep.args)
+	}
+	if rec.count("expire_overdue_commands($1::uuid, $2::uuid") != 0 {
+		t.Fatal("the tenant sweep fell through to the per-device form")
+	}
+}
+
+// Every statement in the sweep runs under the tenant's row-level security
+// context. Without the bind it would not leak -- it would silently retire
+// nothing, which is the failure that is hard to see.
+func TestTheTenantSweepBindsTheTenantFirst(t *testing.T) {
+	t.Parallel()
+
+	db, rec := newRecordingDB(t, nil)
+	if _, err := (SQLPending{DB: db}).ExpireTenantCommands(
+		context.Background(), "t-a", time.Now()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.execs) == 0 {
+		t.Fatal("no statements were sent")
+	}
+	if !strings.Contains(rec.execs[0].query, "set_config('app.tenant_id'") {
+		t.Fatalf("first statement is %q, want the tenant bind", rec.execs[0].query)
+	}
+	if !strings.Contains(rec.execs[0].query, "true") {
+		t.Fatal("the tenant bind is not SET LOCAL; a pooled connection would keep it")
 	}
 }

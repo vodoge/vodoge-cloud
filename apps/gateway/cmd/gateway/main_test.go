@@ -1320,3 +1320,121 @@ func TestTheInboxReportsUnreadAndContactNames(t *testing.T) {
 		t.Fatalf("contacts = %v, want one", contacts)
 	}
 }
+
+// The schedule endpoints are tenant scoped like everything else, and a task is
+// refused at creation when it cannot succeed rather than failing quietly on a
+// cadence nobody is watching.
+func TestScheduleRoutesAreTenantScopedAndValidateOnCreate(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-b", Slug: "b", Region: "intl", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	handler := proc.handler()
+
+	create := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/schedules",
+		strings.NewReader(`{"name":"keepalive","command_kind":"send_sms",`+
+			`"selector":{"mode":"card","iccid":"8986003031401770106"},`+
+			`"request":{"to":"10086","body":"1"},"interval_seconds":3600}`)))
+	create.Header.Set("Content-Type", "application/json")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create schedule status = %d body=%s", created.Code, created.Body.String())
+	}
+
+	listed := getJSON(t, handler, "http://a.vodoge.com/v1/schedules")
+	names := stringSlice(listed["schedules"], "name")
+	if len(names) != 1 || names[0] != "keepalive" {
+		t.Fatalf("tenant a schedules = %#v", listed)
+	}
+	other := getJSON(t, handler, "http://b.vodoge.com/v1/schedules")
+	if got := stringSlice(other["schedules"], "name"); len(got) != 0 {
+		t.Fatalf("tenant b saw tenant a schedules: %#v", other)
+	}
+
+	// An SMS with no body cannot ever succeed, so it is refused now rather
+	// than at 03:00 with nobody looking.
+	bad := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/schedules",
+		strings.NewReader(`{"name":"broken","command_kind":"send_sms",`+
+			`"selector":{"mode":"card","iccid":"1"},"request":{"to":"10086"},`+
+			`"interval_seconds":3600}`)))
+	bad.Header.Set("Content-Type", "application/json")
+	refused := httptest.NewRecorder()
+	handler.ServeHTTP(refused, bad)
+	if refused.Code != http.StatusBadRequest {
+		t.Fatalf("empty-body schedule status = %d body=%s", refused.Code, refused.Body.String())
+	}
+	if !strings.Contains(refused.Body.String(), "body") {
+		t.Fatalf("refusal does not say what is wrong: %s", refused.Body.String())
+	}
+
+	// A cadence the tick cannot serve is refused too.
+	fast := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/schedules",
+		strings.NewReader(`{"name":"toofast","command_kind":"send_sms",`+
+			`"selector":{"mode":"card","iccid":"1"},`+
+			`"request":{"to":"10086","body":"1"},"interval_seconds":5}`)))
+	fast.Header.Set("Content-Type", "application/json")
+	tooFast := httptest.NewRecorder()
+	handler.ServeHTTP(tooFast, fast)
+	if tooFast.Code != http.StatusBadRequest {
+		t.Fatalf("5-second cadence status = %d", tooFast.Code)
+	}
+}
+
+// The scheduler's whole answer to tenant enumeration is this tracker, so it has
+// to hold what a Resume gave it and let go of what the hub no longer holds.
+func TestLiveDevicesReportsTenantsAndForgetsDisconnected(t *testing.T) {
+	t.Parallel()
+
+	hub := session.NewHub()
+	live := newLiveDevices()
+	now := time.Now()
+	for _, pair := range [][2]string{{"t-a", "d1"}, {"t-a", "d2"}, {"t-b", "d3"}} {
+		hub.Bind(session.Connection{
+			ID:           "c-" + pair[1],
+			Device:       identity.Device{TenantID: pair[0], DeviceID: pair[1], Region: "cn"},
+			ConnectedAt:  now,
+			LastPacketAt: now,
+		})
+		live.Seen(pair[0], pair[1])
+	}
+	tenants := live.Tenants(hub)
+	if len(tenants) != 2 || len(tenants["t-a"]) != 2 || len(tenants["t-b"]) != 1 {
+		t.Fatalf("tenants = %#v", tenants)
+	}
+
+	hub.Unbind("c-d3")
+	tenants = live.Tenants(hub)
+	if _, still := tenants["t-b"]; still {
+		t.Fatalf("a tenant with no live device is still ticking: %#v", tenants)
+	}
+	if len(tenants["t-a"]) != 2 {
+		t.Fatalf("tenant a lost devices it still has: %#v", tenants)
+	}
+
+	// A device that reconnects comes back without anything having to notice it
+	// left, because the tracker is read through the hub rather than trusted.
+	hub.Bind(session.Connection{
+		ID:           "c-d3-again",
+		Device:       identity.Device{TenantID: "t-b", DeviceID: "d3", Region: "cn"},
+		ConnectedAt:  now,
+		LastPacketAt: now,
+	})
+	live.Seen("t-b", "d3")
+	if got := live.Tenants(hub); len(got["t-b"]) != 1 {
+		t.Fatalf("reconnected device did not return: %#v", got)
+	}
+}
+
+// Two gateway processes must not share a lease owner, or the lease stops being
+// able to tell them apart -- which is the situation it exists to handle.
+func TestSchedulerOwnersAreDistinctPerProcess(t *testing.T) {
+	if a, b := schedulerOwner(), schedulerOwner(); a == b {
+		t.Fatalf("two processes would claim leases as %q", a)
+	}
+}

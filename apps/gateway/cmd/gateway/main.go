@@ -49,6 +49,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ratelimit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/rules"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/schedule"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
@@ -105,7 +106,10 @@ func main() {
 			slog.Warn("session purge failed", "error", err)
 		})
 		lifecycle := commands.SQLLifecycle{DB: sqlStore.DB}
-		proc.session.Commands = commands.SQLPending{DB: sqlStore.DB}
+		pending := commands.SQLPending{DB: sqlStore.DB}
+		proc.schedules = schedule.SQL{DB: sqlStore.DB}
+		proc.sweep = pending.ExpireTenantCommands
+		proc.session.Commands = pending
 		proc.session.Receipts = lifecycle
 		// A send's result is also the answer to "did the message arrive", so
 		// it updates the conversation as well as the command. Wrapped rather
@@ -115,7 +119,18 @@ func main() {
 			inner: lifecycle, inbox: proc.inbox, notify: proc.notify,
 		}
 		proc.session.AfterInsert = proc.afterInsert
-		proc.session.ResumeReport = proc.recordResume
+	}
+	// Wrapped rather than assigned, because this hook is the scheduler's only
+	// source of tenants. app.tenants is under FORCE row-level security keyed to
+	// app.current_tenant_id(), so nothing can enumerate tenants to sweep them;
+	// a device Resume carries a (tenant, device) pair taken from the mTLS
+	// certificate subject, which is the one place that pair arrives from
+	// outside the database. Assigned unconditionally so the tracker fills even
+	// on a gateway with no database, where recordResume itself is a no-op.
+	proc.live = newLiveDevices()
+	proc.session.ResumeReport = func(tenantID, deviceID string, report wss.DeviceReport) {
+		proc.live.Seen(tenantID, deviceID)
+		proc.recordResume(tenantID, deviceID, report)
 	}
 
 	proc.session.Metrics = proc.metrics
@@ -197,6 +212,40 @@ func main() {
 			now := time.Now()
 			reapIdleSessions(proc.session.Hub, logger, now)
 			absent.Report(proc.session.Hub, proc.notify, logger, now)
+		}
+	}()
+
+	// The scheduler.
+	//
+	// Its own ticker rather than a third job on the reaper's, because the two
+	// run on unrelated clocks -- the reaper is tied to the idle timeout, this
+	// is tied to how promptly a due task should fire -- and sharing would mean
+	// one of them silently changing when the other's timing is tuned.
+	//
+	// Node id in the lease owner so two gateways can run this at once: the
+	// lease is what stops both of them working the same task, and the derived
+	// idempotency key is what stops the race that gets through the lease from
+	// becoming a second SMS.
+	scheduler := &schedule.Runner{
+		Store:           proc.schedules,
+		Live:            func() map[string][]string { return proc.live.Tenants(proc.session.Hub) },
+		Owner:           schedulerOwner(),
+		Sweep:           proc.sweep,
+		OnCommandIssued: proc.mirrorScheduledCommand,
+		Logger:          logger,
+	}
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	go func() {
+		ticker := time.NewTicker(scheduleTick)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-schedulerCtx.Done():
+				return
+			case <-ticker.C:
+				scheduler.Tick(schedulerCtx)
+			}
 		}
 	}()
 
@@ -405,6 +454,116 @@ func (violations *contractViolations) Raise(
 	return true
 }
 
+// liveDevices maps every connected device to its tenant.
+//
+// This is the answer to a constraint, not a convenience. app.tenants carries
+// FORCE row-level security under `id = app.current_tenant_id()`, which binds
+// the table owner too, so nothing in the database -- not even a SECURITY
+// DEFINER function -- can list tenants. Any job that must run "for each
+// tenant" therefore needs a tenant id handed to it from outside, and the only
+// thing that produces one unprompted is a device connecting: its mTLS
+// certificate names the tenant in the subject.
+//
+// Kept alongside session.Hub rather than inside it. The hub is keyed by device
+// and answers "is this device bound"; this answers the different question of
+// which tenants are worth ticking, and it is pruned against the hub on every
+// read so a device that vanished cannot keep a tenant alive. Reading through
+// the hub also means a superseded session's late Unbind cannot evict a device
+// that has already reconnected.
+type liveDevices struct {
+	mu       sync.Mutex
+	byDevice map[string]string
+}
+
+func newLiveDevices() *liveDevices {
+	return &liveDevices{byDevice: make(map[string]string)}
+}
+
+// Seen records that a device is connected on behalf of a tenant.
+func (devices *liveDevices) Seen(tenantID, deviceID string) {
+	if devices == nil || tenantID == "" || deviceID == "" {
+		return
+	}
+	devices.mu.Lock()
+	defer devices.mu.Unlock()
+	devices.byDevice[deviceID] = tenantID
+}
+
+// Tenants returns the connected devices grouped by tenant, dropping any the hub
+// no longer holds.
+func (devices *liveDevices) Tenants(hub *session.Hub) map[string][]string {
+	if devices == nil {
+		return nil
+	}
+	devices.mu.Lock()
+	defer devices.mu.Unlock()
+	out := make(map[string][]string)
+	for deviceID, tenantID := range devices.byDevice {
+		if hub != nil {
+			if _, bound := hub.Lookup(deviceID); !bound {
+				delete(devices.byDevice, deviceID)
+				continue
+			}
+		}
+		out[tenantID] = append(out[tenantID], deviceID)
+	}
+	return out
+}
+
+// schedulerOwner names this process in a scheduled task lease.
+//
+// The node id when there is one, so a stuck worker can be identified from the
+// row rather than by correlating logs. The random suffix is there because two
+// processes with the same node id -- a rolling restart overlapping itself -- are
+// the case the lease exists for, and giving them one name would let the second
+// steal a lease from the first without either being wrong about who it is.
+func schedulerOwner() string {
+	node := strings.TrimSpace(os.Getenv("VODOGE_GATEWAY_NODE_ID"))
+	if node == "" {
+		node = "gateway"
+	}
+	return node + ":" + randomKey()[:8]
+}
+
+// mirrorScheduledCommand puts a scheduled send into the conversation.
+//
+// A message that went out unattended is still a message someone will look for
+// in the inbox, and the console handler already does this for a clicked send.
+// Idempotent at the database: app.messages has a unique index on command_id,
+// and the insert is ON CONFLICT DO NOTHING, so a re-run of an occurrence that
+// resolved to the same command cannot produce a second bubble.
+func (process *process) mirrorScheduledCommand(
+	tenantID string, plan schedule.Plan, commandID string,
+) {
+	if process.inbox == nil || plan.Kind != "send_sms" || commandID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id := commandID
+	if err := process.inbox.RecordOutbound(ctx, tenantID, messaging.Message{
+		DeviceID:  plan.DeviceID,
+		Peer:      plan.To,
+		Body:      plan.Body,
+		CommandID: &id,
+	}); err != nil {
+		// Not fatal, for the same reason it is not fatal on the console path:
+		// the command is queued either way, and a conversation that did not
+		// update is a worse thing to fail a send over.
+		slog.Warn("scheduled outbound message not recorded",
+			"tenant_id", tenantID, "command_id", commandID, "error", err)
+	}
+}
+
+// scheduleTick is how often due scheduled tasks are looked for.
+//
+// Well under the one-minute floor on a task's interval, so an occurrence is
+// acted on within a fraction of its period rather than at the mercy of where
+// the tick happens to land. It is also the recovery time after a restart: the
+// tracker above refills as devices reconnect, and the first tick after that
+// picks up whatever came due while the process was gone.
+const scheduleTick = 15 * time.Second
+
 // absentDevices remembers devices whose session ended and watches for their
 // return.
 //
@@ -514,16 +673,21 @@ func reapIdleSessions(hub *session.Hub, logger *slog.Logger, now time.Time) int 
 }
 
 type process struct {
-	region  string
-	session *wss.Server
-	tenants *directory.Resolver
-	enroll  *enroll.Handler
-	events  *events.Bus
-	catalog catalog.Store
-	matrix  matrix.Store
-	queue   commands.Queue
-	audit   audit.Log
-	rules   rules.Store
+	region    string
+	session   *wss.Server
+	tenants   *directory.Resolver
+	enroll    *enroll.Handler
+	events    *events.Bus
+	catalog   catalog.Store
+	matrix    matrix.Store
+	queue     commands.Queue
+	audit     audit.Log
+	rules     rules.Store
+	schedules schedule.Store
+	// live is the scheduler's tenant carrier. See newLiveDevices.
+	live *liveDevices
+	// sweep retires a tenant's overdue commands (L3). Nil without a database.
+	sweep   schedule.Sweeper
 	codes   enroll.CodeStore
 	metrics *observe.Registry
 	notify  *notify.Dispatcher
@@ -566,12 +730,16 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
-		metrics: newRegistry(),
-		config:  &settings.Memory{},
-		proxies: &proxy.Memory{},
-		inbox:   &messaging.Memory{},
-		cards:   &cards.Memory{},
-		codes:   &enroll.MemoryCodes{},
+		// A gateway with no database still answers /v1/schedules with an empty
+		// list rather than 503: the console renders the page either way, and an
+		// endpoint that exists only in production is one nobody tests.
+		schedules: &schedule.Memory{},
+		metrics:   newRegistry(),
+		config:    &settings.Memory{},
+		proxies:   &proxy.Memory{},
+		inbox:     &messaging.Memory{},
+		cards:     &cards.Memory{},
+		codes:     &enroll.MemoryCodes{},
 	}
 }
 
@@ -652,6 +820,7 @@ func (process *process) handler() http.Handler {
 	process.registerCardRoutes(mux)
 	process.registerDeviceRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
+	process.registerScheduleRoutes(mux)
 	mux.HandleFunc("GET /v1/rules", process.listRules)
 	mux.HandleFunc("POST /v1/rules", process.createRule)
 	mux.HandleFunc("GET /v1/enrollment-codes", process.listEnrollmentCodes)

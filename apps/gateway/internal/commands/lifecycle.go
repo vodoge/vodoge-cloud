@@ -101,6 +101,42 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 	return pending
 }
 
+// ExpireTenantCommands retires every overdue command in one tenant.
+//
+// The per-device form above runs on resume, which 0033 picked because resume
+// was the only tenant-scoped path that ran on its own -- app.tenants is under
+// FORCE row-level security keyed to the current tenant, so nothing can
+// enumerate tenants to sweep them globally. Its stated cost was that a device
+// which never reconnects keeps its stale rows until it does, and that is
+// exactly the device whose rows go stale.
+//
+// The scheduler tick is the second such path (L3). It holds a tenant id taken
+// from a live mTLS session, and unlike resume it does not have to be the
+// device being swept that supplied it -- so this form drops the device filter
+// and reaches the ones that never come back.
+//
+// Deliberately not merged with PendingForDevice's call: resume must keep
+// sweeping on its own, because a tenant whose only device is mid-reconnect has
+// no live session for the scheduler to ride on at that moment.
+func (store SQLPending) ExpireTenantCommands(
+	ctx context.Context, tenantID string, now time.Time,
+) (int, error) {
+	if store.DB == nil {
+		return 0, nil
+	}
+	var expired int
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT app.expire_overdue_tenant_commands($1::uuid, $2)`,
+			tenantID, now,
+		).Scan(&expired)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return expired, nil
+}
+
 // SQLLifecycle records receipts and terminal results.
 type SQLLifecycle struct {
 	DB *sql.DB
