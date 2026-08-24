@@ -119,8 +119,13 @@ export function EsimPanel({
   );
   const retrieved = latestRetrieval(commands);
   const authentications = latestAuthentications(commands);
-  const failedAuthentication = commands.find(
-    (row) => row.kind === "initiate_esim_authentication" && row.status === "failed",
+  // Only if it is more recent than every success. A banner saying the last
+  // authentication failed, sitting above a table of an exchange that worked,
+  // is a page arguing with itself -- and the reader has no way to tell which
+  // half is stale.
+  const failedAuthentication = newestFailureAfterSuccess(
+    commands,
+    "initiate_esim_authentication",
   );
 
   return (
@@ -469,6 +474,10 @@ function authenticationFields(
           ? t("esim.aSourceNotification", locale)
           : authentication.smdpAddressSource;
   const rows: [string, string | null][] = [
+    // Also in the heading above, but the heading is styled uppercase and a
+    // host name in capitals is not the string anyone should be comparing
+    // against a notification address or an activation code.
+    [t("esim.aSmdp", locale), authentication.smdpAddress],
     [t("esim.aSmdpSource", locale), source],
     [t("esim.aTransaction", locale), authentication.transactionId],
     [t("esim.aChallenge", locale), authentication.euiccChallenge],
@@ -526,6 +535,26 @@ function StateBadge({ state }: { state: string }) {
         ? "badge-bad"
         : "badge-idle";
   return <span className={`badge ${tone}`}>{state}</span>;
+}
+
+/**
+ * The most recent failure of `kind`, unless a later attempt succeeded.
+ *
+ * A command list holds every attempt, so "is there a failed one" is almost
+ * always yes once anything has ever gone wrong. What a reader needs is
+ * whether the situation is currently broken.
+ */
+function newestFailureAfterSuccess(commands: CommandRow[], kind: string): CommandRow | null {
+  let failure: CommandRow | null = null;
+  let newestSuccess = -1;
+  for (const row of commands) {
+    if (row.kind !== kind) continue;
+    const at = row.completed_at ?? 0;
+    if (row.status === "succeeded" && at > newestSuccess) newestSuccess = at;
+    if (row.status === "failed" && (!failure || at > (failure.completed_at ?? 0))) failure = row;
+  }
+  if (!failure) return null;
+  return (failure.completed_at ?? 0) > newestSuccess ? failure : null;
 }
 
 function isEsimRead(kind: string): boolean {
