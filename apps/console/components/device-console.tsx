@@ -1,7 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ModemRow } from "@/lib/catalog";
+import {
+  latestUssdExchange,
+  ussdCancelRequest,
+  ussdContinueRequest,
+  ussdSessionAgeMs,
+  ussdSessionState,
+  ussdStageLabelKey,
+  ussdStartRequest,
+  type ModemRow,
+  type UssdRequest,
+  type UssdStageLabelKey,
+} from "@/lib/catalog";
 import { DEFAULT_LOCALE, isLocale, LOCALE_COOKIE, t, type Locale } from "@/lib/i18n";
 import { operatorName } from "@/lib/plmn";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
@@ -28,7 +39,78 @@ type CommandRow = {
   } | null;
 };
 
-type Labels = Record<string, string>;
+/**
+ * Every user-visible string this component draws, named.
+ *
+ * It used to be Record<string, string>, filled from a hand-written list of key
+ * names in app/devices/[deviceId]/page.tsx. Nothing connected the two: a
+ * control added here that read a label nobody had listed there compiled fine,
+ * got `undefined`, and React draws undefined as nothing at all — a button with
+ * no text, in both locales, with no error anywhere. That is not hypothetical.
+ * It is the defect that stalled the proxy export control (T055) until the same
+ * union was put in front of it (T071), and this file was the last panel still
+ * exposed to it.
+ *
+ * The stage keys are imported rather than restated so that a stage the edge
+ * learns to report cannot be added to the catalogue helper without the page
+ * being made to supply a sentence for it.
+ */
+export type DeviceLabelKey =
+  | "modem"
+  | "noModems"
+  | "noCommands"
+  | "waiting"
+  | "failed"
+  | "run"
+  | "send"
+  | "cancel"
+  | "atCommand"
+  | "ussdCode"
+  | "ussdSession"
+  | "ussdSessionModem"
+  | "ussdReply"
+  | "ussdContinue"
+  | "ussdExpired"
+  | UssdStageLabelKey
+  | "selectOperator"
+  | "pin"
+  | "automatic"
+  | "radioOn"
+  | "dataOn"
+  | "usbnetMode"
+  | "usbnetWarning"
+  | "confirmUsbnet"
+  | "confirmDisruptive"
+  | "modem_report"
+  | "list_esim_profiles"
+  | "restart_modem"
+  | "reset_modem_usb"
+  | "scan_operators"
+  | "rotate_ip"
+  | "set_radio"
+  | "set_data_network"
+  | "reregister_network"
+  | "refresh_modems"
+  | "run_at_command"
+  | "send_ussd"
+  | "select_operator"
+  | "send_sms"
+  | "switch_esim_profile"
+  | "set_usbnet_mode";
+
+type Labels = Record<DeviceLabelKey, string>;
+
+/**
+ * A command kind's display name, or the kind itself.
+ *
+ * The log renders whatever the gateway recorded, including kinds this build
+ * has no label for — one issued by a newer console, or renamed since. That is
+ * the only place a stored string indexes the label set, so the widening is
+ * done here, once, instead of by weakening the type every control depends on.
+ */
+function commandLabel(labels: Labels, kind: string): string {
+  return (labels as Record<string, string | undefined>)[kind] ?? kind;
+}
 
 const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknown"]);
 
@@ -147,6 +229,10 @@ export function DeviceConsole({
         const response = await fetch("/v1/commands", {
           method: "POST",
           headers: { "content-type": "application/json" },
+          // `extra` is spread last so a caller can aim a command at a module
+          // other than the selected one. Only USSD does, and it must: a reply
+          // belongs to the session its opening request started, and the
+          // selector moves independently of that.
           body: JSON.stringify({ device_id: deviceId, kind, modem_imei: imei, ...extra }),
         });
         if (!response.ok) {
@@ -167,7 +253,7 @@ export function DeviceConsole({
 
   const rescan = (
     <button type="button" disabled={busy} onClick={() => void issue("refresh_modems")}>
-      {labels.refresh_modems ?? "refresh_modems"}
+      {labels.refresh_modems}
     </button>
   );
 
@@ -216,14 +302,20 @@ export function DeviceConsole({
       <div className="button-row">
         {READ_ONLY.map((kind) => (
           <button key={kind} type="button" disabled={busy} onClick={() => void issue(kind)}>
-            {labels[kind] ?? kind}
+            {labels[kind]}
           </button>
         ))}
         {rescan}
       </div>
 
       <AtConsole busy={busy} labels={labels} onRun={issue} />
-      <UssdConsole busy={busy} labels={labels} onRun={issue} />
+      <UssdConsole
+        busy={busy}
+        labels={labels}
+        commands={commands}
+        selectedImei={imei}
+        onRun={issue}
+      />
       <OperatorControls busy={busy} labels={labels} onRun={issue} />
       <UsbnetControls busy={busy} labels={labels} onRun={issue} />
 
@@ -241,7 +333,7 @@ export function DeviceConsole({
               void issue(kind, TURNS_OFF[kind] ?? {});
             }}
           >
-            {labels[kind] ?? kind}
+            {labels[kind]}
           </button>
         ))}
         <button
@@ -301,41 +393,164 @@ function AtConsole({
   );
 }
 
+/**
+ * USSD, which is the one control on this page that has a conversation.
+ *
+ * Everything else here is one request and one answer. A USSD code that opens a
+ * menu is not: the network holds a session open and waits to be told which
+ * item, and until this control existed the console could only ever send the
+ * first screen — `stage:"continue"` had zero occurrences in the deployed
+ * bundle, so balance, plan and top-up menus all dead-ended at "1. Balance
+ * 2. Plan" with nothing to press.
+ *
+ * The session has no identifier, and cannot be given one: it lives in the
+ * module and the carrier, addressed only by which AT port the request goes
+ * down. So the follow-up is aimed by the IMEI recorded on the command that
+ * opened it — deliberately not by the selector above, which is whatever the
+ * operator last clicked. Sending "2" to a module with no session open does not
+ * fail; it dials 2 as a USSD code of its own.
+ */
 function UssdConsole({
   busy,
   labels,
+  commands,
+  selectedImei,
   onRun,
 }: {
   busy: boolean;
   labels: Labels;
+  commands: CommandRow[];
+  selectedImei: string;
   onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
 }) {
   const [code, setCode] = useState("");
+  const [reply, setReply] = useState("");
+  // When this page first saw the answer settle, and a clock that advances
+  // while a session is open so the offer to continue withdraws itself instead
+  // of waiting for the next click to notice.
+  const [observed, setObserved] = useState<{ commandId: string; at: number } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const exchange = latestUssdExchange(commands);
+  const commandId = exchange?.commandId ?? null;
+  const status = exchange?.status ?? null;
+
+  useEffect(() => {
+    if (!commandId || status !== "succeeded") return;
+    setObserved((prev) => (prev?.commandId === commandId ? prev : { commandId, at: Date.now() }));
+  }, [commandId, status]);
+
+  // Only this exchange's own observation counts. A timestamp left over from
+  // the previous command describes a session that has already been replaced.
+  const observedAt = observed && observed.commandId === commandId ? observed.at : null;
+  const session = ussdSessionState(exchange, ussdSessionAgeMs(exchange, observedAt, now));
+
+  useEffect(() => {
+    if (session !== "open") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [session]);
+
+  const result = exchange?.result ?? null;
+
+  const send = (request: UssdRequest | null) => {
+    if (!request) return;
+    void onRun("send_ussd", request);
+  };
+
   return (
-    <form
-      className="inline-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void onRun("send_ussd", { code, stage: "start" });
-      }}
-    >
-      <label className="field grow">
-        <span>{labels.ussdCode}</span>
-        <input
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          placeholder="*101#"
-          spellCheck={false}
-          autoComplete="off"
-        />
-      </label>
-      <button type="submit" disabled={busy || code.trim() === ""}>
-        {labels.send}
-      </button>
-      <button type="button" disabled={busy} onClick={() => void onRun("send_ussd", { stage: "cancel" })}>
-        {labels.cancel}
-      </button>
-    </form>
+    <div className="stack">
+      <form
+        className="inline-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          send(ussdStartRequest(selectedImei, code));
+        }}
+      >
+        <label className="field grow">
+          <span>{labels.ussdCode}</span>
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="*101#"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+        <button type="submit" disabled={busy || code.trim() === ""}>
+          {labels.send}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => send(ussdCancelRequest(exchange, selectedImei))}
+        >
+          {labels.cancel}
+        </button>
+      </form>
+
+      {result ? (
+        <div className="stack">
+          <p className="faint">{labels.ussdSession}</p>
+          {/* The stage in words. Four of the seven mean "no answer" for four
+              different reasons, and the raw result carries an empty `text` for
+              all of them — which is what the one production run looked like:
+              a JSON blob reading network_timeout, "" and 30232 ms. */}
+          <p className={result.expectsReply ? undefined : "faint"}>
+            {labels[ussdStageLabelKey(result.stage)]}
+            {ussdStageLabelKey(result.stage) === "ussdStageOther" ? (
+              <span className="mono faint"> {result.stage}</span>
+            ) : null}
+          </p>
+          {result.text ? <pre className="output">{result.text}</pre> : null}
+
+          {session === "open" ? (
+            <form
+              className="inline-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                // Checked again here rather than trusting the render that drew
+                // the button: the guard is a deadline, and nothing re-renders
+                // the instant it passes.
+                const at = Date.now();
+                if (ussdSessionState(exchange, ussdSessionAgeMs(exchange, observedAt, at)) !== "open") {
+                  setNow(at);
+                  return;
+                }
+                send(ussdContinueRequest(exchange, reply));
+                setReply("");
+              }}
+            >
+              <label className="field grow">
+                <span>{labels.ussdReply}</span>
+                <input
+                  value={reply}
+                  onChange={(event) => setReply(event.target.value)}
+                  placeholder="1"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </label>
+              <button type="submit" disabled={busy || reply.trim() === ""}>
+                {labels.ussdContinue}
+              </button>
+              {/* Which module the reply goes to, because it is not necessarily
+                  the one selected above and an operator has no other way to
+                  tell. */}
+              <span className="faint mono">
+                {labels.ussdSessionModem} {exchange?.modemImei}
+              </span>
+            </form>
+          ) : null}
+
+          {/* A session that has aged out is the failure worth naming. Left
+              silent, the reply box would simply stop being there, and the
+              obvious next move — retyping "1" into the code box above — sends
+              the menu item to the carrier as a service code. */}
+          {session === "expired" ? <p className="error">{labels.ussdExpired}</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -440,7 +655,7 @@ function CommandLog({ commands, labels }: { commands: CommandRow[]; labels: Labe
       {commands.map((row) => (
         <li key={row.id}>
           <div className="command-head">
-            <span className="mono">{labels[row.kind] ?? row.kind}</span>
+            <span className="mono">{commandLabel(labels, row.kind)}</span>
             <StatusPill status={row.status} />
             <span className="faint mono">
               {new Date(row.issued_at).toISOString().replace("T", " ").slice(11, 19)}

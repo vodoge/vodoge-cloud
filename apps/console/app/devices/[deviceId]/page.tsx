@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { DeviceAdmin } from "@/components/device-admin";
-import { DeviceConsole } from "@/components/device-console";
+import { DeviceConsole, type DeviceLabelKey } from "@/components/device-console";
 import { EsimPanel } from "@/components/esim-panel";
 import { Card, EmptyState, StateBadge } from "@/components/ui";
 import {
@@ -170,47 +170,7 @@ export default async function DevicePage({
           title={t("device.console", locale)}
           note={t("device.consoleNote", locale)}
         >
-          <DeviceConsole
-            deviceId={deviceId}
-            modems={own}
-            labels={{
-              modem: t("device.modem", locale),
-              noModems: t("device.noModems", locale),
-              noCommands: t("device.noCommands", locale),
-              waiting: t("device.waiting", locale),
-              failed: t("device.failed", locale),
-              run: t("device.run", locale),
-              send: t("device.send", locale),
-              cancel: t("device.cancel", locale),
-              atCommand: t("device.atCommand", locale),
-              ussdCode: t("device.ussdCode", locale),
-              selectOperator: t("device.selectOperator", locale),
-              pin: t("device.pin", locale),
-              automatic: t("device.automatic", locale),
-              radioOn: t("device.radioOn", locale),
-              confirmDisruptive: t("device.confirmDisruptive", locale),
-              modem_report: t("cmd.modem_report", locale),
-              list_esim_profiles: t("cmd.list_esim_profiles", locale),
-              restart_modem: t("cmd.restart_modem", locale),
-              reset_modem_usb: t("cmd.reset_modem_usb", locale),
-              scan_operators: t("cmd.scan_operators", locale),
-              set_radio: t("cmd.set_radio", locale),
-              rotate_ip: t("cmd.rotate_ip", locale),
-              run_at_command: t("cmd.run_at_command", locale),
-              send_ussd: t("cmd.send_ussd", locale),
-              select_operator: t("cmd.select_operator", locale),
-              send_sms: t("cmd.send_sms", locale),
-              switch_esim_profile: t("cmd.switch_esim_profile", locale),
-              set_data_network: t("cmd.set_data_network", locale),
-              reregister_network: t("cmd.reregister_network", locale),
-              refresh_modems: t("cmd.refresh_modems", locale),
-              set_usbnet_mode: t("cmd.set_usbnet_mode", locale),
-              dataOn: t("device.dataOn", locale),
-              usbnetMode: t("device.usbnetMode", locale),
-              usbnetWarning: t("device.usbnetWarning", locale),
-              confirmUsbnet: t("device.confirmUsbnet", locale),
-            }}
-          />
+          <DeviceConsole deviceId={deviceId} modems={own} labels={deviceLabels(locale)} />
         </Card>
         <Card
           className="card-span-all"
@@ -340,4 +300,85 @@ function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+/**
+ * The label keys DeviceConsole draws, each pointing at its catalogue entry.
+ *
+ * Typed as a total Record, so leaving one out is a compile error and naming
+ * one the component does not read is another. It used to be a bare object
+ * literal with no relation to what the component looked up: a control that
+ * reached for a key nobody had listed here got `undefined`, and React renders
+ * undefined as nothing — an empty button, in both locales, silently. That
+ * defect cost the proxy export control a delivery (T055) before the same gate
+ * was put in front of it (T071); this console was the last panel without one,
+ * and the USSD follow-up added seven stage labels at once.
+ *
+ * The value is the catalogue key rather than `true` because these come from
+ * two namespaces: the controls are `device.*` and the command names, which the
+ * log shares with the buttons, are `cmd.*`.
+ */
+const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
+  modem: "device.modem",
+  noModems: "device.noModems",
+  noCommands: "device.noCommands",
+  waiting: "device.waiting",
+  failed: "device.failed",
+  run: "device.run",
+  send: "device.send",
+  cancel: "device.cancel",
+  atCommand: "device.atCommand",
+  ussdCode: "device.ussdCode",
+  ussdSession: "device.ussdSession",
+  ussdSessionModem: "device.ussdSessionModem",
+  ussdReply: "device.ussdReply",
+  ussdContinue: "device.ussdContinue",
+  ussdExpired: "device.ussdExpired",
+  ussdStageComplete: "device.ussdStageComplete",
+  ussdStageNeedsReply: "device.ussdStageNeedsReply",
+  ussdStageTerminated: "device.ussdStageTerminated",
+  ussdStageOtherClient: "device.ussdStageOtherClient",
+  ussdStageNotSupported: "device.ussdStageNotSupported",
+  ussdStageNetworkTimeout: "device.ussdStageNetworkTimeout",
+  ussdStageOther: "device.ussdStageOther",
+  selectOperator: "device.selectOperator",
+  pin: "device.pin",
+  automatic: "device.automatic",
+  radioOn: "device.radioOn",
+  dataOn: "device.dataOn",
+  usbnetMode: "device.usbnetMode",
+  usbnetWarning: "device.usbnetWarning",
+  confirmUsbnet: "device.confirmUsbnet",
+  confirmDisruptive: "device.confirmDisruptive",
+  modem_report: "cmd.modem_report",
+  list_esim_profiles: "cmd.list_esim_profiles",
+  restart_modem: "cmd.restart_modem",
+  reset_modem_usb: "cmd.reset_modem_usb",
+  scan_operators: "cmd.scan_operators",
+  rotate_ip: "cmd.rotate_ip",
+  set_radio: "cmd.set_radio",
+  set_data_network: "cmd.set_data_network",
+  reregister_network: "cmd.reregister_network",
+  refresh_modems: "cmd.refresh_modems",
+  run_at_command: "cmd.run_at_command",
+  send_ussd: "cmd.send_ussd",
+  select_operator: "cmd.select_operator",
+  send_sms: "cmd.send_sms",
+  switch_esim_profile: "cmd.switch_esim_profile",
+  set_usbnet_mode: "cmd.set_usbnet_mode",
+};
+
+/**
+ * Resolves each of those against the message catalogue for this request.
+ *
+ * A key with no catalogue entry comes back as ⟦device.whatever⟧ from t(),
+ * which is loud on the page rather than blank. The two remaining ways this can
+ * be wrong are a missing key, which must be visible, and a key present in only
+ * one locale, which check-i18n refuses.
+ */
+function deviceLabels(locale: Locale): Record<DeviceLabelKey, string> {
+  const names = Object.keys(DEVICE_LABEL_KEYS) as DeviceLabelKey[];
+  return Object.fromEntries(
+    names.map((key) => [key, t(DEVICE_LABEL_KEYS[key], locale)]),
+  ) as Record<DeviceLabelKey, string>;
 }

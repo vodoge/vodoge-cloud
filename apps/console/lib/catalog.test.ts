@@ -17,7 +17,17 @@ import {
   parseMessage,
   parseRetrievedNotification,
   parseSchedule,
+  parseUssdResult,
+  latestUssdExchange,
+  ussdCancelRequest,
+  ussdContinueRequest,
+  ussdSessionAgeMs,
+  ussdSessionState,
+  ussdStageLabelKey,
+  ussdStartRequest,
   UnauthorizedError,
+  USSD_SESSION_TTL_MS,
+  type UssdCommandRow,
 } from "./catalog.ts";
 
 test("parseDevice ignores malformed rows", () => {
@@ -786,4 +796,252 @@ test("a download with no transaction identifies nothing and is dropped", () => {
   assert.equal(parseEsimDownload(withoutTransaction), null);
   assert.equal(parseEsimDownload(null), null);
   assert.equal(parseEsimDownload("nope"), null);
+});
+
+// ---------------------------------------------------------------------------
+// USSD sessions.
+//
+// The console could not send `stage:"continue"` at all until now, so every
+// multi-level menu — balance, plan, top-up, the codes an operator actually
+// uses — stopped at its first screen. What makes the follow-up delicate is
+// that there is no session identifier to carry: the session lives in the
+// module, addressed only by which AT port the request goes down, so "the right
+// session" means "the same IMEI, soon enough". Getting either wrong does not
+// fail loudly. It dials the menu item's number as a fresh USSD code.
+// ---------------------------------------------------------------------------
+
+/** The one production USSD result on record (T076): the network never spoke. */
+const NETWORK_TIMEOUT = {
+  code: "*#100#",
+  stage: "network_timeout",
+  text: "",
+  expects_reply: false,
+  elapsed_ms: 30232,
+};
+
+const MENU = {
+  code: "*101#",
+  stage: "needs_reply",
+  text: "1. Balance\n2. Plan",
+  expects_reply: true,
+  dcs: 15,
+  elapsed_ms: 1200,
+};
+
+function ussdRow(over: Partial<UssdCommandRow> & { details?: unknown } = {}): UssdCommandRow {
+  const { details, ...rest } = over;
+  return {
+    id: "c1",
+    kind: "send_ussd",
+    status: "succeeded",
+    issued_at: 1000,
+    completed_at: 2000,
+    payload: { modem_imei: "867018069514820", stage: "start", code: "*101#" },
+    result: details === undefined ? null : { details },
+    ...rest,
+  };
+}
+
+test("parseUssdResult keeps the stage the network actually reported", () => {
+  const value = parseUssdResult(NETWORK_TIMEOUT);
+  assert.ok(value);
+  assert.equal(value.stage, "network_timeout");
+  assert.equal(value.expectsReply, false);
+  assert.equal(value.text, "");
+  assert.equal(value.elapsedMs, 30232);
+  assert.equal(value.dcs, null);
+});
+
+// An agent older than `expects_reply` still reports the stage, and the stage is
+// what the network said. Reading the absent field as "closed" would hide the
+// reply box on exactly the sessions that need one.
+test("parseUssdResult derives expectsReply from the stage when the field is absent", () => {
+  const older: Record<string, unknown> = { ...MENU };
+  delete older.expects_reply;
+  assert.equal(parseUssdResult(older)?.expectsReply, true);
+  const closed: Record<string, unknown> = { ...NETWORK_TIMEOUT };
+  delete closed.expects_reply;
+  assert.equal(parseUssdResult(closed)?.expectsReply, false);
+});
+
+test("parseUssdResult drops a result with no stage", () => {
+  assert.equal(parseUssdResult({ text: "Balance 12.30" }), null);
+  assert.equal(parseUssdResult(null), null);
+  assert.equal(parseUssdResult("nope"), null);
+});
+
+test("latestUssdExchange picks the newest USSD command and ignores the rest", () => {
+  const exchange = latestUssdExchange([
+    ussdRow({ id: "old", issued_at: 10, details: MENU }),
+    { ...ussdRow({ id: "at", issued_at: 99 }), kind: "run_at_command" },
+    ussdRow({ id: "new", issued_at: 50, details: NETWORK_TIMEOUT }),
+  ]);
+  assert.equal(exchange?.commandId, "new");
+  assert.equal(exchange?.result?.stage, "network_timeout");
+  assert.equal(latestUssdExchange([]), null);
+});
+
+// The gateway substitutes "start" for an omitted stage before the device ever
+// sees the command, so reading an absent one as anything else would describe a
+// request that was not sent.
+test("latestUssdExchange reads an omitted stage as the start the gateway sent", () => {
+  const exchange = latestUssdExchange([ussdRow({ payload: { modem_imei: "8670" } })]);
+  assert.equal(exchange?.stageSent, "start");
+  assert.equal(exchange?.modemImei, "8670");
+});
+
+test("a session is open only while the device is waiting for a reply", () => {
+  const menu = latestUssdExchange([ussdRow({ details: MENU })]);
+  assert.equal(ussdSessionState(menu, 5_000), "open");
+
+  const answered = latestUssdExchange([
+    ussdRow({ details: { ...MENU, stage: "complete", expects_reply: false } }),
+  ]);
+  assert.equal(ussdSessionState(answered, 5_000), "none");
+
+  const timedOut = latestUssdExchange([ussdRow({ details: NETWORK_TIMEOUT })]);
+  assert.equal(ussdSessionState(timedOut, 5_000), "none");
+
+  assert.equal(ussdSessionState(null, 5_000), "none");
+});
+
+// A command still in flight, or one the gateway refused, has not opened
+// anything. Only a succeeded one has a device behind it.
+test("an unsettled or failed command opens no session", () => {
+  for (const status of ["queued", "sent", "executing", "failed", "expired", "cancelled"]) {
+    const exchange = latestUssdExchange([ussdRow({ status, details: MENU })]);
+    assert.equal(ussdSessionState(exchange, 1_000), "none", status);
+  }
+});
+
+// Without an IMEI the reply has nowhere to go, and the modem selector is not a
+// substitute: it is whatever the operator last clicked, which is how a reply
+// ends up dialled on a module that never opened a session.
+test("a session with no recorded IMEI cannot be continued", () => {
+  const exchange = latestUssdExchange([ussdRow({ payload: { stage: "start" }, details: MENU })]);
+  assert.equal(exchange?.modemImei, null);
+  assert.equal(ussdSessionState(exchange, 1_000), "none");
+  assert.equal(ussdContinueRequest(exchange, "1"), null);
+});
+
+test("a session past its guard reads as expired rather than open", () => {
+  const menu = latestUssdExchange([ussdRow({ details: MENU })]);
+  assert.equal(ussdSessionState(menu, USSD_SESSION_TTL_MS - 1), "open");
+  assert.equal(ussdSessionState(menu, USSD_SESSION_TTL_MS), "open");
+  assert.equal(ussdSessionState(menu, USSD_SESSION_TTL_MS + 1), "expired");
+  // An age the page never measured is treated as too old. Refusing a live
+  // session costs one restart; continuing a dead one sends "1" to the carrier
+  // as a service code nobody asked for.
+  assert.equal(ussdSessionState(menu, null), "expired");
+});
+
+test("continuing carries the session's own IMEI, not the selected one", () => {
+  const menu = latestUssdExchange([ussdRow({ details: MENU })]);
+  assert.deepEqual(ussdContinueRequest(menu, " 2 "), {
+    modem_imei: "867018069514820",
+    code: "2",
+    stage: "continue",
+  });
+  assert.equal(ussdContinueRequest(menu, "   "), null);
+  assert.equal(ussdContinueRequest(null, "2"), null);
+});
+
+test("starting and cancelling produce the shapes the contract requires", () => {
+  assert.deepEqual(ussdStartRequest("8670", " *101# "), {
+    modem_imei: "8670",
+    code: "*101#",
+    stage: "start",
+  });
+  assert.equal(ussdStartRequest("8670", " "), null);
+  assert.equal(ussdStartRequest("", "*101#"), null);
+
+  // SendUssdCommand requires `code`, so a cancel carries it empty rather than
+  // omitting it — the gateway does the same thing on its side.
+  const menu = latestUssdExchange([ussdRow({ details: MENU })]);
+  assert.deepEqual(ussdCancelRequest(menu, "other-imei"), {
+    modem_imei: "867018069514820",
+    code: "",
+    stage: "cancel",
+  });
+  // No known session: clearing one the console never saw is what the button is
+  // for, so it falls back to whichever module is selected.
+  assert.deepEqual(ussdCancelRequest(null, "8670"), {
+    modem_imei: "8670",
+    code: "",
+    stage: "cancel",
+  });
+  assert.equal(ussdCancelRequest(null, ""), null);
+});
+
+test("every stage the edge can report has its own explanation", () => {
+  assert.deepEqual(
+    [
+      "complete",
+      "needs_reply",
+      "terminated",
+      "other_client",
+      "not_supported",
+      "network_timeout",
+    ].map(ussdStageLabelKey),
+    [
+      "ussdStageComplete",
+      "ussdStageNeedsReply",
+      "ussdStageTerminated",
+      "ussdStageOtherClient",
+      "ussdStageNotSupported",
+      "ussdStageNetworkTimeout",
+    ],
+  );
+  // `other` is the edge's own name for a +CUSD code it cannot place, and an
+  // agent newer than this build can send one this build has never heard of.
+  assert.equal(ussdStageLabelKey("other"), "ussdStageOther");
+  assert.equal(ussdStageLabelKey("7"), "ussdStageOther");
+});
+
+// Two clocks, and the session is young only when both say so. The gateway's
+// timestamp is the only one that knows a page just loaded an hour-old menu;
+// the page's own observation is the only one with no skew in it.
+test("session age is the older of what the gateway says and what the page saw", () => {
+  const now = 1_000_000;
+  const menu = latestUssdExchange([ussdRow({ completed_at: now - 5_000, details: MENU })]);
+
+  // Agreeing: five seconds either way.
+  assert.equal(ussdSessionAgeMs(menu, now - 5_000, now), 5_000);
+  // The row looks fresh because the two machines disagree, but this tab has
+  // been watching the same answer for ten minutes.
+  assert.equal(ussdSessionAgeMs(menu, now - 600_000, now), 600_000);
+  // Reloaded onto an hour-old row: nothing was observed, and the row decides.
+  const stale = latestUssdExchange([ussdRow({ completed_at: now - 3_600_000, details: MENU })]);
+  assert.equal(ussdSessionAgeMs(stale, null, now), 3_600_000);
+  assert.equal(ussdSessionState(stale, ussdSessionAgeMs(stale, null, now)), "expired");
+  // A row with no completion time at all still ages by observation.
+  const undated = latestUssdExchange([ussdRow({ completed_at: null, details: MENU })]);
+  assert.equal(ussdSessionAgeMs(undated, now - 1_000, now), 1_000);
+  // Neither clock has anything to say, so nothing is known.
+  assert.equal(ussdSessionAgeMs(undated, null, now), null);
+  assert.equal(ussdSessionAgeMs(null, now, now), null);
+});
+
+// The end-to-end shape of the thing this card exists for: a menu arrives, the
+// operator picks item 2, and the follow-up carries stage "continue" and the
+// IMEI of the module holding the session — not the one in the dropdown.
+test("a menu answered in time produces a continue on the session's own modem", () => {
+  const now = 1_000_000;
+  const rows = [ussdRow({ completed_at: now - 4_000, details: MENU })];
+  const exchange = latestUssdExchange(rows);
+  const age = ussdSessionAgeMs(exchange, now - 4_000, now);
+  assert.equal(ussdSessionState(exchange, age), "open");
+  assert.deepEqual(ussdContinueRequest(exchange, "2"), {
+    modem_imei: "867018069514820",
+    code: "2",
+    stage: "continue",
+  });
+
+  // Three minutes later the same menu is no longer answerable, and the panel
+  // has something to say instead of a control that silently disappeared.
+  const late = now + 180_000;
+  assert.equal(
+    ussdSessionState(exchange, ussdSessionAgeMs(exchange, now - 4_000, late)),
+    "expired",
+  );
 });

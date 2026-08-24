@@ -1236,3 +1236,279 @@ export function parseEsimDownload(value: unknown): EsimDownload | null {
 function stringsOf(value: unknown): string[] {
   return arrayOf(value).filter((entry): entry is string => typeof entry === "string");
 }
+
+/**
+ * One `+CUSD:` reply, as the edge reports it in a `send_ussd` result.
+ *
+ * The stage is the network's own answer code, not our interpretation of it:
+ * `complete` and `needs_reply` carry text, and the other four are the module
+ * saying nothing useful came back. Kept as the raw string rather than a union
+ * so an unrecognised code from a future agent renders as itself instead of
+ * being collapsed into the nearest known one.
+ */
+export type UssdResult = {
+  code: string;
+  stage: string;
+  text: string;
+  dcs: number | null;
+  expectsReply: boolean;
+  elapsedMs: number | null;
+};
+
+/**
+ * Read one USSD answer out of a command result.
+ *
+ * `expects_reply` is derived from the stage when the field is absent, because
+ * an agent older than that field still reports `needs_reply`, and the stage is
+ * what the network actually said. Falling back to "no session is open" there
+ * would hide a menu behind a control that never appears.
+ */
+export function parseUssdResult(value: unknown): UssdResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const stage = asString(row.stage);
+  if (!stage) {
+    return null;
+  }
+  return {
+    code: typeof row.code === "string" ? row.code : "",
+    stage,
+    text: typeof row.text === "string" ? row.text : "",
+    dcs: asNumber(row.dcs),
+    expectsReply: asBoolean(row.expects_reply) ?? stage === "needs_reply",
+    elapsedMs: asNumber(row.elapsed_ms),
+  };
+}
+
+/** Enough of a relayed command for the USSD helpers below. */
+export type UssdCommandRow = {
+  id: string;
+  kind: string;
+  status: string;
+  issued_at: number;
+  completed_at: number | null;
+  payload: Record<string, unknown> | null;
+  result: { details?: unknown } | null;
+};
+
+/**
+ * The last USSD exchange on a device, whatever became of it.
+ *
+ * A USSD session has no identifier anywhere in the contract, and it cannot
+ * have one: the session lives in the module and the network, addressed only by
+ * which AT port the request goes down. So the thing a follow-up has to carry
+ * is the IMEI the opening request used — which is read back off the recorded
+ * payload rather than off the page's modem selector, because those two stop
+ * agreeing the moment an operator touches the dropdown, and a reply sent to
+ * the wrong module is a fresh USSD request for a menu item's number.
+ */
+export type UssdExchange = {
+  commandId: string;
+  modemImei: string | null;
+  stageSent: string;
+  status: string;
+  completedAt: number | null;
+  result: UssdResult | null;
+};
+
+export function latestUssdExchange(rows: readonly UssdCommandRow[]): UssdExchange | null {
+  let latest: UssdCommandRow | null = null;
+  for (const row of rows) {
+    if (row.kind !== "send_ussd") continue;
+    if (!latest || row.issued_at > latest.issued_at) {
+      latest = row;
+    }
+  }
+  if (!latest) {
+    return null;
+  }
+  const payload = latest.payload ?? {};
+  return {
+    commandId: latest.id,
+    modemImei: asString(payload.modem_imei),
+    // The gateway defaults an omitted stage to "start" before it ever reaches
+    // the device, so reading an absent one as anything else would describe a
+    // request that was not sent.
+    stageSent: asString(payload.stage) ?? "start",
+    status: latest.status,
+    completedAt: latest.completed_at,
+    result: parseUssdResult(latest.result?.details),
+  };
+}
+
+/**
+ * How long the console will offer to continue a session it saw open.
+ *
+ * There is no timer to read. GSM leaves the USSD session lifetime to the
+ * network, the module reports nothing about it, and the one production run so
+ * far never got an answer at all. So this is a console-side guard, not a
+ * measurement: long enough that an operator reading a menu is not cut off,
+ * short enough that a tab left open overnight does not send "2" to a carrier
+ * as a brand new service code.
+ */
+export const USSD_SESSION_TTL_MS = 120_000;
+
+/**
+ * How old the open session is, by the two clocks that disagree.
+ *
+ * Neither reading is trustworthy alone. The row's `completed_at` comes off the
+ * gateway's clock, so comparing it against the browser's measures the skew
+ * between two machines as well as the passage of time — but it is the only one
+ * that knows a page just loaded a menu that was answered an hour ago. The
+ * page's own observation has no skew in it, and no memory: to a tab opened a
+ * moment ago, every row in the history looks new.
+ *
+ * So the answer is the larger of the two. A session counts as young only when
+ * both clocks agree it is, which fails towards refusing a live session — one
+ * restart — rather than towards replying into a dead one.
+ */
+export function ussdSessionAgeMs(
+  exchange: UssdExchange | null,
+  observedAtMs: number | null,
+  nowMs: number,
+): number | null {
+  if (!exchange) {
+    return null;
+  }
+  const byGateway = exchange.completedAt === null ? null : nowMs - exchange.completedAt;
+  const byPage = observedAtMs === null ? null : nowMs - observedAtMs;
+  if (byGateway === null && byPage === null) {
+    return null;
+  }
+  return Math.max(byGateway ?? 0, byPage ?? 0);
+}
+
+export type UssdSessionState = "none" | "open" | "expired";
+
+/**
+ * Whether a follow-up may still be sent, given how long ago the reply landed.
+ *
+ * The age is measured by the browser from when it first saw the reply, not
+ * from the timestamps on the row: those come off the gateway's clock, and a
+ * skewed comparison would decide this either way with equal confidence.
+ *
+ * An unknown age reads as expired. Refusing a session that was in fact still
+ * open costs one restart; continuing one that has closed sends a menu item's
+ * number to the carrier as a new USSD code, which is a request nobody made.
+ */
+export function ussdSessionState(
+  exchange: UssdExchange | null,
+  ageMs: number | null,
+  ttlMs: number = USSD_SESSION_TTL_MS,
+): UssdSessionState {
+  if (!exchange || !exchange.result || !exchange.result.expectsReply) {
+    return "none";
+  }
+  // A reply is addressed by IMEI or not at all.
+  if (!exchange.modemImei) {
+    return "none";
+  }
+  // Still in flight, or refused, or expired in the queue. A reply the device
+  // never confirmed is not a session anybody can continue.
+  if (exchange.status !== "succeeded") {
+    return "none";
+  }
+  if (ageMs === null || ageMs > ttlMs) {
+    return "expired";
+  }
+  return "open";
+}
+
+/**
+ * The label a stage should be explained with.
+ *
+ * Four of the seven stages mean "no answer", and each means it for a different
+ * reason an operator can act on: a terminated session is the carrier hanging
+ * up, an unsupported one is the module refusing, a timeout is the network
+ * never speaking. Rendering the raw code, or the empty `text` that comes with
+ * those stages, tells them none of that — which is what the one production run
+ * so far looked like: `{"stage":"network_timeout","text":"","elapsed_ms":30232}`
+ * shown as a JSON blob.
+ *
+ * Returning a key rather than a sentence keeps the strings in the catalogues,
+ * where check-i18n can see both locales.
+ */
+export type UssdStageLabelKey =
+  | "ussdStageComplete"
+  | "ussdStageNeedsReply"
+  | "ussdStageTerminated"
+  | "ussdStageOtherClient"
+  | "ussdStageNotSupported"
+  | "ussdStageNetworkTimeout"
+  | "ussdStageOther";
+
+const USSD_STAGE_LABELS: Record<string, UssdStageLabelKey> = {
+  complete: "ussdStageComplete",
+  needs_reply: "ussdStageNeedsReply",
+  terminated: "ussdStageTerminated",
+  other_client: "ussdStageOtherClient",
+  not_supported: "ussdStageNotSupported",
+  network_timeout: "ussdStageNetworkTimeout",
+};
+
+export function ussdStageLabelKey(stage: string): UssdStageLabelKey {
+  // `other` is what the edge calls any +CUSD code it has no name for, and an
+  // agent newer than this console can send one this build has never heard of.
+  // Both land here, and both are shown with the raw code beside them.
+  return USSD_STAGE_LABELS[stage] ?? "ussdStageOther";
+}
+
+/**
+ * The body of one `send_ussd`, minus the fields every command carries.
+ *
+ * `code` is present even on a cancel because the contract requires it
+ * (`SendUssdCommand.required` lists it) and the gateway sends it empty rather
+ * than refusing. Building it here rather than at four call sites is what keeps
+ * a follow-up from being posted without the IMEI that identifies its session.
+ */
+export type UssdRequest = {
+  modem_imei: string;
+  code: string;
+  stage: "start" | "continue" | "cancel";
+};
+
+export function ussdStartRequest(modemImei: string, code: string): UssdRequest | null {
+  if (!modemImei || code.trim() === "") {
+    return null;
+  }
+  return { modem_imei: modemImei, code: code.trim(), stage: "start" };
+}
+
+/**
+ * A reply on the session the given exchange opened.
+ *
+ * Null when there is nothing to reply to or nothing to say. The IMEI comes
+ * from the exchange, never from the caller: sending a menu selection to a
+ * module that has no session open does not fail — it dials the selection as a
+ * USSD code of its own.
+ */
+export function ussdContinueRequest(
+  exchange: UssdExchange | null,
+  reply: string,
+): UssdRequest | null {
+  if (!exchange?.modemImei || reply.trim() === "") {
+    return null;
+  }
+  return { modem_imei: exchange.modemImei, code: reply.trim(), stage: "continue" };
+}
+
+/**
+ * Close a session, on the module that owns it.
+ *
+ * Falls back to the selected module when no session is known, because clearing
+ * one the console never saw — left open by the local panel, or by a page that
+ * has since been reloaded — is exactly what an operator reaches for this
+ * button to do.
+ */
+export function ussdCancelRequest(
+  exchange: UssdExchange | null,
+  selectedImei: string,
+): UssdRequest | null {
+  const modemImei = exchange?.modemImei ?? selectedImei;
+  if (!modemImei) {
+    return null;
+  }
+  return { modem_imei: modemImei, code: "", stage: "cancel" };
+}
