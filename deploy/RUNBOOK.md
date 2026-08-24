@@ -5,23 +5,102 @@ covers what the Compose project is; this covers operating it.
 
 ## The constraint that shapes everything
 
-The host has **2 vCPU and 1.6 GB of RAM**. It cannot build this software. An
-attempt to run `go build` there starved sshd badly enough that the box stopped
-accepting connections for several minutes, and `next build` is heavier still.
+The host has **2 vCPU and 1.6 GB of RAM**. It cannot build this software.
 
-So both images are produced elsewhere and the host only copies a finished
-artifact in:
+That is not a preference. On 2026-08-24 a `docker compose build gateway` run on
+this host sent it into memory thrashing and **sshd and 443/444 stopped
+answering for 107 minutes**. ICMP kept replying and TCP kept handshaking, so it
+read as a network fault right up until every ssh attempt died with `Connection
+timed out during banner exchange` — sshd could accept a connection and not fork
+a child for it. It came back only after a hard reboot from the VPS console.
+`next build` is heavier than `go build`, so the console side of this is worse,
+not better.
 
-| Service | Built where | Host Dockerfile |
-| --- | --- | --- |
-| gateway | workstation, `GOOS=linux GOARCH=amd64` | `Dockerfile.gateway.prebuilt` |
-| console | workstation, `next build` standalone | `Dockerfile.console.prebuilt` |
+Both images are therefore produced elsewhere, and the host only packages a
+finished artifact:
 
-`Dockerfile.gateway` and `Dockerfile.console` still build from source. They are
-correct and are what a CI runner should use; they are simply not usable on this
-host.
+| Service | Built where | Host Dockerfile | Artifact |
+| --- | --- | --- | --- |
+| gateway | workstation, `GOOS=linux GOARCH=amd64` | `Dockerfile.gateway.prebuilt` | `deploy/vodoge-gateway` |
+| console | workstation, `next build` standalone | `Dockerfile.console.prebuilt` | `deploy/console-dist.tgz` |
 
-## Deploying the gateway
+### The rule is enforced now, not merely written down
+
+The paragraph above predates the incident. So did the line in this runbook
+saying `--no-build` matters. **Neither stopped anybody.** A rule that lives only
+in a document is a rule that gets skipped by whoever did not read it that day.
+
+`Dockerfile.gateway` and `Dockerfile.console` still build from source — they are
+correct and CI should use them — but they now refuse unless told the machine can
+take it:
+
+```sh
+docker compose build gateway    # fails in under a second, prints what to do
+docker build --build-arg VODOGE_BUILD_FROM_SOURCE=yes \
+  -f deploy/Dockerfile.gateway -t vodoge-cloud-gateway .   # works, elsewhere
+```
+
+The refusal is a build stage selected by an `ARG` in the `FROM` line, so under
+BuildKit the Go and Node toolchain images are **not even pulled** before it
+fails. Measured here: 0.9 s.
+
+Two nearer-looking fixes were rejected:
+
+- **Delete `build:` from `compose.yaml`.** Then `docker compose build gateway`
+  prints `No services to build` and **exits 0** — checked on this host, Compose
+  v5.4.0. The operator believes a new image exists, runs `up -d`, and gets the
+  old one.
+- **Point `build:` at the `.prebuilt` Dockerfile.** Then it succeeds cheaply,
+  and succeeds just as cheaply against a `deploy/vodoge-gateway` that is weeks
+  stale.
+
+Both trade "the box fell over" for "the box is quietly serving old code", which
+is the worse failure, because nothing about it looks wrong.
+
+## Deploying
+
+One command on the host, either service:
+
+```sh
+/opt/vodoge-cloud/bin/deploy.sh gateway     # or console, or both
+```
+
+It packages the artifact, recreates the container, **and then checks that the
+container really is running the image it just built** before reporting success.
+It also stores the artifact's sha256 as an image label, so "which build is this
+container running" stops being a guess:
+
+```sh
+docker inspect vodoge-cloud-gateway-1 \
+  --format '{{index .Config.Labels "vodoge.artifact.sha256"}}'
+```
+
+### Why it checks, and why `--force-recreate`
+
+On 2026-08-24, while recovering from the incident above, `docker compose up -d
+--no-build gateway` **left the container on the old image and exited 0**:
+
+```text
+container image   1168be0d…   ← old, unchanged
+freshly built     a2edbce0…
+```
+
+The image *tag* had not changed, so Compose saw nothing to do. The deploy looked
+finished. It was not. The pair that works:
+
+```sh
+docker build -f Dockerfile.<svc>.prebuilt -t vodoge-cloud-<svc> .
+docker compose --env-file deploy/.env -f deploy/compose.yaml \
+  up -d --no-build --force-recreate <svc>
+```
+
+`--no-build` keeps Compose from compiling here. `--force-recreate` keeps it from
+reusing a container that already matches the tag. Drop either and it fails
+silently in its own direction, which is why `bin/deploy.sh` passes both and then
+compares `docker inspect -f '{{.Image}}'` with the id it just built. **"Up" is
+not evidence** — "Up" is precisely what was on screen while the old binary ran.
+
+### Producing the gateway artifact
 
 On the workstation:
 
@@ -32,24 +111,28 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
 scp /tmp/vodoge-gateway root@43.108.53.126:/opt/vodoge-cloud/deploy/
 ```
 
-On the host:
+The flags are not decoration. `CGO_ENABLED=0` is what lets an Alpine image run
+the binary at all, and `-trimpath` plus `-ldflags="-s -w"` is what makes the
+build reproducible: the same commit, built twice from a clean tree, gives a
+byte-identical binary, so `sha256sum` on both ends answers "is this the artifact
+I think it is".
+
+Go stamps the commit into the binary, which is worth knowing when the hashes
+disagree and nothing else explains it:
 
 ```sh
-cd /opt/vodoge-cloud/deploy && docker build -t vodoge-cloud-gateway -f Dockerfile.gateway.prebuilt .
-cd /opt/vodoge-cloud && docker compose --env-file deploy/.env -f deploy/compose.yaml \
-  up -d --no-build --force-recreate gateway
+go version -m /tmp/vodoge-gateway | grep vcs.
 ```
 
-`--no-build` matters: without it Compose tries to build from `Dockerfile.gateway`
-and the host runs out of memory.
+`vcs.modified=true` means it was built from a dirty working tree — the same
+commit built clean will not match it, and neither will match anything anyone
+can reproduce later. Prefer committing first.
 
-## Deploying the console
+### Producing the console artifact
 
 Next.js traces `sharp` into the standalone bundle even with image optimisation
 off, and its native binary matches the machine that ran the build. Remove it —
 the console renders no images, so nothing loads it.
-
-On the workstation:
 
 ```sh
 cd apps/console
@@ -62,12 +145,37 @@ tar -czf console-dist.tgz -C dist .
 scp console-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
 ```
 
-Then the same `docker build` / `up -d --no-build` pair with
-`Dockerfile.console.prebuilt` and service `console`.
-
 Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
 `b/a` when `b` already exists, which silently produces `.next/static/static`
 and a console that serves no CSS.
+
+### Checking the console is really up
+
+`curl http://127.0.0.1:13000/` answers **404**, and that is correct: routing is
+by hostname, and no `Host` header means no tenant. Ask it the way a browser
+does:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: a.vodoge.com' \
+  http://127.0.0.1:13000/login          # 200
+curl -s -o /dev/null -w '%{http_code}\n' -L https://a.vodoge.com/  # 200, at /login
+```
+
+A bare `/` used as a health probe reports a healthy console as broken, which is
+why `bin/deploy.sh` sends the header.
+
+### Rolling back
+
+`bin/deploy.sh` tags the outgoing image `vodoge-cloud-<svc>:rollback-<stamp>`
+before it builds. To go back, re-point the tag and recreate — the same two
+commands, `--force-recreate` included for the same reason:
+
+```sh
+docker tag vodoge-cloud-gateway:rollback-20260824-181500 vodoge-cloud-gateway
+docker compose --env-file deploy/.env -f deploy/compose.yaml \
+  up -d --no-build --force-recreate gateway
+```
+
 
 ## The contract lives in two places
 

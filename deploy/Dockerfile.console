@@ -1,4 +1,63 @@
-FROM node:22-alpine AS build
+# syntax=docker/dockerfile:1
+#
+# Building the console from source. Same shape as Dockerfile.gateway, same
+# refusal, and for a heavier reason: `next build` costs more than `go build`
+# and the production host has 2 vCPU and 1.6 GB of RAM.
+#
+# The incident that put this guard here was a gateway build (2026-08-24, 107
+# minutes of no ssh, hard reboot from the VPS console), but the console service
+# in compose.yaml pointed at this file in exactly the same way. Fixing only the
+# gateway would have left the same landmine one service further down.
+#
+# With BuildKit only the stages the target needs are built, so unless
+# VODOGE_BUILD_FROM_SOURCE=yes the npm stage is never entered. To build for
+# real, on a machine with memory:
+#
+#     docker build --build-arg VODOGE_BUILD_FROM_SOURCE=yes \
+#       -f deploy/Dockerfile.console -t vodoge-cloud-console .
+
+ARG VODOGE_BUILD_FROM_SOURCE=refuse
+
+FROM alpine:3.22 AS toolchain-refuse
+ARG VODOGE_BUILD_FROM_SOURCE
+RUN set -e; \
+    printf '%s\n' \
+'' \
+'  ===================================================================' \
+'  REFUSING to build the console from source.' \
+'' \
+'  This host has 2 vCPU and 1.6 GB of RAM. `next build` needs more' \
+'  than it has; the equivalent Go build starved sshd here for 107' \
+'  minutes on 2026-08-24 and needed a hard reboot from the VPS' \
+'  console.' \
+'' \
+'  Deploy it this way instead:' \
+'' \
+'    on the workstation (see deploy/RUNBOOK.md for the whole recipe)' \
+'      cd apps/console && npm run build' \
+'      ... assemble dist/ ... tar -czf console-dist.tgz -C dist .' \
+'      scp console-dist.tgz <host>:/opt/vodoge-cloud/deploy/' \
+'' \
+'    on the host' \
+'      /opt/vodoge-cloud/bin/deploy.sh console' \
+'' \
+'    or, by hand, both lines -- the second one matters:' \
+'      docker build -f Dockerfile.console.prebuilt -t vodoge-cloud-console .' \
+'      docker compose ... up -d --no-build --force-recreate console' \
+'' \
+'  Without --force-recreate the tag has not changed, so Compose keeps' \
+'  the old container and reports success. See deploy/RUNBOOK.md.' \
+'' \
+'  If this machine really can compile, say so:' \
+'      docker build --build-arg VODOGE_BUILD_FROM_SOURCE=yes \' \
+'        -f deploy/Dockerfile.console -t vodoge-cloud-console .' \
+'  ===================================================================' \
+'' >&2; \
+    [ "$VODOGE_BUILD_FROM_SOURCE" = yes ]
+
+FROM node:22-alpine AS toolchain-yes
+
+FROM toolchain-${VODOGE_BUILD_FROM_SOURCE} AS build
 
 WORKDIR /src
 COPY apps/console/package.json apps/console/package-lock.json ./

@@ -74,6 +74,26 @@ services:
       - backend
 
   gateway:
+    # Pinned, so that the tag bin/deploy.sh builds is the tag Compose runs.
+    # Compose derives the same name from project + service today; stating it
+    # means a rename cannot silently point the two halves at different tags.
+    image: vodoge-cloud-gateway
+    # This stanza deliberately stays, and deliberately still points at the
+    # from-source Dockerfile -- which now refuses to run on anything that has
+    # not passed VODOGE_BUILD_FROM_SOURCE=yes. It looks backwards; it is not.
+    #
+    # Removing `build:` was the first instinct and is worse: `docker compose
+    # build gateway` then prints "No services to build" and exits 0 (verified
+    # on this host, Compose v5.4.0), so the operator believes a fresh image
+    # exists, runs `up -d`, and gets the old one. Pointing it at
+    # Dockerfile.gateway.prebuilt is worse in the same direction: it succeeds
+    # cheaply even when deploy/vodoge-gateway is weeks stale. A container
+    # quietly serving old code is a nastier failure than a box that fell over,
+    # because nothing about it looks wrong.
+    #
+    # So the stanza stays and the Dockerfile is what says no: in under a
+    # second, before any toolchain image is pulled, printing the two commands
+    # that do work. See deploy/Dockerfile.gateway and deploy/RUNBOOK.md.
     build:
       context: ..
       dockerfile: deploy/Dockerfile.gateway
@@ -120,6 +140,10 @@ services:
       start_period: 8s
 
   console:
+    # Pinned for the same reason as the gateway above, and refusing to build
+    # here for the same reason: `next build` needs more memory than this host
+    # has. deploy/Dockerfile.console carries the refusal.
+    image: vodoge-cloud-console
     build:
       context: ..
       dockerfile: deploy/Dockerfile.console

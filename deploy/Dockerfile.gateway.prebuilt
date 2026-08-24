@@ -1,3 +1,15 @@
+# The image the production host actually runs. It packages, it does not
+# compile: the binary is cross-compiled on a workstation and dropped into
+# deploy/, because this host has 2 vCPU and 1.6 GB of RAM.
+#
+# Build context is deploy/, not the repository root, so `vodoge-gateway` below
+# is deploy/vodoge-gateway. bin/deploy.sh does this and then checks that the
+# container really ended up on the image it just built:
+#
+#     /opt/vodoge-cloud/bin/deploy.sh gateway
+#
+# If COPY fails with "vodoge-gateway: not found", the artifact was never
+# scp'd -- see deploy/RUNBOOK.md, "Deploying the gateway".
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates wget
 COPY vodoge-gateway /usr/local/bin/vodoge-gateway

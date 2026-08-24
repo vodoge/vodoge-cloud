@@ -1,6 +1,10 @@
-# The host has 2 vCPU and 1.6 GB of RAM, so `next build` cannot run there.
-# This image takes the finished bundle instead; RUNBOOK.md "Deploying the
-# console" is what produces it on a workstation.
+# The image the production host actually runs. It packages, it does not
+# build: the host has 2 vCPU and 1.6 GB of RAM, so `next build` cannot run
+# there. This image takes the finished bundle instead; RUNBOOK.md "Deploying
+# the console" is what produces it on a workstation, and bin/deploy.sh is what
+# turns it into a running container without leaving the old one in place:
+#
+#     /opt/vodoge-cloud/bin/deploy.sh console
 #
 # console-dist.tgz is the standalone output already assembled into the layout
 # the runtime expects, so a single extraction reproduces what the from-source
