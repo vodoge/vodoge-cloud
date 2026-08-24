@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # Building the gateway from source. Correct, and unusable on the production
 # host -- which is exactly why the first thing this file does is refuse.
 #

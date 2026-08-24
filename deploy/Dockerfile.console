@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # Building the console from source. Same shape as Dockerfile.gateway, same
 # refusal, and for a heavier reason: `next build` costs more than `go build`
 # and the production host has 2 vCPU and 1.6 GB of RAM.
