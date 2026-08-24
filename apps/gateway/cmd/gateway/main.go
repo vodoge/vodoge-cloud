@@ -1869,18 +1869,35 @@ func (process *process) afterInsert(tenantID, _deviceID, kind string, payload []
 	})
 }
 
+// sse is the live uplink stream the console subscribes to.
+//
+// It authenticates through tenantFromRequest like every other tenant route,
+// which it did not until T065. Before that it resolved the tenant from the
+// host and subscribed, so anything that could reach the port could read any
+// tenant's uplink, and X-Forwarded-Host -- a header the console legitimately
+// sets, and therefore one a caller can also set -- chose which tenant. On the
+// internal listener /v1/devices answered 401 and this answered 200; the only
+// thing standing between it and the internet was a reverse-proxy rule that
+// lives on the host and is in no repository and under no test. That is the
+// shape of the T011 incident, aimed the other way.
+//
+// Why a bearer token and not a stream-specific credential. EventSource cannot
+// set request headers, which is the usual reason to mint a single-use ticket
+// for SSE, but the console does not need one: the session lives in an httpOnly
+// cookie and the console's Next.js middleware turns it into an Authorization
+// header on every /v1/* request before rewriting to this gateway. That path is
+// already how a button on a device page reaches POST /v1/commands, so the
+// stream stops being the exception rather than acquiring a second kind of
+// credential -- with its own store, expiry and revocation -- to arrive
+// somewhere the first kind already arrives.
+//
+// The tenant subscribed to is the one tenantFromRequest returns, which it only
+// returns after proving the session was issued for it. Reading the host is
+// still how the tenant is looked up; it is now a cross-check rather than a
+// selector.
 func (process *process) sse(writer http.ResponseWriter, request *http.Request) {
-	slug, ok := directory.SlugFromHost(request.Header.Get("X-Forwarded-Host"), process.tenants.BaseDomain)
+	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
-		slug, ok = directory.SlugFromHost(request.Host, process.tenants.BaseDomain)
-	}
-	if !ok {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
-		return
-	}
-	entry, found, err := process.tenants.Resolve(request.Context(), slug)
-	if err != nil || !found {
-		http.Error(writer, "unknown tenant", http.StatusNotFound)
 		return
 	}
 	flusher, ok := writer.(http.Flusher)

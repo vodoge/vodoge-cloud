@@ -367,9 +367,15 @@ func apiOperations() []openapi.Operation {
 		{
 			Method: "GET", Path: "/v1/events", Tag: tagEvents,
 			Summary: "Server-sent events: one message per uplink envelope for this tenant.",
-			Description: "Opens with an `hello` event carrying the tenant slug, then `uplink` " +
-				"events until the caller goes away. The tenant comes from the host; the " +
-				"stream carries no data a session could not already read.",
+			Description: "Opens with a `hello` event carrying the tenant slug, then `uplink` " +
+				"events until the caller goes away. The stream is scoped to the tenant the " +
+				"session was issued for; the host is a cross-check, not a selector.\n\n" +
+				"The credential is the same bearer token as every other route here. A browser " +
+				"cannot put a header on an EventSource, so the console relies on its own " +
+				"middleware to turn the session cookie into one on the way through -- the " +
+				"same path that lets a page POST /v1/commands. A caller that is not a browser " +
+				"sets the header itself.",
+			Security: []string{schemeSession},
 			Responses: []openapi.Response{
 				{Status: 200, Description: "The stream. Held open until the client disconnects.",
 					MediaType: "text/event-stream", Schema: &plainText},

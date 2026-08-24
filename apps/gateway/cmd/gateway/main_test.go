@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -2237,5 +2238,247 @@ func TestTheTelegramBotLeavesNoSessionsBehind(t *testing.T) {
 
 	if store.live() != 0 {
 		t.Fatalf("%d minted sessions outlived their calls", store.live())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The uplink stream, /v1/events.
+//
+// It was the one browser-reachable /v1 route that authenticated nothing: it
+// read the tenant out of the Host header and subscribed. Everything else the
+// browser calls -- /v1/commands, /v1/messages/thread, /v1/devices/{id} -- has
+// required a session since T023, and the console reaches all of them the same
+// way, so the stream was an outlier rather than a route with a reason.
+//
+// Why the fix is "present the same bearer credential as every other /v1 call"
+// and not a ticket endpoint. EventSource cannot set request headers, which is
+// the usual argument for minting a single-use ticket, but the console does not
+// need one: the session token lives in an httpOnly cookie and the console's
+// Next.js middleware turns that cookie into `Authorization: Bearer <token>` on
+// every /v1/* request before rewriting it to this gateway (apps/console/
+// middleware.ts, via gatewayAuthHeader in lib/session.ts). That machinery is
+// already load-bearing -- it is the only reason a button on a device page can
+// POST /v1/commands at all -- so the stream can simply stop being the
+// exception. A ticket would add a second credential type with its own store,
+// expiry and revocation, to reach a place one already reaches.
+//
+// The other consequence is deliberate: if the reverse proxy is ever rearranged
+// so that /v1/* reaches the gateway without passing through the console -- the
+// exact shape of the T011 incident -- the stream now fails closed with 401
+// instead of quietly serving uplink to whoever asked. A dead live-update
+// indicator is loud; an open stream is not.
+
+// Unauthenticated callers used to get the stream. Internal port 18080 answered
+// 401 for /v1/devices and 200 for this.
+func TestTheUplinkStreamRequiresASession(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/events", nil).
+		WithContext(ctx)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %q, want 401 -- the uplink stream must refuse "+
+			"a caller with no session, the same as GET /v1/devices",
+			response.Code, strings.TrimSpace(response.Body.String()))
+	}
+	if strings.Contains(response.Body.String(), "event:") {
+		t.Fatalf("the stream opened for an unauthenticated caller: %q",
+			strings.TrimSpace(response.Body.String()))
+	}
+}
+
+// A token that is not a session is not a session. Without this the check above
+// could be satisfied by anything that merely looks like a credential.
+func TestTheUplinkStreamRefusesAnUnknownToken(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/events", nil).
+		WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer not-a-real-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for an unknown token", response.Code)
+	}
+}
+
+// The cross-tenant half, and the reason resolving the tenant from the host was
+// the real defect rather than a cosmetic one.
+//
+// Changing the tenant is a header away: the handler read Host, and preferred
+// X-Forwarded-Host when present, which is a header the console sets and a
+// caller can therefore also set. A tenant A session aimed at b.vodoge.com used
+// to be subscribed to tenant B's bus. Both spellings are checked, because
+// fixing one and leaving the other is the obvious way to half-fix this.
+func TestAnUplinkStreamCannotBeRetargetedAtAnotherTenant(t *testing.T) {
+	t.Parallel()
+
+	for _, aim := range []struct {
+		name    string
+		prepare func(*http.Request)
+	}{
+		{
+			name: "Host",
+			prepare: func(request *http.Request) {
+				request.Host = "b.vodoge.com"
+			},
+		},
+		{
+			name: "X-Forwarded-Host",
+			prepare: func(request *http.Request) {
+				request.Host = "127.0.0.1:18080"
+				request.Header.Set("X-Forwarded-Host", "b.vodoge.com")
+			},
+		},
+	} {
+		t.Run(aim.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := tenantFixture(t).handler()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			request := httptest.NewRequest(http.MethodGet, "/v1/events", nil).WithContext(ctx)
+			aim.prepare(request)
+			request.Header.Set("Authorization", "Bearer session-t-a")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d body = %q, want 403 -- a tenant A session aimed "+
+					"at tenant B must not be subscribed to anything",
+					response.Code, strings.TrimSpace(response.Body.String()))
+			}
+			if strings.Contains(response.Body.String(), "event:") {
+				t.Fatalf("a stream opened for the wrong tenant: %q",
+					strings.TrimSpace(response.Body.String()))
+			}
+		})
+	}
+}
+
+// The behavioural half of the same claim, over a real socket.
+//
+// A status code says the request was refused; it does not say no bytes of
+// tenant B ever left the process. This subscribes as tenant A, publishes to
+// both buses, and reads what actually arrives.
+func TestTheUplinkStreamCarriesOnlyTheSessionTenant(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	server := httptest.NewServer(proc.handler())
+	t.Cleanup(server.Close)
+
+	// Tenant A's own stream, opened the way the console opens it.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/events", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	request.Host = "a.vodoge.com"
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("open the stream: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for tenant A's own session -- "+
+			"closing the hole must not close the stream", response.StatusCode)
+	}
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+
+	reader := bufio.NewReader(response.Body)
+	// The hello frame is also the handshake: the subscription is registered by
+	// the time it arrives, so a publish after it cannot be missed.
+	if got := readSSEFrame(t, reader); got != "hello:a" {
+		t.Fatalf("first frame = %q, want hello:a", got)
+	}
+
+	// Tenant B first. If the stream were subscribed to the host's tenant, or
+	// to every tenant, this is the frame that would arrive.
+	proc.events.Publish("t-b", "SmsReceived-belonging-to-b")
+	proc.events.Publish("t-a", "SmsReceived-belonging-to-a")
+
+	if got := readSSEFrame(t, reader); got != "uplink:SmsReceived-belonging-to-a" {
+		t.Fatalf("frame = %q, want uplink:SmsReceived-belonging-to-a -- "+
+			"anything mentioning b is another tenant's uplink on this socket", got)
+	}
+}
+
+// readSSEFrame reads one `event:`/`data:` pair and returns "event:data".
+func readSSEFrame(t *testing.T, reader *bufio.Reader) string {
+	t.Helper()
+	var name, data string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read the stream: %v (partial frame %q/%q)", err, name, data)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			name = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			data = strings.TrimPrefix(line, "data: ")
+		case line == "":
+			if name != "" || data != "" {
+				return name + ":" + data
+			}
+		}
+	}
+}
+
+// The live-update regression guard, in process.
+//
+// The risk in this change is not that the stream stays open to strangers, it
+// is that it closes to the console. A session must still get the stream, and a
+// read-only one must too -- read-only accounts watch the fleet, that is what
+// they are for.
+func TestTheUplinkStreamStillReachesASignedInConsole(t *testing.T) {
+	t.Parallel()
+
+	for _, token := range []string{"session-t-a", "readonly-t-a"} {
+		proc := tenantFixture(t)
+		server := httptest.NewServer(proc.handler())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/events", nil)
+		if err != nil {
+			t.Fatalf("%s: build request: %v", token, err)
+		}
+		request.Host = "a.vodoge.com"
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("%s: open the stream: %v", token, err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", token, response.StatusCode)
+		}
+		reader := bufio.NewReader(response.Body)
+		if got := readSSEFrame(t, reader); got != "hello:a" {
+			t.Fatalf("%s: first frame = %q, want hello:a", token, got)
+		}
+		// What "the page still loads" does not prove: that an uplink published
+		// after the subscription is actually pushed out.
+		proc.events.Publish("t-a", "DeviceState")
+		if got := readSSEFrame(t, reader); got != "uplink:DeviceState" {
+			t.Fatalf("%s: frame = %q, want uplink:DeviceState", token, got)
+		}
+		_ = response.Body.Close()
+		cancel()
+		server.Close()
 	}
 }

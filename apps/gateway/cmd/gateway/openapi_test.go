@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
@@ -120,6 +122,17 @@ func TestOpenAPIDocumentRenders(t *testing.T) {
 // The same reasoning as the read-only guard's exempt list. An endpoint quietly
 // documented as open is a document that stops matching the server in the one
 // direction that matters, and the fix has to be somebody deciding on purpose.
+//
+// This list has already earned its keep once. It carried "GET /v1/events" for
+// a while, which is how the uplink stream's missing authentication was found
+// at all: the route rendered fine, the console worked, and nothing else in the
+// repository said the stream was open. T065 closed it, and the entry came out
+// of this list because the server changed -- not to make the test green. What
+// remains is the whole of it, and every entry below states why.
+//
+// No route that serves or accepts tenant data is on this list, and
+// TestEveryTenantRouteRefusesAnAnonymousCaller holds the server itself to that,
+// so a route cannot become open by having its Security line deleted here.
 func TestOpenAPISecurityMatchesTheRoutesThatAreActuallyOpen(t *testing.T) {
 	t.Parallel()
 
@@ -131,25 +144,30 @@ func TestOpenAPISecurityMatchesTheRoutesThatAreActuallyOpen(t *testing.T) {
 	}
 	sort.Strings(open)
 	want := []string{
-		// The loopback listener. Not published beyond 127.0.0.1.
+		// The loopback listener, published to 127.0.0.1 and no further.
+		// Liveness and readiness have to answer before anything is configured,
+		// and an orchestrator holds no session; /metrics is operational
+		// numbers, which is why it is not on the public listener at all.
 		"GET /healthz",
 		"GET /metrics",
 		"GET /readyz",
-		// The uplink stream authenticates nothing today: it resolves the
-		// tenant from the host and subscribes. Documented as it is rather
-		// than as it ought to be -- a document that flattered the server here
-		// would be the most dangerous line in it.
-		"GET /v1/events",
-		// Before there is a session: the console has to draw a sign-in page
-		// and find out whether the subdomain exists at all.
+		// Before there is a session. The console has to draw a sign-in page
+		// and find out whether the subdomain exists at all; both answer with
+		// the tenant's own public identity (id, slug, region, status) and
+		// nothing behind it, and neither can enumerate -- you must already
+		// know the slug to ask.
 		"GET /v1/tenant",
 		"GET /v1/tenants/{slug}",
+		// Gating sign-in sends the sign-in request to the sign-in page, and
+		// there is then no way to ever obtain a session. Rate-limited per
+		// client address instead.
 		"POST /v1/auth/login",
 		// Signing out does not require a valid session; the caller wants it
-		// gone either way.
+		// gone either way, and refusing would strand a browser holding a
+		// token it cannot use.
 		"POST /v1/auth/logout",
-		// A device enrolling has no certificate yet. The one-time code is the
-		// credential, and it is in the body.
+		// A device enrolling has no certificate yet -- obtaining one is the
+		// point of the call. The one-time code in the body is the credential.
 		"POST " + enroll.Path,
 	}
 	if !equalStrings(open, want) {
@@ -158,6 +176,54 @@ func TestOpenAPISecurityMatchesTheRoutesThatAreActuallyOpen(t *testing.T) {
 			"documented as open by accident. Neither should happen quietly.",
 			open, want)
 	}
+}
+
+// The same claim, asked of the server instead of the document.
+//
+// The list above is two lists in this package agreeing with each other, which
+// is the shape this repository has already been burned by: a test whose
+// expected value and subject come from the same place holds nothing. So this
+// takes every operation the document says needs a session, calls it on the real
+// handler with no credential at all, and requires a refusal.
+//
+// /v1/events was reachable without a credential for months with a full test
+// suite passing, because nothing ever asked the router that question. This asks
+// it of all sixty-odd routes at once, and it would have failed on the day the
+// stream was written.
+func TestEveryTenantRouteRefusesAnAnonymousCaller(t *testing.T) {
+	t.Parallel()
+
+	handler := tenantFixture(t).handler()
+	checked := 0
+	for _, operation := range apiDocument().Operations {
+		if !contains(operation.Security, schemeSession) {
+			continue
+		}
+		checked++
+		// Bounded: /v1/events is a stream, and a route that wrongly let an
+		// anonymous caller through would hold the connection open forever
+		// rather than fail.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		request := httptest.NewRequest(
+			operation.Method,
+			"http://a.vodoge.com"+requestPath(operation.Path),
+			strings.NewReader("{}"),
+		).WithContext(ctx)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		cancel()
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d body = %q, want 401 -- documented as needing a "+
+				"session, but answered an anonymous caller",
+				operation.Key(), response.Code, strings.TrimSpace(response.Body.String()))
+		}
+	}
+	if checked < 50 {
+		t.Fatalf("only %d session routes were exercised; the document stopped "+
+			"declaring security or this stopped reading it", checked)
+	}
+	t.Logf("%d session-scoped routes refused an anonymous caller", checked)
 }
 
 // The new route must not have changed what the read-only guard covers.
