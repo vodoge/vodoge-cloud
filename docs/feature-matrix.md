@@ -165,7 +165,7 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 | Profile ↔ 代理绑定 | 有 | 有 | **无** | 按 Profile 而非按国家绑定上游 |
 | 流量统计 | 有 | 有 | **有** | 按小时累加 |
 | UDP Associate 检查 | 半 | 有 | **无** | VoWiFi 数据面需要它 |
-| 导出代理 | 无 | 有 | **有** | `GET /v1/proxy/instances/export`：`socks5://user:pass@host:port` 逐行连接串，另有 json 与 csv。**只读账号被拒**，而且这条拒绝写在 handler 里 —— T023 的守卫按方法判定，这是 GET，会被放行；用的是守卫用的同一个 `MayWrite` 谓词。**导出进审计、口令不进**（记 actor 与 instance id），且审计追加在这条路由上是致命的：没留痕的凭据导出不允许发生。绑 0.0.0.0 的监听器不会被编出一个假地址，会带着 `?host=` 的修法列为不可导出 |
+| 导出代理 | 无 | 有 | **有** | `GET /v1/proxy/instances/export`：`socks5://user:pass@host:port` 逐行连接串，另有 json 与 csv。**只读账号被拒**，而且这条拒绝写在 handler 里 —— T023 的守卫按方法判定，这是 GET，会被放行；用的是守卫用的同一个 `MayWrite` 谓词。**导出进审计、口令不进**（记 actor 与 instance id），且审计追加在这条路由上是致命的：没留痕的凭据导出不允许发生。绑 0.0.0.0 的监听器不会被编出一个假地址，会带着 `?host=` 的修法列为不可导出。**控制台代理页有入口**（T071）：只读账号看不到这个按钮（画之前先问 `/v1/auth/session`，问不到按只读画）；口令只经响应体进 React state —— 不进查询串、不进 localStorage、不进浏览器历史，屏幕上显示的是抹掉口令的那一版，完整连接串只在点「复制」时进剪贴板；不可导出的监听器连同网关给的理由一起显示，不是一个空列表 |
 
 ## 通知与自动化
 

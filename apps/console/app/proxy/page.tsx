@@ -1,6 +1,7 @@
-import { ProxyManager } from "@/components/proxy-manager";
+import { ProxyManager, type ProxyLabelKey } from "@/components/proxy-manager";
 import { Card, EmptyState } from "@/components/ui";
 import {
+  fetchConsoleRole,
   fetchCountryRules,
   fetchDevices,
   fetchProxyInstances,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
+import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 
 export default async function ProxyPage() {
@@ -38,6 +40,12 @@ export default async function ProxyPage() {
   } catch {
     loadError = true;
   }
+
+  // Asked for separately, and outside the try. It is not catalogue data: it
+  // decides whether one control is drawn, it already fails closed to
+  // read-only, and folding it into the Promise.all above would let a slow
+  // session lookup turn the whole page into a load error.
+  const canExport = mayWrite(await fetchConsoleRole(host, token));
 
   const byInstance = new Map(instances.map((instance) => [instance.id, instance.name]));
 
@@ -64,6 +72,7 @@ export default async function ProxyPage() {
             countryRules={countryRules}
             devices={devices.map((device) => ({ id: device.id, name: device.name }))}
             labels={labels(locale)}
+            canExport={canExport}
           />
         </Card>
 
@@ -124,13 +133,71 @@ function bytes(value: number): string {
   return `${unit === 0 ? scaled : scaled.toFixed(1)} ${units[unit]}`;
 }
 
-function labels(locale: Locale): Record<string, string> {
-  const keys = [
-    "upstreams", "instances", "noUpstreams", "noInstances",
-    "colName", "colAddress", "colProbe", "colListen", "colModem", "colUpstream",
-    "add", "remove", "start", "stop", "restart", "direct", "device", "port",
-    "username", "password", "probeFrom", "neverProbed", "failed", "confirmRemove",
-    "countryRules", "noCountryRules", "colCountry",
-  ];
-  return Object.fromEntries(keys.map((key) => [key, t(`proxy.${key}`, locale)]));
+/**
+ * The label keys ProxyManager draws, one entry each.
+ *
+ * An object rather than an array, and typed as a total Record, so that leaving
+ * one out is a compile error. It used to be a bare string[] with no relation
+ * to what the component read: a control that reached for a key nobody had
+ * listed here got `undefined`, and React renders undefined as nothing — an
+ * empty button, in both locales, silently. That cost the export control a
+ * delivery once already, so the list is now checked instead of remembered.
+ *
+ * The value is unused; only the key set matters.
+ */
+const PROXY_LABEL_KEYS: Record<ProxyLabelKey, true> = {
+  upstreams: true,
+  instances: true,
+  noUpstreams: true,
+  noInstances: true,
+  colName: true,
+  colAddress: true,
+  colProbe: true,
+  colListen: true,
+  colModem: true,
+  colUpstream: true,
+  add: true,
+  remove: true,
+  start: true,
+  stop: true,
+  restart: true,
+  direct: true,
+  device: true,
+  port: true,
+  username: true,
+  password: true,
+  probeFrom: true,
+  neverProbed: true,
+  failed: true,
+  confirmRemove: true,
+  countryRules: true,
+  noCountryRules: true,
+  colCountry: true,
+  export: true,
+  exportNote: true,
+  exportHost: true,
+  exportHostHint: true,
+  exportEmpty: true,
+  exportUnexportable: true,
+  exportFailed: true,
+  exportClose: true,
+  copy: true,
+  copyAll: true,
+  copied: true,
+  copyFailed: true,
+};
+
+/**
+ * Resolves each of those against the message catalogue for this request.
+ *
+ * A key with no catalogue entry comes back as ⟦proxy.whatever⟧ from t(), which
+ * is loud on the page and in a snapshot. That is deliberate: the two ways this
+ * can be wrong are a missing key, which must be visible, and a key present in
+ * only one locale, which check-i18n refuses.
+ */
+function labels(locale: Locale): Record<ProxyLabelKey, string> {
+  const names = Object.keys(PROXY_LABEL_KEYS) as ProxyLabelKey[];
+  return Object.fromEntries(
+    names.map((key) => [key, t(`proxy.${key}`, locale)]),
+  ) as Record<ProxyLabelKey, string>;
 }

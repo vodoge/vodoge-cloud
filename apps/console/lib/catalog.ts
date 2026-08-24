@@ -1,4 +1,9 @@
-import { bearerHeader } from "./session.ts";
+import {
+  bearerHeader,
+  roleFromSessionBody,
+  SESSION_ENDPOINT,
+  type ConsoleRole,
+} from "./session.ts";
 import { gatewayBaseUrl } from "./tenant.ts";
 
 /** The gateway refused the session rather than having nothing to show. */
@@ -243,6 +248,41 @@ export async function fetchCountryRules(
       upstreamId: asString(row.upstream_id) ?? "",
     };
   });
+}
+
+/**
+ * The signed-in account's role, for pages that draw two versions of themselves.
+ *
+ * Fails closed and never throws. Every caller is a page deciding whether to
+ * render a privileged control, so the two ways of being wrong are not
+ * symmetric: drawing the smaller version costs a reload, and drawing the
+ * larger one puts a button in front of an operator that the gateway will
+ * refuse after they have clicked it. A gateway that cannot be reached is
+ * therefore read-only, and so is a body that does not say otherwise.
+ *
+ * This is presentation only. The gateway decides for real — /v1 is reachable
+ * with curl and a token whatever this returns.
+ */
+export async function fetchConsoleRole(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ConsoleRole> {
+  try {
+    const response = await fetchImpl(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
+      headers: {
+        accept: "application/json",
+        "x-forwarded-host": host,
+        ...bearerHeader(token),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return "readonly";
+    return roleFromSessionBody(await response.json());
+  } catch {
+    return "readonly";
+  }
 }
 
 export type ThreadRow = {

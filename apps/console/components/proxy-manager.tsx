@@ -4,7 +4,63 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CountryRuleRow, ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
 
-type Labels = Record<string, string>;
+/**
+ * Every user-visible string this component draws, named.
+ *
+ * It used to be Record<string, string>, filled from a hand-written list of key
+ * names in app/proxy/page.tsx. Nothing connected the two: a control added here
+ * that read a label nobody had listed there compiled fine, got `undefined`,
+ * and React draws undefined as nothing at all — a button with no text, in
+ * every locale, with no error anywhere. That is not hypothetical; it is why
+ * the previous attempt at the export control was abandoned rather than
+ * shipped.
+ *
+ * Naming the keys makes the page's list checkable, and PROXY_LABEL_KEYS over
+ * in that file is what does the checking. A type-only import, so the server
+ * component is not reaching into a client module for a value.
+ */
+export type ProxyLabelKey =
+  | "upstreams"
+  | "instances"
+  | "noUpstreams"
+  | "noInstances"
+  | "colName"
+  | "colAddress"
+  | "colProbe"
+  | "colListen"
+  | "colModem"
+  | "colUpstream"
+  | "add"
+  | "remove"
+  | "start"
+  | "stop"
+  | "restart"
+  | "direct"
+  | "device"
+  | "port"
+  | "username"
+  | "password"
+  | "probeFrom"
+  | "neverProbed"
+  | "failed"
+  | "confirmRemove"
+  | "countryRules"
+  | "noCountryRules"
+  | "colCountry"
+  | "export"
+  | "exportNote"
+  | "exportHost"
+  | "exportHostHint"
+  | "exportEmpty"
+  | "exportUnexportable"
+  | "exportFailed"
+  | "exportClose"
+  | "copy"
+  | "copyAll"
+  | "copied"
+  | "copyFailed";
+
+type Labels = Record<ProxyLabelKey, string>;
 
 /**
  * Proxy configuration is desired state, not a live view.
@@ -20,12 +76,22 @@ export function ProxyManager({
   countryRules,
   devices,
   labels,
+  canExport,
 }: {
   upstreams: UpstreamRow[];
   instances: ProxyInstanceRow[];
   countryRules: CountryRuleRow[];
   devices: { id: string; name: string }[];
   labels: Labels;
+  /**
+   * Whether to draw the export control at all.
+   *
+   * Courtesy, not enforcement. The gateway refuses an export from a read-only
+   * session in the handler itself — it has to, because the read-only guard
+   * decides by HTTP method and an export is a GET. Hiding the button only
+   * spares a read-only operator from discovering that by clicking it.
+   */
+  canExport: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -68,6 +134,7 @@ export function ProxyManager({
         busy={busy}
         labels={labels}
         call={call}
+        canExport={canExport}
       />
       <CountryRuleList
         rules={countryRules}
@@ -256,6 +323,7 @@ function InstanceList({
   busy,
   labels,
   call,
+  canExport,
 }: {
   instances: ProxyInstanceRow[];
   upstreams: UpstreamRow[];
@@ -263,6 +331,7 @@ function InstanceList({
   busy: boolean;
   labels: Labels;
   call: Call;
+  canExport: boolean;
 }) {
   const [draft, setDraft] = useState({
     name: "",
@@ -336,6 +405,8 @@ function InstanceList({
           </table>
         </div>
       )}
+
+      {canExport ? <ExportPanel busy={busy} labels={labels} /> : null}
 
       <form
         className="inline-form"
@@ -417,6 +488,261 @@ function InstanceList({
       </form>
     </section>
   );
+}
+
+/** One listener rendered as something a client can dial. */
+type ExportEndpoint = {
+  id: string;
+  name: string;
+  protocol: string;
+  host: string;
+  port: number;
+  username: string;
+  /** The connection string, percent-encoded, with the password in it. */
+  url: string;
+};
+
+/** A listener no connection string could be written for, and why. */
+type ExportSkip = { id: string; name: string; reason: string };
+
+/**
+ * Handing an operator a usable proxy credential.
+ *
+ * Everything needed to dial a listener was already on this page except the
+ * password, which is write-only everywhere else, so using one meant reading
+ * four columns off the table and assembling socks5://user:pass@host:port by
+ * eye. This asks the gateway to assemble it instead.
+ *
+ * Where the secret goes, which is the whole design:
+ *
+ *   - Out of the gateway in a response body, over the same session the rest of
+ *     this component uses. Never in a URL: a query string is in the browser's
+ *     history, the referrer of anything the page loads next, and every
+ *     intermediary's access log.
+ *   - Into React state, and nowhere else. Not localStorage, not sessionStorage,
+ *     not a cookie — those survive the tab, and this must not. Hide, or a
+ *     reload, is the end of it.
+ *   - Onto the clipboard only when the operator asks, one string or all of
+ *     them, because pasting it into a client is the entire point.
+ *   - Not onto the screen. What is drawn is the same string with the password
+ *     removed, so an operator can tell the rows apart, check the host and port
+ *     they are about to hand out, and do it with somebody standing behind
+ *     them.
+ *
+ * Listeners that could not be exported are shown with the gateway's reason
+ * rather than dropped. A listener bound to 0.0.0.0 answers on every address
+ * and the configuration records none of them, so the gateway refuses to invent
+ * one and says to repeat the request with an address. Silently returning a
+ * shorter list is how an operator concludes the proxy does not exist.
+ */
+function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
+  const [host, setHost] = useState("");
+  const [result, setResult] = useState<{
+    endpoints: ExportEndpoint[];
+    skipped: ExportSkip[];
+  } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const run = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    setNote(null);
+    try {
+      // The host is an address to dial, not a secret, so it is the one thing
+      // that may travel in the query string. The credentials come back in the
+      // body.
+      const query = new URLSearchParams({ format: "json" });
+      const dial = host.trim();
+      if (dial) query.set("host", dial);
+      const response = await fetch(`/v1/proxy/instances/export?${query.toString()}`, {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        // The gateway's refusals say what to do about them — a read-only
+        // account, an unusable host — and are more use than a generic failure.
+        setError((await response.text()).trim() || labels.exportFailed);
+        setResult(null);
+        return;
+      }
+      setResult(readExport(await response.json()));
+    } catch {
+      setError(labels.exportFailed);
+      setResult(null);
+    } finally {
+      setRunning(false);
+    }
+  }, [host, labels.exportFailed]);
+
+  const copy = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setError(null);
+        setNote(labels.copied);
+      } catch {
+        // An insecure origin, or a browser that refused the permission. Saying
+        // so beats a button that silently does nothing.
+        setNote(null);
+        setError(labels.copyFailed);
+      }
+    },
+    [labels.copied, labels.copyFailed],
+  );
+
+  return (
+    <div className="stack">
+      <div className="inline-form">
+        <label className="field">
+          <span>{labels.exportHost}</span>
+          <input
+            value={host}
+            onChange={(event) => setHost(event.target.value)}
+            placeholder="proxy.example.com"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+        <button type="button" disabled={busy || running} onClick={() => void run()}>
+          {labels.export}
+        </button>
+        {result ? (
+          <button
+            type="button"
+            onClick={() => {
+              setResult(null);
+              setNote(null);
+              setError(null);
+            }}
+          >
+            {labels.exportClose}
+          </button>
+        ) : null}
+      </div>
+      <p className="faint">{labels.exportHostHint}</p>
+
+      {error ? <p className="error">{error}</p> : null}
+      {note ? <p className="faint">{note}</p> : null}
+
+      {result ? (
+        <div className="stack">
+          <p className="faint">{labels.exportNote}</p>
+
+          {result.endpoints.length === 0 ? (
+            <p className="faint">{labels.exportEmpty}</p>
+          ) : (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{labels.colName}</th>
+                      <th>{labels.colAddress}</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.endpoints.map((endpoint) => (
+                      <tr key={endpoint.id}>
+                        <td>{endpoint.name}</td>
+                        <td className="mono">{withoutPassword(endpoint)}</td>
+                        <td className="row-actions">
+                          <button type="button" onClick={() => void copy(endpoint.url)}>
+                            {labels.copy}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void copy(result.endpoints.map((endpoint) => endpoint.url).join("\n"))
+                  }
+                >
+                  {labels.copyAll}
+                </button>
+              </div>
+            </>
+          )}
+
+          {result.skipped.length === 0 ? null : (
+            <section className="stack">
+              <h4 className="section-title">{labels.exportUnexportable}</h4>
+              <ul>
+                {result.skipped.map((item) => (
+                  <li key={item.id}>
+                    {item.name} <span className="faint">— {item.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What to draw for a row, which is the connection string minus the password.
+ *
+ * Parsing the gateway's own string rather than rebuilding one keeps what is on
+ * screen and what reaches the clipboard from drifting apart — an IPv6 host
+ * needs brackets, a username needs percent-encoding, and a second
+ * implementation of those rules is a second chance to get them wrong.
+ *
+ * If the string will not parse the fields are used instead. Never the raw
+ * string: a fallback that printed it would put the password on screen exactly
+ * when something unexpected is going on.
+ */
+function withoutPassword(endpoint: ExportEndpoint): string {
+  try {
+    const parsed = new URL(endpoint.url);
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    const user = endpoint.username ? `${encodeURIComponent(endpoint.username)}@` : "";
+    return `${endpoint.protocol}://${user}${endpoint.host}:${endpoint.port}`;
+  }
+}
+
+/** The export response, read defensively because it is JSON off the wire. */
+function readExport(body: unknown): { endpoints: ExportEndpoint[]; skipped: ExportSkip[] } {
+  const root = (body ?? {}) as Record<string, unknown>;
+  const instances = Array.isArray(root.instances) ? root.instances : [];
+  const unexportable = Array.isArray(root.unexportable) ? root.unexportable : [];
+  return {
+    endpoints: instances.map((value, index) => {
+      const row = (value ?? {}) as Record<string, unknown>;
+      return {
+        id: text(row.id) || `endpoint-${index}`,
+        name: text(row.name),
+        protocol: text(row.protocol) || "socks5",
+        host: text(row.host),
+        port: typeof row.port === "number" ? row.port : 0,
+        username: text(row.username),
+        url: text(row.url),
+      };
+    }),
+    skipped: unexportable.map((value, index) => {
+      const row = (value ?? {}) as Record<string, unknown>;
+      return {
+        id: text(row.id) || `skipped-${index}`,
+        name: text(row.name),
+        reason: text(row.reason),
+      };
+    }),
+  };
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 /**
