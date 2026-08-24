@@ -10,14 +10,25 @@
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
 | 我们的云端 | `apps/gateway`（schema 40） | 67 条注册（去重后 65 条模式，其中 33 条是写） |
 
-云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
+云端路由数可以自己数：
+
+```sh
+grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 67
+```
+
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
-`messaging_routes.go` / `proxy_routes.go` / `schedule_routes.go` 六个文件里）。
+`messaging_routes.go` / `proxy_routes.go` / `schedule_routes.go` 六个文件里。
+**别用更宽的 `grep "mux.Handle"`** —— 它会连 `openapi.go` 里那句
+`mux.Handler(probe)`（运行期自检用来问 mux「这条路径匹配哪个 pattern」的）一起数进去，
+得到 68。这条旧配方 2026-08-24 当场就多数了一条。）
+
 **注册数比模式数多 2**：`POST /v1/enroll` 与 `POST /v1/ops/backup-failed`
 各自在 if/else 两个分支里注册同一个 pattern（配置好的版本与 503 版本），
 去重后是一条。**这两个数字都不要手抄** —— 见下。
 
-**这份表的数字不是权威，测试才是。** 这一行曾经长期写着「56 条路由」而实际是 66，
+**这份表的数字不是权威，测试才是**（`go test -v -run 'TestEveryWriteRouteRefusesAReadOnlySession|TestOpenAPIDescribesEveryRegisteredRoute' ./cmd/gateway/`
+会打印 `30 write routes refused, 3 exempt, 65 routes registered` 与
+`65 routes registered, 65 described`）。这一行曾经长期写着「56 条路由」而实际是 66，
 没有任何东西提醒过。现在有两处会红：
 `cmd/gateway/main_test.go` 的只读拒绝测试从源码现取路由表（新增一条没被挡住的写路由就红），
 `cmd/gateway/openapi_test.go` 的漂移测试断言 OpenAPI 描述的路由集合 == 实际注册的集合
