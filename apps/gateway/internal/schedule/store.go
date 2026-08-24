@@ -386,23 +386,90 @@ func (store SQL) Create(ctx context.Context, tenantID string, task Task) (Task, 
 	return created, err
 }
 
-// SetEnabled turns a schedule on or off.
+// Edit is a partial change to a schedule: a nil field is not being changed.
 //
-// Re-enabling does not replay the silence. last_occurrence is moved to the
+// Two fields and no more. enabled is a switch and renumbers nothing. selector
+// is re-evaluated on every run by design -- 0038 stores it as "how the target
+// is found ... evaluated at fire time rather than stored" -- so repointing a
+// task at another SIM changes what the next run resolves and leaves the
+// occurrence grid alone. Interval, anchor, request and kind are the fields that
+// would renumber or redefine occurrences already in flight; they stay out, and
+// the route refuses them by name rather than accepting them here.
+type Edit struct {
+	Enabled  *bool
+	Selector *Selector
+}
+
+// Editor is the store capability behind PATCH /v1/schedules/{id}.
+//
+// Kept apart from Store rather than folded into it. A store that cannot apply
+// an edit should be impossible to write, not impossible to distinguish from
+// one that can: the route asserts for this interface and answers an error when
+// it is missing, which is the one thing PATCH must never do quietly.
+type Editor interface {
+	Update(ctx context.Context, tenantID, taskID string, edit Edit) (Task, error)
+}
+
+var (
+	_ Editor = SQL{}
+	_ Editor = (*Memory)(nil)
+)
+
+// Update applies a partial edit in one transaction.
+//
+// The row is read FOR UPDATE and the merged task is validated before the
+// write, so a selector that could only fail on every run -- card mode with no
+// ICCID, device mode with no IMEI for a module-scoped kind -- is refused while
+// the caller is still there, exactly as Create refuses it. Validation needs the
+// fields the caller did not send (action, kind, request), which is why this is
+// a read and a write rather than one UPDATE.
+//
+// selector goes through coalesce so an enabled-only edit does not rewrite it.
+// Marshalling a Selector back out drops every key the struct does not name, and
+// doing that on each on/off toggle would quietly narrow rows nobody asked to
+// touch.
+//
+// Re-enabling still does not replay the silence: last_occurrence moves to the
 // current occurrence, because the occurrences that passed while the task was
 // off were deliberately not sent and firing them now would be a burst of
 // messages nobody asked for.
-func (store SQL) SetEnabled(
-	ctx context.Context, tenantID, taskID string, enabled bool,
+func (store SQL) Update(
+	ctx context.Context, tenantID, taskID string, edit Edit,
 ) (Task, error) {
 	if store.DB == nil {
 		return Task{}, errors.New("database is not configured")
 	}
 	var updated Task
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
-		row := tx.QueryRowContext(ctx, `
+		current, err := scanTask(tx.QueryRowContext(ctx,
+			`SELECT `+taskColumns+`
+			   FROM app.scheduled_tasks
+			  WHERE id = $1::uuid
+			    FOR UPDATE`, taskID))
+		if err != nil {
+			return err
+		}
+		enabled := current.Enabled
+		if edit.Enabled != nil {
+			enabled = *edit.Enabled
+		}
+		var selector sql.NullString
+		if edit.Selector != nil {
+			merged := current
+			merged.Selector = *edit.Selector
+			if err := Validate(&merged); err != nil {
+				return err
+			}
+			encoded, err := json.Marshal(*edit.Selector)
+			if err != nil {
+				return err
+			}
+			selector = sql.NullString{String: string(encoded), Valid: true}
+		}
+		updated, err = scanTask(tx.QueryRowContext(ctx, `
 			UPDATE app.scheduled_tasks
 			   SET enabled = $2,
+			       selector = coalesce($3::jsonb, selector),
 			       last_occurrence = CASE
 			           WHEN $2 AND NOT enabled THEN GREATEST(last_occurrence, floor(
 			               extract(epoch FROM (now() - anchor_at)) / interval_seconds
@@ -411,15 +478,21 @@ func (store SQL) SetEnabled(
 			       END,
 			       updated_at = now()
 			 WHERE id = $1::uuid
-			RETURNING `+taskColumns, taskID, enabled)
-		var err error
-		updated, err = scanTask(row)
+			RETURNING `+taskColumns, taskID, enabled, selector))
 		return err
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, sql.ErrNoRows
 	}
 	return updated, err
+}
+
+// SetEnabled turns a schedule on or off. One code path with Update, so the
+// re-enable rule cannot drift between the two entry points.
+func (store SQL) SetEnabled(
+	ctx context.Context, tenantID, taskID string, enabled bool,
+) (Task, error) {
+	return store.Update(ctx, tenantID, taskID, Edit{Enabled: &enabled})
 }
 
 // Delete removes a schedule and reports whether it existed.
@@ -715,9 +788,9 @@ func (store *Memory) Create(_ context.Context, tenantID string, task Task) (Task
 	return copied, nil
 }
 
-// SetEnabled toggles a task.
-func (store *Memory) SetEnabled(
-	_ context.Context, tenantID, taskID string, enabled bool,
+// Update applies a partial edit, validating a new selector the way SQL does.
+func (store *Memory) Update(
+	_ context.Context, tenantID, taskID string, edit Edit,
 ) (Task, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -726,13 +799,30 @@ func (store *Memory) SetEnabled(
 	if task == nil {
 		return Task{}, sql.ErrNoRows
 	}
-	if enabled && !task.Enabled {
-		if due := occurrenceAt(task.AnchorAt, task.IntervalSeconds, time.Now()); due > task.LastOccurrence {
-			task.LastOccurrence = due
+	if edit.Selector != nil {
+		merged := *task
+		merged.Selector = *edit.Selector
+		if err := Validate(&merged); err != nil {
+			return Task{}, err
 		}
+		task.Selector = *edit.Selector
 	}
-	task.Enabled = enabled
+	if edit.Enabled != nil {
+		if *edit.Enabled && !task.Enabled {
+			if due := occurrenceAt(task.AnchorAt, task.IntervalSeconds, time.Now()); due > task.LastOccurrence {
+				task.LastOccurrence = due
+			}
+		}
+		task.Enabled = *edit.Enabled
+	}
 	return *task, nil
+}
+
+// SetEnabled toggles a task.
+func (store *Memory) SetEnabled(
+	ctx context.Context, tenantID, taskID string, enabled bool,
+) (Task, error) {
+	return store.Update(ctx, tenantID, taskID, Edit{Enabled: &enabled})
 }
 
 // Delete removes a task.

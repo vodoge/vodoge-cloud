@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
@@ -189,6 +193,28 @@ func (process *process) createSchedule(writer http.ResponseWriter, request *http
 	_ = json.NewEncoder(writer).Encode(toScheduleView(created))
 }
 
+// schedulePatchFields is everything PATCH /v1/schedules/{id} will apply.
+//
+// enabled is a switch: it renumbers nothing. selector is re-evaluated on every
+// run by design -- 0038 keeps it as "how the target is found ... evaluated at
+// fire time rather than stored" -- so repointing a task at another SIM changes
+// what the next run resolves and leaves the occurrence grid untouched.
+//
+// Everything else is refused by name. Changing an interval, an anchor, a
+// payload or a kind in place would renumber or redefine occurrences that may
+// already be in flight, and app.enqueue_command answers a key bound to a
+// different payload by refusing -- so the edit would surface as a failed run
+// rather than as the change the operator thought they made. Delete and
+// recreate is honest about the fact that it is a different schedule.
+//
+// That reasoning was already here. What was missing is that the fields it
+// argues against were dropped *silently*: the handler decoded into a struct
+// with one field, encoding/json threw the rest away, and the response was 200
+// with the unchanged row. An operator who PATCHed a selector was told the
+// change had landed. A refusal an automation can see beats a success it cannot
+// check.
+var schedulePatchFields = map[string]bool{"enabled": true, "selector": true}
+
 func (process *process) updateSchedule(writer http.ResponseWriter, request *http.Request) {
 	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
@@ -198,27 +224,81 @@ func (process *process) updateSchedule(writer http.ResponseWriter, request *http
 		http.Error(writer, "schedules are unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var body struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(io.LimitReader(request.Body, 4<<10)).Decode(&body); err != nil {
+	// Decoded key by key rather than straight into a struct. Decoder's
+	// DisallowUnknownFields would refuse too, but only through an error string
+	// this handler would then have to parse to say which field it was -- and
+	// naming the field is the entire point of the refusal.
+	var fields map[string]json.RawMessage
+	if err := json.NewDecoder(io.LimitReader(request.Body, 4<<10)).Decode(&fields); err != nil {
 		http.Error(writer, "invalid schedule", http.StatusBadRequest)
 		return
 	}
-	// Only the switch is editable. Changing an interval or a payload in place
-	// would renumber or redefine occurrences that may already be in flight,
-	// and app.enqueue_command answers a key bound to a different payload by
-	// refusing -- so an edit would show up as a failed run rather than as the
-	// change the operator thought they made. Delete and recreate is honest
-	// about the fact that it is a different schedule.
-	if body.Enabled == nil {
-		http.Error(writer, "enabled is required", http.StatusBadRequest)
+	refused := []string{}
+	for name := range fields {
+		if !schedulePatchFields[name] {
+			refused = append(refused, strconv.Quote(name))
+		}
+	}
+	if len(refused) > 0 {
+		// Sorted because map iteration is randomised, and a refusal whose
+		// wording changes between two identical requests is one an operator
+		// cannot match against anything.
+		sort.Strings(refused)
+		http.Error(writer, strings.Join(refused, ", ")+
+			" cannot be changed in place; delete and recreate the schedule",
+			http.StatusBadRequest)
 		return
 	}
-	updated, err := process.schedules.SetEnabled(
-		request.Context(), entry.TenantID, request.PathValue("id"), *body.Enabled)
+	var edit schedule.Edit
+	if raw, present := fields["enabled"]; present {
+		// Through a pointer: JSON null unmarshals into a bool as a no-op, so a
+		// {"enabled":null} decoded directly would read as false and turn the
+		// schedule off.
+		var enabled *bool
+		if err := json.Unmarshal(raw, &enabled); err != nil || enabled == nil {
+			http.Error(writer, "enabled must be true or false", http.StatusBadRequest)
+			return
+		}
+		edit.Enabled = enabled
+	}
+	if raw, present := fields["selector"]; present {
+		var selector *schedule.Selector
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&selector); err != nil {
+			http.Error(writer, "selector is not a selector: "+err.Error(),
+				http.StatusBadRequest)
+			return
+		}
+		if selector == nil {
+			http.Error(writer, "selector must be an object", http.StatusBadRequest)
+			return
+		}
+		edit.Selector = selector
+	}
+	if edit.Enabled == nil && edit.Selector == nil {
+		http.Error(writer, "enabled or selector is required", http.StatusBadRequest)
+		return
+	}
+	// Asserted, not assumed. A store that cannot apply an edit has to say so;
+	// falling through to a 200 is the bug this route is being fixed for.
+	editor, ok := process.schedules.(schedule.Editor)
+	if !ok {
+		slog.Warn("schedule store cannot apply edits", "tenant_id", entry.TenantID)
+		http.Error(writer, "schedule could not be updated", http.StatusInternalServerError)
+		return
+	}
+	updated, err := editor.Update(
+		request.Context(), entry.TenantID, request.PathValue("id"), edit)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(writer, "schedule not found", http.StatusNotFound)
+		return
+	}
+	// A selector that could only fail on every run is refused with the reason,
+	// the same way createSchedule refuses one.
+	var invalid commands.ErrInvalid
+	if errors.As(err, &invalid) {
+		http.Error(writer, invalid.Reason, http.StatusBadRequest)
 		return
 	}
 	if err != nil {
@@ -227,15 +307,22 @@ func (process *process) updateSchedule(writer http.ResponseWriter, request *http
 		http.Error(writer, "schedule could not be updated", http.StatusInternalServerError)
 		return
 	}
+	// The audit line carries the selector whenever it moved. The incident that
+	// produced this fix was an operator believing a schedule had been
+	// retargeted; the log has to be able to answer that question afterwards.
+	event := map[string]any{"enabled": updated.Enabled}
+	if edit.Selector != nil {
+		event["selector"] = updated.Selector
+	}
+	detail, _ := json.Marshal(event)
 	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
 		Actor:  "console",
 		Action: "update_schedule",
 		Target: updated.Name,
-		Detail: json.RawMessage(`{"enabled":` + boolText(updated.Enabled) + `}`),
+		Detail: detail,
 	})
 	writeJSON(writer, toScheduleView(updated))
 }
-
 func (process *process) deleteSchedule(writer http.ResponseWriter, request *http.Request) {
 	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
@@ -263,11 +350,4 @@ func (process *process) deleteSchedule(writer http.ResponseWriter, request *http
 		Target: id,
 	})
 	writer.WriteHeader(http.StatusNoContent)
-}
-
-func boolText(value bool) string {
-	if value {
-		return "true"
-	}
-	return "false"
 }

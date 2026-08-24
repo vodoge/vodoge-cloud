@@ -1410,6 +1410,164 @@ func TestScheduleRoutesAreTenantScopedAndValidateOnCreate(t *testing.T) {
 	}
 }
 
+// PATCH used to decode into a struct with one field, so everything else in the
+// body was thrown away and answered with 200 and the unchanged row. A caller
+// could not tell a retarget that landed from one that was ignored: an operator
+// acting on that 200 believed an hourly send had been repointed at a healthy
+// module when it had only been switched back on against the old one.
+//
+// So the route now has exactly two answers for any field: apply it, or refuse
+// it by name.
+func TestSchedulePatchAppliesASelectorAndRefusesWhatItCannotApply(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	handler := proc.handler()
+
+	create := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/schedules",
+		strings.NewReader(`{"name":"keepalive","command_kind":"send_sms",`+
+			`"selector":{"mode":"card","iccid":"8986003031401770106"},`+
+			`"request":{"to":"10086","body":"1"},"interval_seconds":3600}`)))
+	create.Header.Set("Content-Type", "application/json")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create schedule status = %d body=%s", created.Code, created.Body.String())
+	}
+	var task map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil {
+		t.Fatalf("decode created schedule: %v", err)
+	}
+	id, _ := task["id"].(string)
+	if id == "" {
+		t.Fatalf("created schedule carries no id: %s", created.Body.String())
+	}
+
+	patch := func(body string) *httptest.ResponseRecorder {
+		request := authorize(httptest.NewRequest(http.MethodPatch,
+			"http://a.vodoge.com/v1/schedules/"+id, strings.NewReader(body)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	storedSelector := func() map[string]any {
+		listed := getJSON(t, handler, "http://a.vodoge.com/v1/schedules")
+		rows, _ := listed["schedules"].([]any)
+		if len(rows) != 1 {
+			t.Fatalf("schedules = %#v", listed)
+		}
+		row, _ := rows[0].(map[string]any)
+		selector, _ := row["selector"].(map[string]any)
+		return selector
+	}
+
+	// The reported defect, in one request: enabled and selector together.
+	const moved = "89852351225042214201"
+	patched := patch(`{"enabled":true,"selector":{"mode":"card","iccid":"` + moved + `"}}`)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch selector status = %d body=%s", patched.Code, patched.Body.String())
+	}
+	var view map[string]any
+	if err := json.Unmarshal(patched.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decode patched schedule: %v", err)
+	}
+	answered, _ := view["selector"].(map[string]any)
+	if answered["iccid"] != moved {
+		t.Fatalf("the answer still carries the old selector: %s", patched.Body.String())
+	}
+	// And it has to be in the store, not only in the answer.
+	if got := storedSelector(); got["iccid"] != moved {
+		t.Fatalf("stored selector = %#v, want iccid %s", got, moved)
+	}
+
+	// A selector that could only fail on every run is refused with the reason,
+	// the same way creating one is.
+	blank := patch(`{"selector":{"mode":"card"}}`)
+	if blank.Code != http.StatusBadRequest ||
+		!strings.Contains(blank.Body.String(), "iccid") {
+		t.Fatalf("card selector with no iccid: status = %d body=%s",
+			blank.Code, blank.Body.String())
+	}
+
+	// A misspelled selector key is a dropped field too, so it is named as one.
+	typo := patch(`{"selector":{"mode":"device","device_id":"d","modem_imie":"1"}}`)
+	if typo.Code != http.StatusBadRequest ||
+		!strings.Contains(typo.Body.String(), "modem_imie") {
+		t.Fatalf("misspelled selector key: status = %d body=%s",
+			typo.Code, typo.Body.String())
+	}
+
+	// Fields PATCH cannot apply are named. Every one of these used to be
+	// answered 200 with the row untouched.
+	for _, refusal := range []struct{ body, field string }{
+		{`{"interval_seconds":60}`, "interval_seconds"},
+		{`{"name":"renamed"}`, "name"},
+		{`{"request":{"to":"10010","body":"1"}}`, "request"},
+		{`{"command_kind":"modem_signal"}`, "command_kind"},
+		{`{"anchor_at_ms":0}`, "anchor_at_ms"},
+		{`{"enabled":false,"interval_seconds":60}`, "interval_seconds"},
+	} {
+		refused := patch(refusal.body)
+		if refused.Code != http.StatusBadRequest {
+			t.Fatalf("patch %s status = %d, want 400", refusal.body, refused.Code)
+		}
+		if !strings.Contains(refused.Body.String(), refusal.field) {
+			t.Fatalf("patch %s does not name the field it dropped: %s",
+				refusal.body, refused.Body.String())
+		}
+	}
+
+	// An empty body changes nothing and says so.
+	if empty := patch(`{}`); empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty patch status = %d, want 400", empty.Code)
+	}
+	// null is not false: the old shape would have read it as one.
+	if null := patch(`{"enabled":null}`); null.Code != http.StatusBadRequest {
+		t.Fatalf("{\"enabled\":null} status = %d, want 400", null.Code)
+	}
+
+	// None of the refusals may have half-applied anything.
+	if got := storedSelector(); got["iccid"] != moved {
+		t.Fatalf("a refused patch changed the selector to %#v", got)
+	}
+	after := getJSON(t, handler, "http://a.vodoge.com/v1/schedules")
+	row, _ := after["schedules"].([]any)[0].(map[string]any)
+	if row["name"] != "keepalive" || row["enabled"] != true ||
+		row["interval_seconds"] != float64(3600) {
+		t.Fatalf("a refused patch changed the row: %#v", row)
+	}
+
+	// The switch on its own still works, and leaves the selector alone.
+	off := patch(`{"enabled":false}`)
+	if off.Code != http.StatusOK {
+		t.Fatalf("disable status = %d body=%s", off.Code, off.Body.String())
+	}
+	var switched map[string]any
+	if err := json.Unmarshal(off.Body.Bytes(), &switched); err != nil {
+		t.Fatalf("decode disabled schedule: %v", err)
+	}
+	if switched["enabled"] != false {
+		t.Fatalf("disable did not apply: %s", off.Body.String())
+	}
+	if got := storedSelector(); got["iccid"] != moved {
+		t.Fatalf("disabling rewrote the selector to %#v", got)
+	}
+
+	// A schedule that does not exist is still a 404, not a silent success.
+	missing := authorize(httptest.NewRequest(http.MethodPatch,
+		"http://a.vodoge.com/v1/schedules/task-404",
+		strings.NewReader(`{"enabled":true}`)))
+	gone := httptest.NewRecorder()
+	handler.ServeHTTP(gone, missing)
+	if gone.Code != http.StatusNotFound {
+		t.Fatalf("patch of an unknown schedule status = %d, want 404", gone.Code)
+	}
+}
+
 // The scheduler's whole answer to tenant enumeration is this tracker, so it has
 // to hold what a Resume gave it and let go of what the hub no longer holds.
 func TestLiveDevicesReportsTenantsAndForgetsDisconnected(t *testing.T) {
