@@ -314,6 +314,17 @@ type ListEsimProfilesCommand struct {
 	ModemImei string `json:"modem_imei"`
 }
 
+type ReadEsimInfoCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
+type RetrieveEsimNotificationCommand struct {
+	Kind           string `json:"kind"`
+	ModemImei      string `json:"modem_imei"`
+	SequenceNumber int64  `json:"sequence_number"`
+}
+
 type ConfigureProxyCommand struct {
 	Kind      string              `json:"kind"`
 	Instances []ProxyInstanceSpec `json:"instances"`

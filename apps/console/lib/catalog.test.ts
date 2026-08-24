@@ -11,7 +11,9 @@ import {
   fetchThread,
   fetchThreads,
   parseDevice,
+  parseEsimInfoResult,
   parseMessage,
+  parseRetrievedNotification,
   parseSchedule,
   UnauthorizedError,
 } from "./catalog.ts";
@@ -477,4 +479,100 @@ test("a rejected schedules request is an error, not an empty list", async () => 
     () => fetchSchedules("a.vodoge.com", undefined, fetchImpl),
     UnauthorizedError,
   );
+});
+
+test("a chip reading is decoded from the command result", () => {
+  // The details a real read_esim_info produced against 867018069514820.
+  const details = {
+    imei: "867018069514820",
+    eid: "89086030202200000026000178339240",
+    chip: {
+      profile_version: "2.3.1",
+      sgp22_version: "2.2.2",
+      firmware_version: "4.2.0",
+      installed_applications: 0,
+      free_non_volatile_memory: 162256,
+      free_volatile_memory: 2953,
+      uicc_capabilities: ["usimSupport", "isimSupport"],
+      ts102241_version: "9.2.0",
+      global_platform_version: "2.3.0",
+      rsp_capabilities: ["additionalProfile", "testProfileSupport"],
+      ci_key_ids_for_verification: ["81370F5125D0B1D408D4C3B232E6D25E795BEBFB"],
+      ci_key_ids_for_signing: ["81370F5125D0B1D408D4C3B232E6D25E795BEBFB"],
+      category: 0,
+      forbidden_profile_policy_rules: ["ppr1"],
+      pp_version: "1.0.0",
+      sas_accreditation_number: "ED-ZI-UP-0826",
+      decoded_fields: 16,
+    },
+    notifications: [
+      {
+        sequence_number: 0,
+        operations: ["install"],
+        address: "wbg.prod.ondemandconnectivity.com",
+        iccid: "89852351225042214201",
+      },
+      {
+        sequence_number: 3,
+        operations: ["enable"],
+        address: "wbg.prod.ondemandconnectivity.com",
+        iccid: "89852351225042214201",
+      },
+    ],
+    notifications_error: null,
+    profiles_error: null,
+  };
+
+  const info = parseEsimInfoResult(details);
+  assert.ok(info);
+  assert.equal(info.eid, "89086030202200000026000178339240");
+  assert.equal(info.chip.freeNonVolatileMemory, 162256);
+  assert.equal(info.chip.decodedFields, 16);
+  assert.deepEqual(info.chip.ciKeyIdsForVerification, [
+    "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+  ]);
+  assert.equal(info.notifications.length, 2);
+  // Zero is a sequence number. Dropping it would hide the oldest pending
+  // notification on both chips on the bench.
+  assert.equal(info.notifications[0].sequenceNumber, 0);
+  assert.deepEqual(info.notifications[1].operations, ["enable"]);
+});
+
+test("a reading with no EID identifies nothing and is dropped", () => {
+  assert.equal(parseEsimInfoResult({ imei: "867018069514820" }), null);
+  assert.equal(parseEsimInfoResult(null), null);
+  assert.equal(parseEsimInfoResult("nope"), null);
+});
+
+test("a card that refused the notification query says so rather than looking empty", () => {
+  const info = parseEsimInfoResult({
+    imei: "867018069514820",
+    eid: "89086030202200000026000178339240",
+    chip: { decoded_fields: 16 },
+    notifications: [],
+    notifications_error: "eUICC returned notification list error 127 (undefined error)",
+  });
+  assert.ok(info);
+  assert.equal(info.notifications.length, 0);
+  assert.match(info.notificationsError ?? "", /127/);
+});
+
+test("a fetched notification is not a delivered one", () => {
+  const value = parseRetrievedNotification({
+    imei: "867018069514820",
+    sequence_number: 3,
+    operations: ["enable"],
+    address: "wbg.prod.ondemandconnectivity.com",
+    iccid: "89852351225042214201",
+    installation_result: false,
+    payload_bytes: 1460,
+    payload_hex: "3082",
+    delivered: false,
+    delivery_blocked_by: "ES9+ handleNotification needs an HTTPS client",
+  });
+  assert.ok(value);
+  assert.equal(value.sequenceNumber, 3);
+  assert.equal(value.payloadBytes, 1460);
+  assert.equal(value.delivered, false);
+  assert.match(value.deliveryBlockedBy ?? "", /ES9\+/);
 });

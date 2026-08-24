@@ -327,6 +327,17 @@ export interface ListEsimProfilesCommand {
   modem_imei: Imei;
 }
 
+export interface ReadEsimInfoCommand {
+  kind: "ReadEsimInfo";
+  modem_imei: Imei;
+}
+
+export interface RetrieveEsimNotificationCommand {
+  kind: "RetrieveEsimNotification";
+  modem_imei: Imei;
+  sequence_number: number;
+}
+
 export interface ConfigureProxyCommand {
   kind: "ConfigureProxy";
   instances: Array<ProxyInstanceSpec>;
@@ -420,6 +431,8 @@ export type Command =
   | RestartModemCommand |
   | SwitchEsimProfileCommand |
   | ListEsimProfilesCommand |
+  | ReadEsimInfoCommand |
+  | RetrieveEsimNotificationCommand |
   | RunAtCommandCommand |
   | SendUssdCommand |
   | SetRadioCommand |

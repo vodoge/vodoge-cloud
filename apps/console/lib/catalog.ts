@@ -711,3 +711,157 @@ export function parseSession(value: unknown): SessionRow | null {
   }
   return { peer, count, lastBody, lastReceivedAt, deviceId };
 }
+
+/**
+ * What `GetEUICCInfo2` said about a chip, as the edge decoded it.
+ *
+ * Every field is optional because the card decides which ones it sends, and
+ * `decodedFields` is carried alongside so a short read is visible as a number
+ * rather than as fields that quietly went missing.
+ */
+export type EsimChipInfo = {
+  profileVersion: string | null;
+  sgp22Version: string | null;
+  firmwareVersion: string | null;
+  installedApplications: number | null;
+  freeNonVolatileMemory: number | null;
+  freeVolatileMemory: number | null;
+  uiccCapabilities: string[];
+  ts102241Version: string | null;
+  globalPlatformVersion: string | null;
+  rspCapabilities: string[];
+  ciKeyIdsForVerification: string[];
+  ciKeyIdsForSigning: string[];
+  category: number | null;
+  forbiddenProfilePolicyRules: string[];
+  ppVersion: string | null;
+  sasAccreditationNumber: string | null;
+  decodedFields: number;
+};
+
+/** One notification the eUICC has not managed to hand to its SM-DP+. */
+export type EsimNotificationRow = {
+  sequenceNumber: number;
+  operations: string[];
+  address: string;
+  iccid: string | null;
+};
+
+/** The result of one `read_esim_info` command. */
+export type EsimInfoResult = {
+  imei: string;
+  eid: string;
+  chip: EsimChipInfo;
+  notifications: EsimNotificationRow[];
+  notificationsError: string | null;
+  profilesError: string | null;
+};
+
+/** The result of one `retrieve_esim_notification` command. */
+export type RetrievedNotification = {
+  imei: string;
+  sequenceNumber: number;
+  operations: string[];
+  address: string;
+  iccid: string | null;
+  installationResult: boolean;
+  payloadBytes: number;
+  /** False until ES9+ exists. Rendered, not assumed. */
+  delivered: boolean;
+  deliveryBlockedBy: string | null;
+};
+
+/**
+ * Read one chip's answer out of a command result.
+ *
+ * Returns null rather than a half-filled object when the EID is missing: an
+ * eUICC reading with no EID identifies nothing, and rendering it under an
+ * empty heading is worse than not rendering it.
+ */
+export function parseEsimInfoResult(value: unknown): EsimInfoResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const eid = asString(row.eid);
+  const imei = asString(row.imei);
+  if (!eid || !imei) {
+    return null;
+  }
+  const chip = (row.chip ?? {}) as Record<string, unknown>;
+  return {
+    imei,
+    eid,
+    chip: {
+      profileVersion: asString(chip.profile_version),
+      sgp22Version: asString(chip.sgp22_version),
+      firmwareVersion: asString(chip.firmware_version),
+      installedApplications: asNumber(chip.installed_applications),
+      freeNonVolatileMemory: asNumber(chip.free_non_volatile_memory),
+      freeVolatileMemory: asNumber(chip.free_volatile_memory),
+      uiccCapabilities: stringsOf(chip.uicc_capabilities),
+      ts102241Version: asString(chip.ts102241_version),
+      globalPlatformVersion: asString(chip.global_platform_version),
+      rspCapabilities: stringsOf(chip.rsp_capabilities),
+      ciKeyIdsForVerification: stringsOf(chip.ci_key_ids_for_verification),
+      ciKeyIdsForSigning: stringsOf(chip.ci_key_ids_for_signing),
+      category: asNumber(chip.category),
+      forbiddenProfilePolicyRules: stringsOf(chip.forbidden_profile_policy_rules),
+      ppVersion: asString(chip.pp_version),
+      sasAccreditationNumber: asString(chip.sas_accreditation_number),
+      decodedFields: asNumber(chip.decoded_fields) ?? 0,
+    },
+    notifications: arrayOf(row.notifications)
+      .map(parseEsimNotification)
+      .filter((entry): entry is EsimNotificationRow => entry !== null),
+    notificationsError: asString(row.notifications_error),
+    profilesError: asString(row.profiles_error),
+  };
+}
+
+function parseEsimNotification(value: unknown): EsimNotificationRow | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const sequenceNumber = asNumber(row.sequence_number);
+  const address = asString(row.address);
+  // Zero is a real sequence number, so the check is for absence rather than
+  // for falsiness.
+  if (sequenceNumber === null || !address) {
+    return null;
+  }
+  return {
+    sequenceNumber,
+    operations: stringsOf(row.operations),
+    address,
+    iccid: asString(row.iccid),
+  };
+}
+
+export function parseRetrievedNotification(value: unknown): RetrievedNotification | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const sequenceNumber = asNumber(row.sequence_number);
+  const imei = asString(row.imei);
+  if (sequenceNumber === null || !imei) {
+    return null;
+  }
+  return {
+    imei,
+    sequenceNumber,
+    operations: stringsOf(row.operations),
+    address: asString(row.address) ?? "",
+    iccid: asString(row.iccid),
+    installationResult: row.installation_result === true,
+    payloadBytes: asNumber(row.payload_bytes) ?? 0,
+    delivered: row.delivered === true,
+    deliveryBlockedBy: asString(row.delivery_blocked_by),
+  };
+}
+
+function stringsOf(value: unknown): string[] {
+  return arrayOf(value).filter((entry): entry is string => typeof entry === "string");
+}

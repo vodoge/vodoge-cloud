@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 )
@@ -68,6 +69,13 @@ type Request struct {
 
 	// SwitchEsimProfile
 	TargetICCID string `json:"target_iccid"`
+
+	// RetrieveEsimNotification.
+	//
+	// A pointer because zero is a real sequence number: both eUICCs on the
+	// bench report their oldest pending notification as seqNumber 0, so an
+	// omitted field and a deliberate 0 have to be told apart.
+	SequenceNumber *int64 `json:"sequence_number"`
 
 	// SelfUpdate
 	Version   string `json:"version"`
@@ -259,6 +267,37 @@ var catalogue = map[string]Spec{
 		Kind: "list_esim_profiles", ContractKind: "ListEsimProfiles", NeedsModem: true,
 		Build: func(request Request) (map[string]any, error) {
 			return map[string]any{"kind": "ListEsimProfiles", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
+	"read_esim_info": {
+		// Not mutating. It reads the chip's own identity, its capabilities and
+		// the notifications it still owes an SM-DP+, and changes none of them.
+		Kind: "read_esim_info", ContractKind: "ReadEsimInfo", NeedsModem: true,
+		Build: func(request Request) (map[string]any, error) {
+			return map[string]any{"kind": "ReadEsimInfo", "modem_imei": request.ModemIMEI}, nil
+		},
+	},
+	"retrieve_esim_notification": {
+		// Also not mutating, and the name says fetch rather than retry on
+		// purpose: this gets the signed notification off the card. Handing it
+		// to the SM-DP+ is ES9+ over HTTPS and removing it afterwards is a
+		// write, and neither happens here.
+		Kind: "retrieve_esim_notification", ContractKind: "RetrieveEsimNotification",
+		NeedsModem: true,
+		Build: func(request Request) (map[string]any, error) {
+			if request.SequenceNumber == nil {
+				return nil, ErrInvalid{"sequence_number is required"}
+			}
+			// Bounded rather than merely non-negative: the contract declares an
+			// int32 range, and a value the schema rejects should be refused
+			// while the caller is still here rather than at the edge.
+			if *request.SequenceNumber < 0 || *request.SequenceNumber > math.MaxInt32 {
+				return nil, ErrInvalid{"sequence_number must be between 0 and 2147483647"}
+			}
+			return map[string]any{
+				"kind": "RetrieveEsimNotification", "modem_imei": request.ModemIMEI,
+				"sequence_number": *request.SequenceNumber,
+			}, nil
 		},
 	},
 	"self_update": {

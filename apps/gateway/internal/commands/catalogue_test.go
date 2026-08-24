@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -194,6 +195,10 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		request.URL = "https://releases.example.com/vodoge-edge"
 		request.SHA256 = strings.Repeat("a", 64)
 		request.Signature = strings.Repeat("s", 32)
+		// Zero on purpose: it is a real sequence number, and a build that
+		// treated it as "not given" would fail here rather than in the field.
+		sequence := int64(0)
+		request.SequenceNumber = &sequence
 
 		_, payload, err := BuildPayload(request)
 		if err != nil {
@@ -234,8 +239,14 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	// refresh_modems asks the edge to look at /dev, which is what its poll
 	// loop does every eight seconds regardless. Nothing on the device
 	// changes, so confirming it would be noise.
+	//
+	// read_esim_info and retrieve_esim_notification both talk to the eUICC and
+	// both only read it: the chip's identity, its capabilities, and the
+	// notifications it still owes an SM-DP+. Marking either of them mutating
+	// would put a confirmation prompt in front of a reading.
 	readOnly := map[string]bool{
 		"modem_report": true, "list_esim_profiles": true, "refresh_modems": true,
+		"read_esim_info": true, "retrieve_esim_notification": true,
 	}
 	// rotate_ip drops the data session, so it belongs with the disruptive
 	// actions even though it reads as a small thing.
@@ -282,5 +293,80 @@ func TestSelfUpdateRefusesAnythingUnverifiable(t *testing.T) {
 				t.Fatal("expected a rejection")
 			}
 		})
+	}
+}
+
+// Zero is a sequence number, not a missing field.
+//
+// Both eUICCs on the bench report their oldest pending notification as
+// seqNumber 0, so a validator that read an absent field as zero would silently
+// fetch the wrong notification, and one that rejected zero would make the most
+// common one unreachable.
+func TestARetrievalTellsAnAbsentSequenceNumberFromZero(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "retrieve_esim_notification", ModemIMEI: benchIMEI,
+	}); err == nil {
+		t.Fatal("an omitted sequence_number must be refused, not read as zero")
+	}
+
+	zero := int64(0)
+	_, payload, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "retrieve_esim_notification",
+		ModemIMEI: benchIMEI, SequenceNumber: &zero,
+	})
+	if err != nil {
+		t.Fatalf("explicit zero: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["sequence_number"] != float64(0) {
+		t.Fatalf("sequence_number = %v, want 0", decoded["sequence_number"])
+	}
+	if decoded["kind"] != "RetrieveEsimNotification" {
+		t.Fatalf("kind = %v", decoded["kind"])
+	}
+
+	// Outside what the contract's integer range allows, refused here rather
+	// than by the edge minutes later.
+	for _, bad := range []int64{-1, math.MaxInt32 + 1} {
+		value := bad
+		if _, _, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "retrieve_esim_notification",
+			ModemIMEI: benchIMEI, SequenceNumber: &value,
+		}); err == nil {
+			t.Fatalf("sequence_number %d was accepted", bad)
+		}
+	}
+}
+
+// A chip reading names the modem it is about.
+//
+// An eUICC command with no IMEI would be sent to whichever module the edge
+// picked first, and on this bench that is not even always an eUICC.
+func TestReadingAChipNamesItsModem(t *testing.T) {
+	t.Parallel()
+
+	spec, payload, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "read_esim_info", ModemIMEI: benchIMEI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.NeedsModem {
+		t.Fatal("read_esim_info must name a modem")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["modem_imei"] != benchIMEI {
+		t.Fatalf("modem_imei = %v", decoded["modem_imei"])
+	}
+	if _, _, err := BuildPayload(Request{DeviceID: "d", Kind: "read_esim_info"}); err == nil {
+		t.Fatal("a chip reading with no imei was accepted")
 	}
 }

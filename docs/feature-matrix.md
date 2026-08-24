@@ -117,8 +117,8 @@
 | Profile 列表 | 有 | 有 | **有** | 已投影为持久盘点 |
 | 切换 / 启用 | 有 | 有 | **有** | — |
 | 禁用当前 Profile | 有 | 有 | **无** | 边缘 `es10c.rs` 有 `disable_profile_apdu`，云端未接 |
-| EID 与芯片信息 | 有 | 有 | **半** | 边缘能读 EID（ISD-R / GET DATA `5A`），云端未接；芯片信息需 ES10b |
-| 通知列表与重试 | 有 | 有 | **无** | 需要 ES10b |
+| EID 与芯片信息 | 有 | 有 | **有** | 控制台 eSIM 面板的 `read_esim_info`，一条 ISD-R 通道读完 EID + `GetEUICCInfo2`（16 个字段全解码，含剩余非易失内存与 GSMA CI 公钥）+ 通知列表 + profile 列表。注意 GET DATA `5A` 在台上两颗 eUICC 上都回 `6D00`，实际用的是 ES10c `GetEUICCData` |
+| 通知列表与重试 | 有 | 有 | **半** | 列表与**取回**（`ListNotification` / `RetrieveNotificationsList`）都有，控制台可见可点。**投递还没有**：ES9+ `handleNotification` 要 HTTPS 客户端与 GSMA CI 信任链，删除还要写卡，都在 3.3。另：两颗 eUICC 都拒绝 `seqNumber` 检索（回 `BF2B 03 81 01 7F`），所以取一条要取全部再挑 |
 | Profile 下载（SM-DP+） | 有 | 有 | **无** | 最大的单项工程 |
 | 重命名 / 删除 Profile | 有 | 有 | **无** | 边缘也还没有 |
 | 按 ICCID 的卡策略 | 有 | 有 | **有** | 下发到全部设备 |
