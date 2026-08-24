@@ -7,7 +7,7 @@ GET https://<tenant>.vodoge.com/v1/openapi.json
 Authorization: Bearer <会话令牌>
 ```
 
-这份文档覆盖网关注册的**全部**路由（当前 65 条模式 / 67 处注册）。
+这份文档覆盖网关注册的**全部**路由（当前 66 条模式 / 68 处注册）。
 源头在 `apps/gateway/cmd/gateway/openapi.go`，渲染器在
 `apps/gateway/internal/openapi/spec.go`。
 
@@ -109,9 +109,39 @@ Authorization: Bearer <会话令牌>
 问的是**服务端**不是文档：
 
 `TestEveryTenantRouteRefusesAnAnonymousCaller` 把文档里每一条声明了会话安全方案的
-操作（当前 **55** 条）**不带任何凭据**打在真的 handler 上，要求全部 **401**。
+操作（当前 **56** 条）**不带任何凭据**打在真的 handler 上，要求全部 **401**。
 `/v1/events` 在整套测试全绿的情况下开放了好几个月，就是因为
-**从来没有人拿这个问题去问过路由器**。现在一次问 55 条。
+**从来没有人拿这个问题去问过路由器**。现在一次问 56 条。
+
+## 只读账号的边界：为什么 `GET /v1/proxy/instances/export` 是个例外
+
+只读守卫**按 HTTP 方法判定** —— `auth.ChangesState` 之外的方法一律放行。
+这对另外 65 条是对的规则，对这一条**恰好是错的**：
+
+`GET /v1/proxy/instances/export` 是全站**唯一**会返回代理口令的路由
+（其余地方 `Instance.Password` 是 `json:"-"`，两个 store 都不 select 那一列）。
+它是 GET，所以守卫会放行，而它放行出去的是该租户**全部**可用凭据。
+「只读」如果不包含「不能把口令带走」，就基本不剩什么意思了。
+
+所以拒绝写在 handler 里（`exportInstances`），用的是守卫用的**同一个**谓词
+`auth.Session.MayWrite` —— **一个定义、两处引用**，不是两个定义。
+
+钉住它的不是「导出路由答 403」这种单点断言，而是两条**去问路由器**的测试：
+
+| 测试 | 问的是什么 |
+| --- | --- |
+| `TestNoRouteHandsAProxyPasswordToAReadOnlySession` | 拿只读会话打**每一条已注册路由**，哨兵口令不得出现在任何响应体里。末尾有一条**对照**：管理员打导出路由**必须**拿到它 —— 否则上面那圈就是在断言一个本来就不存在的东西 |
+| `TestAReadOnlySessionCanStillRead` | 反方向。除 `readsRefusedToAReadOnlySession` 里钉住的那条外，只读账号的每一次读都不得被拒；钉住的那条**必须**被拒且理由要对。钉子过期（路由没了）同样报红 |
+
+**导出会进审计，口令不会。** 记的是 actor（会话的 user_id）、instance id 与数量；
+`TestExportingProxiesIsAuditedWithoutTheCredential` 扫全部审计事件，出现哨兵即红。
+审计追加在这条路由上是**致命的**（其余代理路由是吞掉的）：
+配置变更丢了记录，不如让变更本身失败；而**没留痕的凭据导出不允许发生**。
+
+OpenAPI 的 example 用的是 `USERNAME:PASSWORD@203.0.113.10`（RFC 5737 文档保留地址）。
+`TestTheSpecShipsNoUsableCredential` 用正则扫整份文档里所有
+`scheme://user:pass@`，口令部分不在占位符白名单里就红 —— 规范文档是这个仓库里
+**最容易被复制到别处**的产物。
 
 ## 校验
 

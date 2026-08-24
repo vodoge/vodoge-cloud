@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -13,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +36,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
@@ -1859,11 +1862,32 @@ func TestEveryWriteRouteRefusesAReadOnlySession(t *testing.T) {
 	}
 }
 
+// readsRefusedToAReadOnlySession is every GET a read-only account may not make.
+//
+// Pinned rather than skipped by pattern, and the entry carries the words the
+// refusal has to contain. "Read-only" stops meaning anything the moment reads
+// start being refused for reasons nobody wrote down, so growing this list has
+// to be somebody deciding on purpose — the same reasoning as the exempt list
+// in the write-route test above.
+//
+// TestAReadOnlySessionCanStillRead checks both directions: every route named
+// here is refused for the stated reason, and every other read is allowed. A
+// stale entry fails too, so removing the route without removing the pin is
+// caught rather than left as a rule about nothing.
+var readsRefusedToAReadOnlySession = map[string]string{
+	// The one route that returns proxy passwords. Every other route treats
+	// them as write-only. The chokepoint that refuses read-only accounts
+	// decides by method and this is a GET, so the refusal is inside the
+	// handler; see exportInstances.
+	"GET /v1/proxy/instances/export": "read-only",
+}
+
 // The other half: refusing writes must not turn into refusing the account.
 func TestAReadOnlySessionCanStillRead(t *testing.T) {
 	t.Parallel()
 
 	handler := tenantFixture(t).handler()
+	exercised := map[string]bool{}
 	for _, registered := range routesFromSource(t) {
 		if auth.ChangesState(registered.method) {
 			continue
@@ -1886,12 +1910,381 @@ func TestAReadOnlySessionCanStillRead(t *testing.T) {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		cancel()
+
+		key := registered.method + " " + registered.path
+		if reason, pinned := readsRefusedToAReadOnlySession[key]; pinned {
+			exercised[key] = true
+			if response.Code != http.StatusForbidden {
+				t.Errorf("%s: status = %d, want 403 -- this read is supposed to be "+
+					"refused to a read-only account", key, response.Code)
+				continue
+			}
+			// A 403 for some other reason (wrong tenant, inactive tenant)
+			// would pass a status-only check with the refusal missing.
+			if !strings.Contains(response.Body.String(), reason) {
+				t.Errorf("%s: 403 body = %q, want it to say %q",
+					key, strings.TrimSpace(response.Body.String()), reason)
+			}
+			continue
+		}
 		if response.Code == http.StatusForbidden {
 			t.Errorf("%s %s: read-only session refused a read (%s)",
 				registered.method, registered.path,
 				strings.TrimSpace(response.Body.String()))
 		}
 	}
+	for key := range readsRefusedToAReadOnlySession {
+		if !exercised[key] {
+			t.Errorf("%s is pinned as refused to a read-only account, but no such read "+
+				"route is registered -- either it moved and the pin is now guarding "+
+				"nothing, or the pin is stale", key)
+		}
+	}
+}
+
+// ── The proxy export, which is the one route that hands out credentials ──
+
+// seedProxyInstances puts two listeners in a fixture, one of them with a
+// password no other value in the process could be mistaken for.
+//
+// The sentinel is what makes the leak tests mean something: asserting "the
+// body does not contain a password" is only as good as being certain the
+// password was there to leak in the first place.
+const proxySecretSentinel = "sentinel-pw-b0rk?/@:#"
+
+// proxySecretMarker is the part of the sentinel that no encoding changes.
+//
+// The sentinel is deliberately full of characters a URL has to escape, which
+// means a leak search for the literal string would miss the leak in every
+// format that escapes it. The marker is letters, digits and a hyphen, so it
+// appears verbatim in a URL, in JSON, in CSV and in a log line alike.
+const proxySecretMarker = "sentinel-pw-b0rk"
+
+func seedProxyInstances(t *testing.T, proc *process) {
+	t.Helper()
+	for _, instance := range []proxy.Instance{{
+		DeviceID:    "d-a",
+		Name:        "hk-exit",
+		ModemIMEI:   "867018069514820",
+		Protocol:    "socks5",
+		ListenAddr:  "0.0.0.0",
+		ListenPort:  11080,
+		AuthEnabled: true,
+		Username:    "vodoge",
+		Password:    proxySecretSentinel,
+		Enabled:     true,
+	}, {
+		DeviceID:   "d-a",
+		Name:       "open-http",
+		ModemIMEI:  "862547055142811",
+		Protocol:   "http",
+		ListenAddr: "192.168.78.10",
+		ListenPort: 18080,
+		Enabled:    true,
+	}} {
+		if _, err := proc.proxies.SaveInstance(context.Background(), "t-a", instance); err != nil {
+			t.Fatalf("seed %s: %v", instance.Name, err)
+		}
+	}
+}
+
+// No route at all hands a proxy password to a read-only account.
+//
+// Written this way rather than as "the export route answers 403" because the
+// question is not about one route. The stored password is a secret the rest of
+// the API keeps by never selecting the column; the export is the deliberate
+// exception, and the thing worth holding is the property, not the exception.
+// So this asks the router: every registered route, one read-only request each,
+// and the sentinel must not come back from any of them. A future route that
+// starts returning the column fails here without anyone adding it to a list.
+//
+// The last stanza is the control. Without it this passes just as happily on a
+// build where the export is broken, absent, or returns an empty body -- which
+// is the shape of test this repository has already been burned by twice.
+func TestNoRouteHandsAProxyPasswordToAReadOnlySession(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	seedProxyInstances(t, proc)
+	handler := proc.handler()
+
+	checked := 0
+	for _, registered := range routesFromSource(t) {
+		if registered.path == wss.Path {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		request := httptest.NewRequest(
+			registered.method,
+			"http://a.vodoge.com"+requestPath(registered.path)+"?host=192.168.78.10",
+			strings.NewReader("{}"),
+		).WithContext(ctx)
+		request.Header.Set("Authorization", "Bearer readonly-t-a")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		cancel()
+		checked++
+		if strings.Contains(response.Body.String(), proxySecretMarker) {
+			t.Errorf("%s %s: a read-only session was handed a proxy password",
+				registered.method, registered.path)
+		}
+	}
+	if checked < fewestRoutesEverRegistered {
+		t.Fatalf("only %d routes were exercised", checked)
+	}
+
+	// The control: an account that may write does get it, from the export
+	// route, in the response body.
+	request := httptest.NewRequest(http.MethodGet,
+		"http://a.vodoge.com/v1/proxy/instances/export?host=192.168.78.10", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("admin export: status = %d body = %q",
+			response.Code, strings.TrimSpace(response.Body.String()))
+	}
+	if !strings.Contains(response.Body.String(), proxySecretMarker) {
+		t.Fatalf("admin export did not contain the password, so the check above was "+
+			"asserting the absence of something that was never there: %q",
+			response.Body.String())
+	}
+}
+
+// What the export actually is: strings a client can dial.
+func TestTheProxyExportIsUsableConnectionStrings(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	seedProxyInstances(t, proc)
+	handler := proc.handler()
+
+	body, header := exportProxies(t, handler, "?host=203.0.113.10")
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	// Sorted by name: hk-exit, then open-http.
+	// Written out rather than assembled with net/url: an expectation produced
+	// by the code under test is an expectation about nothing. These are the
+	// exact bytes a client has to be able to dial, escaping and all.
+	want := []string{
+		"socks5://vodoge:sentinel-pw-b0rk%3F%2F%40%3A%23@203.0.113.10:11080",
+		"http://203.0.113.10:18080",
+	}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("export =\n  %s\nwant\n  %s",
+			strings.Join(lines, "\n  "), strings.Join(want, "\n  "))
+	}
+	// Every line has to survive a round trip through a URL parser, because
+	// that is what the client on the other end does with it.
+	parsed, err := url.Parse(lines[0])
+	if err != nil {
+		t.Fatalf("the first connection string does not parse: %v", err)
+	}
+	password, _ := parsed.User.Password()
+	if password != proxySecretSentinel {
+		t.Errorf("password round-tripped as %q, want %q", password, proxySecretSentinel)
+	}
+	if header.Get("Cache-Control") != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store: the body is a live credential",
+			header.Get("Cache-Control"))
+	}
+	if !strings.Contains(header.Get("Content-Disposition"), "attachment") {
+		t.Errorf("Content-Disposition = %q, want an attachment so a browser does not "+
+			"render credentials into its history", header.Get("Content-Disposition"))
+	}
+
+	// Without a host, the listener bound to 0.0.0.0 has no address to dial and
+	// says so instead of emitting something that would fail at connect time.
+	body, _ = exportProxies(t, handler, "")
+	if strings.Contains(body, "0.0.0.0") {
+		t.Errorf("export emitted a wildcard address as a connection string:\n%s", body)
+	}
+	if !strings.Contains(body, "# hk-exit:") || !strings.Contains(body, "?host=") {
+		t.Errorf("export did not say why hk-exit was left out, or how to fix it:\n%s", body)
+	}
+	if !strings.Contains(body, "http://192.168.78.10:18080") {
+		t.Errorf("the listener with a concrete address should still export:\n%s", body)
+	}
+
+	// The other two formats describe the same endpoints.
+	jsonBody, _ := exportProxies(t, handler, "?format=json&host=203.0.113.10")
+	var decoded struct {
+		Instances []struct {
+			Name     string `json:"name"`
+			URL      string `json:"url"`
+			Password string `json:"password"`
+		} `json:"instances"`
+	}
+	if err := json.Unmarshal([]byte(jsonBody), &decoded); err != nil {
+		t.Fatalf("json export: %v", err)
+	}
+	if len(decoded.Instances) != 2 || decoded.Instances[0].Password != proxySecretSentinel {
+		t.Errorf("json export = %s", jsonBody)
+	}
+	csvBody, _ := exportProxies(t, handler, "?format=csv&host=203.0.113.10")
+	if !strings.HasPrefix(csvBody, "name,protocol,host,port,username,password,url\n") {
+		t.Errorf("csv export has no header row: %q", csvBody)
+	}
+	if !strings.Contains(csvBody, proxySecretSentinel) {
+		t.Errorf("csv export carries no password: %q", csvBody)
+	}
+}
+
+// A host that is not a host is refused, because the export is pasted into a
+// client without being read.
+func TestTheProxyExportRefusesAHostThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	seedProxyInstances(t, proc)
+	handler := proc.handler()
+
+	for _, host := range []string{
+		"evil.example.com/redirect",
+		"attacker@evil.example.com",
+		"http://evil.example.com",
+		"203.0.113.10:1080",
+		"2001:db8::1",
+	} {
+		request := httptest.NewRequest(http.MethodGet,
+			"http://a.vodoge.com/v1/proxy/instances/export?host="+url.QueryEscape(host), nil)
+		request.Header.Set("Authorization", "Bearer session-t-a")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("host %q: status = %d, want 400 -- body %q",
+				host, response.Code, strings.TrimSpace(response.Body.String()))
+		}
+	}
+	// And an unknown format names the ones that exist.
+	request := httptest.NewRequest(http.MethodGet,
+		"http://a.vodoge.com/v1/proxy/instances/export?format=yaml", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest ||
+		!strings.Contains(response.Body.String(), "csv") {
+		t.Errorf("format=yaml: status = %d body = %q", response.Code,
+			strings.TrimSpace(response.Body.String()))
+	}
+}
+
+// Who exported what, without what they exported.
+//
+// Both halves matter and they pull against each other. An export nobody can
+// trace is how credentials leave a fleet unnoticed; an audit row containing
+// the credential copies the secret into an append-only log that is retained
+// longer, read by more people and backed up to more places than the
+// configuration table it came from.
+func TestExportingProxiesIsAuditedWithoutTheCredential(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	seedProxyInstances(t, proc)
+	log := &audit.Memory{}
+	proc.audit = log
+	handler := proc.handler()
+
+	// The export itself is asserted elsewhere; here it is only the trigger.
+	exportProxies(t, handler, "?host=203.0.113.10")
+
+	var exported *audit.Event
+	for _, event := range log.ForTenant("t-a") {
+		if event.Action == "proxy.instances_exported" {
+			found := event
+			exported = &found
+		}
+	}
+	if exported == nil {
+		t.Fatalf("no export was recorded; audit holds %#v", log.ForTenant("t-a"))
+	}
+	if exported.Actor != "user-t-a" {
+		t.Errorf("actor = %q, want the session's user: an export recorded against "+
+			"\"console\" does not say who took the credentials", exported.Actor)
+	}
+	if !strings.Contains(exported.Target, "2") {
+		t.Errorf("target = %q, want it to say how much left", exported.Target)
+	}
+	if !strings.Contains(string(exported.Detail), "instance_ids") {
+		t.Errorf("detail = %s, want the instance ids", exported.Detail)
+	}
+	// Nothing anywhere in the log, not only the one event: a refusal or a
+	// later addition must not smuggle it in either.
+	for _, event := range log.ForTenant("t-a") {
+		if strings.Contains(event.Actor+event.Action+event.Target+string(event.Detail),
+			proxySecretMarker) {
+			t.Fatalf("the audit log contains a proxy password: %#v", event)
+		}
+	}
+
+	// A refused export is recorded too.
+	request := httptest.NewRequest(http.MethodGet,
+		"http://a.vodoge.com/v1/proxy/instances/export", nil)
+	request.Header.Set("Authorization", "Bearer readonly-t-a")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	refused := false
+	for _, event := range log.ForTenant("t-a") {
+		if event.Action == "proxy.instances_export_refused" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Error("a read-only account's attempt to export was refused but not recorded")
+	}
+}
+
+// An export that could not be recorded is not made.
+//
+// The inverse of every other audit call in the proxy file, where a failed
+// append is swallowed. Losing the record of a configuration change is worse
+// than refusing the change; handing out credentials with no trace is not.
+func TestAnUnrecordableProxyExportIsRefused(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	seedProxyInstances(t, proc)
+	proc.audit = brokenAudit{}
+	handler := proc.handler()
+
+	request := httptest.NewRequest(http.MethodGet,
+		"http://a.vodoge.com/v1/proxy/instances/export?host=203.0.113.10", nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", response.Code)
+	}
+	if strings.Contains(response.Body.String(), proxySecretMarker) {
+		t.Fatal("the credentials were served anyway")
+	}
+}
+
+// brokenAudit is an audit log that cannot record anything.
+type brokenAudit struct{}
+
+func (brokenAudit) Append(context.Context, string, audit.Event) error {
+	return errors.New("audit log unavailable")
+}
+
+func (brokenAudit) List(context.Context, string) ([]audit.Event, error) {
+	return nil, errors.New("audit log unavailable")
+}
+
+// exportProxies calls the export as an account that may, and fails the test if
+// it does not answer.
+func exportProxies(t *testing.T, handler http.Handler, query string) (string, http.Header) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet,
+		"http://a.vodoge.com/v1/proxy/instances/export"+query, nil)
+	request.Header.Set("Authorization", "Bearer session-t-a")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("export%s: status = %d body = %q",
+			query, response.Code, strings.TrimSpace(response.Body.String()))
+	}
+	return response.Body.String(), response.Result().Header
 }
 
 // Signing out and rotating your own password are not tenant writes, and an

@@ -930,6 +930,55 @@ func apiOperations() []openapi.Operation {
 			},
 		},
 		{
+			Method: "GET", Path: "/v1/proxy/instances/export", Tag: tagProxy,
+			Summary: "Every listener as a usable connection string, credentials included.",
+			Description: "The one route that returns proxy passwords. Everywhere else the " +
+				"password is write-only, which left using a proxy a matter of copying four " +
+				"fields off a page and assembling the URL by hand.\n\n" +
+				"A read-only account is refused. That refusal is written into this handler " +
+				"rather than left to the chokepoint that guards the write routes: the " +
+				"chokepoint decides by method, this is a GET, and it would be waved through " +
+				"holding every credential the tenant owns.\n\n" +
+				"A listener bound to 0.0.0.0 has no address the cloud can write down, so it " +
+				"is reported as unexportable unless `host` says where to dial. Every request " +
+				"is recorded in the audit log by instance id; the credentials themselves are " +
+				"never written there.",
+			Security: []string{schemeSession},
+			Query: []openapi.Parameter{
+				{Name: "format", Description: "lines (one connection string per line, with " +
+					"unexportable listeners as # comments), json, or csv.",
+					Schema: openapi.Schema{Type: "string", Enum: []string{"lines", "json", "csv"},
+						Default: "lines"}},
+				{Name: "host", Description: "The address clients should dial, overriding the " +
+					"stored listen address. A bare hostname or IP literal; anything carrying a " +
+					"scheme, port, path or credentials is refused.",
+					Schema: openapi.Schema{Type: "string", Example: "edge-1.example.net"}},
+				{Name: "device_id", Description: "Only this device's listeners. Omit for all."},
+			},
+			Responses: []openapi.Response{
+				{Status: 200, Description: "The export. Content type follows format; " +
+					"lines and csv are sent as attachments and none of the three may be cached.",
+					MediaType: "text/plain",
+					// The example is deliberately not a credential. USERNAME and
+					// PASSWORD are placeholders, and 203.0.113.10 is from the
+					// range RFC 5737 reserves for documentation: a reader must
+					// not be able to mistake anything here for a real secret,
+					// and a spec is copied into more places than any other file
+					// in this repository.
+					Schema: &openapi.Schema{Type: "string",
+						Example: "socks5://USERNAME:PASSWORD@203.0.113.10:11080\n" +
+							"http://203.0.113.10:18080\n" +
+							"# lab-3: listens on every interface, so the configuration does not " +
+							"say which address to dial; repeat the request with ?host=<address>\n"}},
+				plain(400, "The format is unknown, or host is not a bare hostname or IP address."),
+				plain(403, "A read-only account may not export credentials; or the session "+
+					"belongs to another tenant; or the tenant is not active."),
+				plain(500, "Proxy configuration could not be read, or the export could not be "+
+					"recorded — an export that leaves no audit trail is not made."),
+				plain(503, "This gateway has no store that can return credentials."),
+			},
+		},
+		{
 			Method: "POST", Path: "/v1/proxy/instances", Tag: tagProxy,
 			Summary:     "Create a proxy listener and push the device its new configuration.",
 			Security:    []string{schemeSession},

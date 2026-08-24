@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -339,6 +340,53 @@ func TestOpenAPIRefusesADocumentTheRouterDoesNotBack(t *testing.T) {
 	body := strings.TrimSpace(response.Body.String())
 	if !strings.Contains(body, "not registered") || !strings.Contains(body, apiSpecPath) {
 		t.Errorf("body = %q, want it to name the routes that are missing", body)
+	}
+}
+
+// credentialInURL matches a "scheme://user:pass@" anywhere in the document.
+//
+// Deliberately a pattern rather than a list of the examples that exist today:
+// the thing being held is "no example in this document is a working
+// credential", and a list would only hold the examples somebody remembered to
+// add to it.
+var credentialInURL = regexp.MustCompile(`[a-z0-9+.-]+://([^/\s"\\]+):([^/\s"\\@]*)@`)
+
+// placeholderSecrets are the stand-ins an example may use.
+//
+// One entry, and adding another has to be a decision. The point is that a
+// reader skimming the spec cannot mistake anything in it for a real secret,
+// and "PASSWORD" cannot be mistaken for anything else.
+var placeholderSecrets = map[string]bool{"PASSWORD": true}
+
+// The document must not ship a credential that works.
+//
+// This one is not paranoia about the repository. An OpenAPI document is the
+// artefact most likely to be pasted into a wiki, an LLM prompt, a client
+// generator and a vendor's portal, and the proxy export route exists precisely
+// to produce strings of the form the export example shows. An example copied
+// from a real export would be a live proxy credential in all of those places
+// at once, and nothing else here would notice.
+func TestTheSpecShipsNoUsableCredential(t *testing.T) {
+	t.Parallel()
+
+	body, err := openapi.Render(apiDocument())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	matches := credentialInURL.FindAllStringSubmatch(string(body), -1)
+	for _, match := range matches {
+		if !placeholderSecrets[match[2]] {
+			t.Errorf("the document contains %q, which looks like a working credential; "+
+				"examples must use a placeholder from placeholderSecrets", match[0])
+		}
+	}
+	// The control. Without an example of this shape the loop above is a loop
+	// over nothing, and it would keep passing after somebody deleted the one
+	// example it exists to police.
+	if len(matches) == 0 {
+		t.Fatal("no scheme://user:pass@ example is present at all -- either the proxy " +
+			"export example lost its credential form, or this pattern stopped matching " +
+			"it, and either way this test is now guarding nothing")
 	}
 }
 

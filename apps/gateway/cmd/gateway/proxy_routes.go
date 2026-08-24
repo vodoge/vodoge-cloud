@@ -28,6 +28,10 @@ func (process *process) registerProxyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/proxy/upstreams/{id}/probe", process.probeUpstream)
 
 	mux.HandleFunc("GET /v1/proxy/instances", process.listInstances)
+	// Before the {id} routes in reading order only; the mux matches on the
+	// literal segment regardless. It is a GET because it reads, and the
+	// read-only refusal it needs is therefore its own — see exportInstances.
+	mux.HandleFunc("GET /v1/proxy/instances/export", process.exportInstances)
 	mux.HandleFunc("POST /v1/proxy/instances", process.saveInstance)
 	mux.HandleFunc("PUT /v1/proxy/instances/{id}", process.saveInstance)
 	mux.HandleFunc("DELETE /v1/proxy/instances/{id}", process.deleteInstance)
@@ -155,6 +159,122 @@ func (process *process) listInstances(writer http.ResponseWriter, request *http.
 		return
 	}
 	writeJSON(writer, map[string]any{"instances": list})
+}
+
+// exportInstances hands out the listeners as connection strings.
+//
+// Why this exists at all. Everything needed to use a proxy was already stored
+// and already shown on the page — except the password, which is write-only
+// everywhere else — so using one meant copying four fields off a table by eye
+// and assembling socks5://user:pass@host:port by hand. That is tolerable for
+// three listeners and is the reason nobody ran more than three.
+//
+// Why the read-only refusal is written here rather than left to the guard.
+// The read-only chokepoint decides by HTTP method: anything that is not GET,
+// HEAD, OPTIONS or TRACE is refused. That is the right rule for the other
+// sixty routes, and it is exactly wrong for this one — this is a GET, so the
+// guard waves it through, and what it returns is every proxy credential the
+// tenant owns. "Read-only" has to mean "may not walk off with the passwords"
+// or it means very little, so the check is duplicated here on purpose. It uses
+// auth.Session.MayWrite, the same predicate the guard uses, so there is one
+// definition of the privilege and two places that consult it, rather than two
+// definitions.
+//
+// The audit append is deliberately fatal. Everywhere else in this file a
+// failed audit is swallowed, because losing the record of a config change is
+// worse than refusing the change. Here the balance flips: an export that left
+// no trace is the one outcome that must not be possible.
+func (process *process) exportInstances(writer http.ResponseWriter, request *http.Request) {
+	entry, session, ok := process.tenantAndSession(writer, request)
+	if !ok {
+		return
+	}
+	if !session.MayWrite() {
+		// Recorded, not just refused. Somebody trying to walk out with the
+		// credentials is worth more of a trace than somebody succeeding.
+		_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+			Actor:  session.UserID,
+			Action: "proxy.instances_export_refused",
+			Target: "read-only account",
+		})
+		http.Error(writer,
+			"this account is read-only: a proxy export hands out usable credentials",
+			http.StatusForbidden)
+		return
+	}
+	format := request.URL.Query().Get("format")
+	if format == "" {
+		format = "lines"
+	}
+	switch format {
+	case "lines", "json", "csv":
+	default:
+		writeInvalid(writer, proxy.ErrUnknownFormat(format))
+		return
+	}
+	secrets, capable := process.proxies.(proxy.SecretStore)
+	if !capable {
+		http.Error(writer, "this gateway cannot export proxy credentials",
+			http.StatusServiceUnavailable)
+		return
+	}
+	deviceID := request.URL.Query().Get("device_id")
+	instances, err := secrets.Instances(request.Context(), entry.TenantID, deviceID)
+	if err != nil {
+		http.Error(writer, "proxy configuration unavailable", http.StatusInternalServerError)
+		return
+	}
+	passwords, err := secrets.InstanceSecrets(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "proxy configuration unavailable", http.StatusInternalServerError)
+		return
+	}
+	endpoints, skipped, err := proxy.Export(instances, passwords, request.URL.Query().Get("host"))
+	if err != nil {
+		writeInvalid(writer, err)
+		return
+	}
+	if err := process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+		Actor:  session.UserID,
+		Action: "proxy.instances_exported",
+		Target: strconv.Itoa(len(endpoints)) + " instance(s)",
+		// Ids and counts. Never the credentials themselves: the log is
+		// append-only, retained longer and copied to more places than the
+		// configuration it describes.
+		Detail: mustJSON(proxy.AuditDetail(endpoints, skipped, format)),
+	}); err != nil {
+		http.Error(writer, "the export could not be recorded, so it was not made",
+			http.StatusInternalServerError)
+		return
+	}
+	// No caching and no shared storage of the body, at any hop. The response
+	// is a live credential.
+	writer.Header().Set("Cache-Control", "no-store")
+	switch format {
+	case "json":
+		writeJSON(writer, map[string]any{"instances": endpoints, "unexportable": skipped})
+	case "csv":
+		body, err := proxy.RenderCSV(endpoints, skipped)
+		if err != nil {
+			http.Error(writer, "the export could not be rendered", http.StatusInternalServerError)
+			return
+		}
+		writeDownload(writer, "text/csv; charset=utf-8", "vodoge-proxies.csv", body)
+	default:
+		writeDownload(writer, "text/plain; charset=utf-8", "vodoge-proxies.txt",
+			proxy.RenderLines(endpoints, skipped))
+	}
+}
+
+// writeDownload sends a body a browser must not render in a tab.
+//
+// An attachment rather than inline: rendering a page whose text is a list of
+// working credentials puts them in the tab title, the back/forward cache and
+// the browser's history, none of which the operator can clear selectively.
+func writeDownload(writer http.ResponseWriter, mediaType, filename, body string) {
+	writer.Header().Set("Content-Type", mediaType)
+	writer.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = io.WriteString(writer, body)
 }
 
 func (process *process) saveInstance(writer http.ResponseWriter, request *http.Request) {
