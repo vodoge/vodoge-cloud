@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 40） | 68 条注册（去重后 66 条模式，其中 33 条是写） |
+| 我们的云端 | `apps/gateway`（schema 43） | 68 条注册（去重后 66 条模式，其中 33 条是写） |
 
 云端路由数可以自己数：
 
@@ -34,10 +34,36 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 `cmd/gateway/openapi_test.go` 的漂移测试断言 OpenAPI 描述的路由集合 == 实际注册的集合
 （两个方向都查：漏写描述红，描述了不存在的路由也红）。
 
+**2026-08-25 拿部署后的网关复核过这三个数，不是拿仓库复核的。** 66 条模式逐条在
+**运行中的 mux** 上探到：对每条路径发一个没人注册过的方法，Go 的 `ServeMux` 会回 405
+并在 `Allow` 头里列出这条路径注册了哪些方法，没注册的路径回 404 ——
+**66 条全部 405、零个 404**；同样这 66 条字符串在容器里的网关二进制
+（`vodoge-cloud-gateway-1:/usr/local/bin/vodoge-gateway`）里也逐条搜得到（66 命中 / 0 缺失）。
+
+**三个数各自的含义不要混**：`mux.Handle*` 的**调用数是 68**，**去重后的模式数是 66**，
+**其中 33 条是写**（非 GET：POST 15、PUT 7、PATCH 2、DELETE 9），另外 33 条是 GET。
+测试打印的 `30 write routes refused, 3 exempt` 说的是这 33 条里 30 条被只读会话挡下、
+3 条豁免 —— **那不是第四个数**。
+
+**自己数的时候还有一个坑**：68 条里有 **2 条的 pattern 是拼出来的** ——
+`mux.Handle("POST "+enroll.Path, …)`（`/v1/enroll`）与 `mux.Handle("GET "+wss.Path, …)`（`/v1/edge`）。
+拿 `grep -o` 去抽引号里的 pattern，会把这两条抽成 `POST ` 和 `GET ` 两个空路径，
+于是 `/v1/enroll` 与 `/v1/edge` 从清单里消失、而那个 `POST ` 又和 enroll 的另一支撞成重复；
+**去重后的总数照样是 66，但那 66 条里有两条是错的**。
+
 三项能力已定案，全部要做：**VoWiFi 与 E911（仅美国）**、**语音通话**、**SM-DP+ 下载**。
 决策依据见 [decisions.md](decisions.md)，分阶段计划见 [execution-plan.md](execution-plan.md)。
 
-> **本表的时效性**：`我们的云端` 一列在 2026-08-22 逐条核对过代码。
+> **本表的时效性**：`我们的云端` 一列在 **2026-08-25 逐行核过一遍，核的对象是部署后的
+> 真实系统**：生产库（`ssh vodoge-cloud` → `docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge`，
+> 只读 SELECT）、容器里的制品（网关二进制 `/usr/local/bin/vodoge-gateway`、控制台
+> `/app/.next/**` 与 `/app/messages/*.json`）、以及线上 HTTP 响应（网关本机端口 `127.0.0.1:18080`）。
+>
+> **「仓库里有这段代码」不是本表接受的证据。** 上一轮（2026-08-22）就是照代码核的，
+> 结果 `Profile 列表` 与 `切换 / 启用` 两行一直写着「有」，而生产投影一行都没有、
+> 控制台上那个按钮根本渲染不出来。**「实现了」和「在真机上生效了」是两件事**，
+> 这一列只记后者。
+>
 > 改动了功能就要回来改这一列 —— 一张过时的对齐图比没有更糟，
 > 因为它会让人以为某件事已经做了。
 
@@ -62,15 +88,15 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| 设备列表与在线状态 | 有 | 有 | **有** | 另有版本与积压列，两边都没有 |
-| 改名 / 删除 | 有 | 有 | **有** | 删除走 SECURITY DEFINER，已演练 |
-| 新增设备 | 有 | 有 | **半** | 只能靠注册码自注册，不能手工建 |
+| 设备列表与在线状态 | 有 | 有 | **有** | 另有版本与积压列，两边都没有。生产 `app.devices` 那一行实测 `edge_version=0.1.0`、`queue_records=2`、`queue_bytes=2492`；控制台 bundle 里对应 `devices.colVersion` 与 `devices.colQueue` 两个列头 |
+| 改名 / 删除 | 有 | 有 | **有** | 删除走 SECURITY DEFINER，已演练：生产 `pg_proc` 里 `app.delete_device` 的 `prosecdef = t`，`app.audit_log` 有 3 条 `devices.deleted` |
+| 新增设备 | 有 | 有 | **半** | 只能靠注册码自注册，不能手工建 —— 运行中的 mux 上 `/v1/devices` 的 `Allow` 只有 `GET, HEAD`，没有 POST；建设备的唯一入口是 `POST /v1/enrollment-codes` 换码、设备再拿 `POST /v1/enroll` 自注册 |
 | 发现未注册硬件 | 有 | 有 | **有** | 边缘第二路枚举 AT 控制口，QMI 够不到的棒子以「待纳管」上报并带 IMEI；真机 ECM 往返验过 |
-| 手动重扫描 | 有 | 有 | **有** | `refresh_modems`，真机回执 `found: 3` |
-| 设备配置读取 | 有 | 有 | **无** | 边缘的运行配置无法从云端查看 |
-| 刷新设备缓存 | 有 | 有 | **有** | 同一条 `refresh_modems`，见下方注 |
-| 单设备实时流 | 有 | 有 | **半** | 有租户级 SSE，无按设备订阅 |
-| 主机资源统计 | 无 | 有 | **有** | CPU 取两次 /proc/stat 之差，内存用 MemAvailable；设备页「主机状态」卡 |
+| 手动重扫描 | 有 | 有 | **有** | `refresh_modems`，生产 CommandResult 实测 `{"found": 3, "rescan": "requested", "control_ports": ["/dev/cdc-wdm0","/dev/cdc-wdm1","/dev/cdc-wdm2"]}`（3 条成功，最近 2026-08-23 12:27） |
+| 设备配置读取 | 有 | 有 | **无** | 边缘的运行配置无法从云端查看：生产命令枚举里没有对应 kind，控制台也没有入口 |
+| 刷新设备缓存 | 有 | 有 | **有** | 同一条 `refresh_modems`（就是上一行那条生产回执），见下方注 |
+| 单设备实时流 | 有 | 有 | **半** | 有租户级 SSE —— 运行中的 mux 上 `GET /v1/events` 已注册、无会话回 401；无按设备订阅 |
+| 主机资源统计 | 无 | 有 | **有** | CPU 取两次 /proc/stat 之差，内存用 MemAvailable；设备页「主机状态」卡。生产 `app.devices` 实测 `cpu_percent=0.9`、`memory_used_bytes=662175744`、`memory_total_bytes=8326422528`，`host_reported_at` 与上报同分钟；bundle 里有 `device.hostCpu` / `device.hostMemory` / `devices.colHostCpu` |
 
 > **「手动重扫描」与「刷新设备缓存」是同一条 `refresh_modems` 命令。**
 > 这两行在别家产品里是两件事，在我们这里不是：`poll_modems` 每一轮都重新
@@ -83,33 +109,33 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| AT 终端 | 有 | 有 | **有** | 已在真机验证 `AT+CSQ` 往返 |
-| USSD 发起 / 继续 / 取消 | 有 | 有 | **有** | — |
-| 模组重启 / 飞行模式 | 有 | 有 | **有** | — |
-| 运营商扫描与选网 | 有 | 有 | **有** | 自动与手动 PLMN 都有 |
+| AT 终端 | 有 | 有 | **有** | 已在真机验证往返：生产 CommandResult `{"ok": true, "port": "/dev/ttyUSB10", "command": "AT+QCSQ", "lines": ["+QCSQ: \"LTE\",48,-74,250,-7"], "terminator": "OK"}`；`run_at_command` 累计 61 条成功 |
+| USSD 发起 / 继续 / 取消 | 有 | 有 | **半** | 契约 `SendUssd.stage` 是 `start / continue / cancel` 三态，**但部署后的控制台只发得出两态** —— `.next` 全树里 `stage:"start"` 与 `stage:"cancel"` 各一处，`stage:"continue"` **零命中**，多级菜单没有「继续」那一步的入口。而且生产至今只跑过一次，结果是 `{"code": "*#100#", "stage": "network_timeout", "text": "", "expects_reply": false, "elapsed_ms": 30232}` —— **命令通了，网络侧从没回过 USSD 应答** |
+| 模组重启 / 飞行模式 | 有 | 有 | **有** | 部署后的 bundle 里高风险按钮表含 `restart_modem` 与 `set_radio`（点了走 `device.confirmDisruptive` 二次确认），生产 `app.command_kind` 两个标签都在。**但生产 `app.commands` 里这两种各 0 条 —— 通路是部署好的，没在真机上按过** |
+| 运营商扫描与选网 | 有 | 有 | **有** | 自动与手动 PLMN 都有：bundle 里 `scan_operators` 在高风险按钮表，`select_operator` 有独立表单（`device.selectOperator` / `device.automatic`）。**生产这两种命令同样各 0 条，未在真机上跑过** |
 | 归属网识别（MCC/MNC） | 有 | 有 | **有** | 全部来自卡:`EF_IMSI` 给 IMSI,`EF_AD` 给 **MNC 位数**(byte 4 低半字节),两份都走基础通道 —— QMI 侧 UIM READ TRANSPARENT,AT-only 侧 `AT+CRSM=176,28589,0,0,4`,都不开逻辑通道。**不再假设两位 MNC**:北美是三位,`310260…` 按两位切会得到 `310-26` —— 不是空值而是一个查不到的**错值**,还会把 ePDG FQDN 带成 `mnc026`。台面三根实测 `EF_AD = 00 00 00 02`,归属仍是 454-00 / 460-02 / 454-00。310/311 的美国运营商已补进 `edge-core/src/network.rs` 与 `apps/console/lib/plmn.ts` **两份**表 |
 | 信号指标 RSRP/RSRQ/SINR | 有 | 有 | **有** | `AT+QCSQ` 解析在 edge-core；CSQ 在本台面三根都打满 -51 dBm，RSRP 才分得开 |
 | 频段 / 信道选择 | 无 | 有 | **无** | VoCat 可锁频段 |
-| 数据网络启停 | 有 | 有 | **有** | 真机往返 `+CGACT: 1,1` ↔ `1,0` |
-| USBNET 模式切换 | 有 | 有 | **有** | rmnet ↔ ecm 真机往返；VoCat 还能自动修复错误的 USBNET |
-| APN 管理 | 无 | 有 | **半** | 卡策略里能带 APN，但没有独立管理 |
-| 重新注册网络 | 无 | 有 | **有** | 回执带 `serving` 与 `waited_ms`，不是光秃秃的 `+COPS: 0` |
+| 数据网络启停 | 有 | 有 | **有** | 真机往返，生产 CommandResult 实测：`requested:"up"` → `contexts:["+CGACT: 1,1", …]`，`requested:"down"` → `["+CGACT: 1,0", …]`（4 条全成功，2026-08-23 05:13/05:14） |
+| USBNET 模式切换 | 有 | 有 | **有** | rmnet ↔ ecm 真机往返，生产 CommandResult 实测 `{"mode":"ecm","reported":["+QCFG: \"usbnet\",1"],"reenumerates":true}` ↔ `{"mode":"rmnet","reported":["+QCFG: \"usbnet\",0"]}`（5 条成功）；VoCat 还能自动修复错误的 USBNET |
+| APN 管理 | 无 | 有 | **半** | 卡策略里能带 APN（生产 `app.card_policies` 那行 payload 就是 `"apn": "cmnet"`，bundle 里有 `cards.colApn` 列），但没有独立管理：运行中的 mux 上没有任何 APN 路由 |
+| 重新注册网络 | 无 | 有 | **有** | 回执带 `serving` 与 `waited_ms`，不是光秃秃的 `+COPS: 0`：生产实测 `{"detach": "OK", "serving": ["+COPS: 0,0,\"CHINA MOBILE\",7"], "waited_ms": 2028}` |
 | 出口公网 IP 查询 | 无 | 有 | **有** | 边缘随 DeviceState 上报，与边缘机 `curl -s ifconfig.me` 同分钟核对一致 |
-| 换 IP | 有 | 有 | **有** | — |
+| 换 IP | 有 | 有 | **有** | 部署后的 bundle 里高风险按钮表含 `rotate_ip`，生产 `app.command_kind` 里也有这个标签。**生产 `app.commands` 里 `rotate_ip` 0 条 —— 按钮在，没人按过** |
 
 ## 短信
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| 发送 / 接收 | 有 | 有 | **有** | 解码器 2026-08-22 重写，见下方注 |
-| 长短信分片合并 | 有 | 有 | **有** | UDH 剥离与重组已覆盖 GSM-7 / UCS-2 |
-| 会话视图与历史 | 有 | 有 | **有** | 收发双向都记录 |
-| 字符集标注 | 无 | 无 | **有** | `messages.encoding`，二进制正文显示为十六进制并说明 |
-| 送达回执 | 有 | 有 | **有** | 命令回执与网络侧 `+CDS` 是两条路：前者 `queued`→`sent`，后者 `sent`→`delivered`／`undelivered`，各自的时间戳都留着 |
-| 联系人列表 | 有 | 有 | **有** | `app.contacts`，按号码命名；名字不随会话删除而消失 |
-| 未读状态 | 无 | 有 | **有** | 仅入站计数，打开会话即已读；迁移把存量一次性标为已读 |
+| 发送 / 接收 | 有 | 有 | **有** | 解码器 2026-08-22 重写，见下方注。生产 `app.messages` 147 行：入站 83 条全部 `received`，出站 64 条（`delivered` 5 / `sent` 4 / `undelivered` 22 / `failed` 31 / `queued` 2） |
+| 长短信分片合并 | 有 | 有 | **有** | UDH 剥离与重组已覆盖 GSM-7 / UCS-2 —— 生产入站正文最长 **559 字符**，远超单条 UCS-2 的 70 与 GSM-7 的 160，说明分片确实在真机上被拼回来过 |
+| 会话视图与历史 | 有 | 有 | **有** | 收发双向都记录：生产同一张 `app.messages` 里 inbound 83 / outbound 64；运行中的 mux 上 `GET /v1/messages/threads`、`GET /v1/messages/thread`、`GET /v1/sessions` 都已注册 |
+| 字符集标注 | 无 | 无 | **有** | `messages.encoding`，二进制正文显示为十六进制并说明（bundle 里 `inbox.encoding8bit`）。生产实测四种取值都出现过：`ucs2` 63 条、`gsm7` 8 条、`8bit` 1 条、`unknown` 11 条（旧存量，见下方注） |
+| 送达回执 | 有 | 有 | **有** | 命令回执与网络侧 `+CDS` 是两条路：前者 `queued`→`sent`，后者 `sent`→`delivered`／`undelivered`，各自的时间戳都留着。生产两条路都走到过终态：5 条 `delivered`（`delivered_at` 非空）、22 条 `undelivered`，`app.ingress` 里 59 条 `SmsStatusReport` |
+| 联系人列表 | 有 | 有 | **有** | `app.contacts`，按号码命名；名字不随会话删除而消失。生产该表 1 行，`app.audit_log` 有 `messages.contact_saved`；部署后的网关二进制里 `messages.contact_deleted` 与 `messages.thread_deleted` 是两条彼此独立的审计动作 |
+| 未读状态 | 无 | 有 | **有** | 仅入站计数，打开会话即已读；迁移把存量一次性标为已读。生产 `app.messages` 里 `read_at IS NULL` 的入站消息 53 条；运行中的 mux 上有 `POST /v1/messages/thread/read`，bundle 里有 `inbox.unread` |
 | IMS 短信 | 有 | 有 | **无** | 依赖 VoWiFi 栈 |
-| 发送限额 | 有 | 有 | **有** | 按 `messages.created_at` 计数（`received_at` 会被回执改写），超限返回 429 |
+| 发送限额 | 有 | 有 | **有** | 按 `messages.created_at` 计数（`received_at` 会被回执改写），超限返回 429。生产 `app.tenant_settings` 的 `sms` 段实测只含 `hourly_limit`，设置页对应 `f.hourly_limit`；`/metrics` 上 `vodoge_requests_rate_limited_total` 目前 0，没撞过限 |
 
 > **短信解码注**：GSM-7 此前**根本没有解码过** —— packed septet 被直接喂给 UTF-8
 > 读取器，所以每条美国短码的纯 ASCII 短信都是乱码，而打包产生的 `0x00` 变成 NUL
@@ -133,16 +159,16 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| Profile 列表 | 有 | 有 | **有** | 已投影为持久盘点 |
-| 切换 / 启用 | 有 | 有 | **有** | — |
-| 禁用当前 Profile | 有 | 有 | **无** | 边缘 `es10c.rs` 有 `disable_profile_apdu`，云端未接 |
-| EID 与芯片信息 | 有 | 有 | **有** | 控制台 eSIM 面板的 `read_esim_info`，一条 ISD-R 通道读完 EID + `GetEUICCInfo2`（16 个字段全解码，含剩余非易失内存与 GSMA CI 公钥）+ 通知列表 + profile 列表。注意 GET DATA `5A` 在台上两颗 eUICC 上都回 `6D00`，实际用的是 ES10c `GetEUICCData` |
-| 通知列表与重试 | 有 | 有 | **半** | 列表与**取回**（`ListNotification` / `RetrieveNotificationsList`）都有，控制台可见可点。**投递仍然没有**，但拦路的东西变了：HTTPS 客户端与 GSMA CI 信任链现在有了（见下面的 ES9+ 一行），剩下的是 `handleNotification` 之后必须 `RemoveNotificationFromList`，那是写卡，而且投递 delete 通知会让运营商释放用户真实付费账户上的 profile —— 这是一个要用户拍板的动作，不是一个技术缺口。另：两颗 eUICC 都拒绝 `seqNumber` 检索（回 `BF2B 03 81 01 7F`），所以取一条要取全部再挑 |
-| ES9+ 与 SM-DP+ 认证 | 有 | 有 | **有** | 控制台按钮 `initiate_esim_authentication` 对**真实生产 SM-DP+**（`wbg.prod.ondemandconnectivity.com`，Thales）跑 ES9+ `InitiateAuthentication`，拿回 `transactionId` 与签名响应并渲染。TLS 与 RSP 两层都按 **GSMA CI 根**（`GSM Association - RSP2 Root CI1`，SKI `81370F51…795BEBFB`，与两颗芯片 `euiccCiPKIdListForVerification` 一致）验过；根证书是 `/etc/vodoge/rsp-trust/` 下的文件而不是编进二进制，页面上显示它的指纹与到期日。地址取自卡上：ES10a `GetEuiccConfiguredAddresses` 在两颗芯片上都**没有**默认 SM-DP+（只有 GSMA 测试 SM-DS），所以回落到待投递通知自带的地址。对卡与账户零副作用 |
-| Profile 下载（SM-DP+） | 有 | 有 | **半** | **代码全通、边缘已部署，真卡下载尚未跑过。** 新增下行命令 `download_esim_profile`（迁移 0043 同步加 PG 枚举，现 26 标签）：解析激活码 → ES9+ `InitiateAuthentication` → ES10b `AuthenticateServer` → ES9+ `AuthenticateClient` → **读 `profileMetadata`(BF25)里的 `profilePolicyRules`** → ES10b `PrepareDownload` → ES9+ `GetBoundProfilePackage` → 按 SGP.22 §5.7.5 把 BPP 切成段、每段一条 STORE DATA 链装进卡 → `handleNotification` 投递安装通知 → `RemoveNotificationFromList`。**两条硬规则写进代码而不是留给判断**：①带 **ppr1/ppr2** 的 profile 一律不装,用 `CancelSession(pprNotAllowed)` 退回给 SM-DP+（台上两颗 eUICC 没人能拔,装上就永久占坑）;②**只 install 不 enable** —— 全链路没有一处调 `EnableProfile`,结果里 `enabled` 是显式的 false,控制台把它渲染成一条必须通过的检查。**还差的就是在真卡上跑一次** —— 云主机在本切片的部署过程中被 Go 构建拖垮（见下一行）,网关与控制台的新版本没能上线,所以从控制台发起下载这一步没做成 |
-| 重命名 / 删除 Profile | 有 | 有 | **无** | 边缘也还没有 |
-| 按 ICCID 的卡策略 | 有 | 有 | **有** | 下发到全部设备 |
-| PC/SC 读卡器 | 有 | 有 | **无** | 外接读卡器写卡 |
+| Profile 列表 | 有 | 有 | **半** | **持久盘点这一半是空的，而且结构上会一直空。** 生产 `app.esim_profiles` **0 行**，`app.ingress` 里从头到尾**没有一条 `EsimInventory` 信封**（只有 DeviceState / CommandResult / SmsReceived / SmsStatusReport / Alert 五种）—— 投影函数 `app.project_esim_inventory` 部署着，但边缘侧没有生产者往里喂。**能看到 profile 的唯一路径是 `read_esim_info` 那一次性读**，它的回执里带着完整 profile 列表；可是**部署后的控制台把这份列表丢掉了** —— bundle 里那个 `read_esim_info` 解析器只取 `eid / imei / chip / notifications`，不取 `profiles`。表格喂的是 `GET /v1/esim/profiles`（就是那张空投影），所以页面上现在显示的是 `esim.none`「No eUICC has reported its contents yet.」 |
+| 切换 / 启用 | 有 | 有 | **半** | **命令这一半在真卡上验过，按钮那一半出不来。** 生产 2026-08-24 13:50 与 13:55 两条 `switch_esim_profile` 都 `succeeded`，夹在中间 13:53 的 `read_esim_info` 读回 `8901240527197122156 enabled=true` / `WEBBING enabled=false` —— **切换确实在台面这颗 eUICC 上生效了**。但 bundle 里 `esim.switch` 按钮是在 profiles 表格的每一行里渲染的，而那张表格来自上一行那份 0 行的投影，**所以按钮渲染不出来，今天唯一能切的路径是直接 `POST /v1/commands`** |
+| 禁用当前 Profile | 有 | 有 | **无** | 边缘 `es10c.rs` 有 `disable_profile_apdu`，云端未接：生产 `app.command_kind` 里没有对应标签，部署后的 bundle 里 `esim.*` 也没有 disable 动作 |
+| EID 与芯片信息 | 有 | 有 | **有** | 控制台 eSIM 面板的 `read_esim_info`，一条 ISD-R 通道读完 EID + `GetEUICCInfo2`（16 个字段全解码，含剩余非易失内存与 GSMA CI 公钥）+ 通知列表 + profile 列表。生产 19 条成功回执，实测 EID `89086030202200000026000178339240`。注意 GET DATA `5A` 在台上两颗 eUICC 上都回 `6D00`，实际用的是 ES10c `GetEUICCData` |
+| 通知列表与重试 | 有 | 有 | **半** | 列表与**取回**（`ListNotification` / `RetrieveNotificationsList`）都有，控制台可见可点（生产 3 条 `retrieve_esim_notification` 成功，最近一次芯片读回来 5 条待投递）。**缺的是「挑一条手动投递」的入口** —— bundle 的 `esim.*` 里只有 `retrieve` / `retrieved` / `notDelivered`，没有任何投递动作。但**投递这件事本身已经在生产上真跑过**：2026-08-24 那次下载的回执里 `handleNotification` 拿到 HTTP 204、`notification_delivered=true`、`notification_removed_code=0`（`RemoveNotificationFromList` 也做了）。所以拦路的不再是 HTTPS 客户端或 GSMA CI 信任链（那两样见下面 ES9+ 一行），而是：投递 delete 通知会让运营商释放用户真实付费账户上的 profile —— 那是一个要用户拍板的动作，不是一个技术缺口。另：两颗 eUICC 都拒绝 `seqNumber` 检索（回 `BF2B 03 81 01 7F`），所以取一条要取全部再挑 |
+| ES9+ 与 SM-DP+ 认证 | 有 | 有 | **有** | 控制台按钮 `initiate_esim_authentication` 对**真实生产 SM-DP+** 跑 ES9+ `InitiateAuthentication`，拿回 `transactionId` 与签名响应并渲染。生产 18 条成功回执，两家都打通过：`wbg.prod.ondemandconnectivity.com`（Thales）与 `T-MOBILE.IDEMIA.IO`。回执里 `negotiated_tls=TLSv1_3`、`admin_protocol=gsma/rsp/v2.2.0`，`certificate_signed_by_ci` / `server_signature_valid` / `challenge_echoed` / `ci_key_accepted_by_chip` 四项全 true；信任锚 `gsma-rsp2-root-ci1.pem`、SKI `81370F5125D0B1D408D4C3B232E6D25E795BEBFB`（与两颗芯片 `euiccCiPKIdListForVerification` 一致），来自边缘机上的 `/etc/vodoge/rsp-trust` 目录而不是编进二进制，页面上显示它的指纹与到期日。地址取自卡上：ES10a `GetEuiccConfiguredAddresses` 在两颗芯片上都**没有**默认 SM-DP+（只有 GSMA 测试 SM-DS），所以回落到激活码或待投递通知自带的地址。对卡与账户零副作用 |
+| Profile 下载（SM-DP+） | 有 | 有 | **有** | **2026-08-24 10:19–10:20 在台面真卡上跑通了一次完整下载。** 生产回执实测：`installed=true`、`installation_iccid=8901240527197122156`、`smdp_address=T-MOBILE.IDEMIA.IO`、`profiles_added=1`、`refused_policy_rules=[]`、BPP 14278 字节切成 20 段共 44 个 block、`handleNotification` HTTP 204 且 `notification_removed_code=0`；`before.profiles` 只有 WEBBING，`after.profiles` 两条 —— **卡上确实多了一个 profile**。控制台入口也在部署后的 bundle 里：每根模组一个 `esim.dlStart` 按钮，配激活码与确认码输入框、`esim.dlWarn` 二次确认，点了直接 `POST /v1/commands {kind: download_esim_profile}`；生产 `app.audit_log` 那条 `download_esim_profile` 记着 actor 与真实 LPA 激活码。下行命令 `download_esim_profile` 在生产 `app.command_kind` 枚举里（迁移 0043 同步加的，现 26 个标签，与 `max(app.schema_migrations.version)=43` 对得上）。链路：解析激活码 → ES9+ `InitiateAuthentication` → ES10b `AuthenticateServer` → ES9+ `AuthenticateClient` → **读 `profileMetadata`(BF25) 里的 `profilePolicyRules`** → ES10b `PrepareDownload` → ES9+ `GetBoundProfilePackage` → 按 SGP.22 §5.7.5 把 BPP 切成段、每段一条 STORE DATA 链装进卡 → `handleNotification` 投递安装通知 → `RemoveNotificationFromList`。**两条硬规则写进代码而不是留给判断**：①带 **ppr1/ppr2** 的 profile 一律不装，用 `CancelSession(pprNotAllowed)` 退回给 SM-DP+（台上两颗 eUICC 没人能拔，装上就永久占坑）；②**只 install 不 enable** —— 全链路没有一处调 `EnableProfile`，这次回执里 `enabled` 就是显式的 false，控制台把它渲染成一条必须通过的检查 |
+| 重命名 / 删除 Profile | 有 | 有 | **无** | 边缘也还没有；部署后的 bundle 里 `esim.*` 同样没有 rename / delete 动作 |
+| 按 ICCID 的卡策略 | 有 | 有 | **半** | 云端那一半是全的：生产 `app.card_policies` 1 行、`app.audit_log` 有 `cards.policy_saved`，bundle 里 `cards.*` 一整套表格（ICCID / vertical / APN / cellular 开关）。**下发那一半从来没成功过** —— 生产 `app.commands` 里 `update_card_policy` 只有 2 条，**两条都是 `expired`**（2026-08-22 08:09 与 08:10，各自 30 分钟后过期），succeeded 0 条。所以「下发到全部设备」是设计意图，不是实测事实 |
+| PC/SC 读卡器 | 有 | 有 | **无** | 外接读卡器写卡：生产命令枚举里没有对应 kind，控制台也没有入口 |
 
 ## VoWiFi 与语音
 
@@ -159,48 +185,62 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| 代理实例增删改与启停 | 有 | 有 | **有** | 边缘 SOCKS5 运行时已重写 |
-| 上游代理与探测 | 有 | 有 | **有** | 探测分阶段报告 |
-| 国家规则 | 有 | 有 | **有** | — |
+| 代理实例增删改与启停 | 有 | 有 | **半** | 云端 CRUD 是真的：生产 `app.proxy_instances` 1 行（`lab-socks`，`0.0.0.0:1080`），`app.audit_log` 有 `proxy.instance_saved`，网关二进制里 `proxy.instance_removed` 也在，边缘 SOCKS5 运行时已重写。**边缘那一半没有承载**：唯一一条 `configure_proxy` 于 2026-08-22 `expired`，`proxy_lifecycle` 0 条；而且就算送到了也起不来 —— 见本节末尾那段承载缺口 |
+| 上游代理与探测 | 有 | 有 | **半** | 探测分阶段报告，云端结构齐了：生产 `app.upstream_proxies` 1 行（`hk-exit`，指向占位地址 `proxy.example.com:1080`），`POST /v1/proxy/upstreams/{id}/probe` 在运行中的 mux 上已注册。**但从来没探过**：该行 `last_probe` 与 `last_probe_at` 都是 NULL，生产 `app.commands` 里 `probe_upstream_proxy` **0 条**。同一个承载缺口 |
+| 国家规则 | 有 | 有 | **半** | 路由与界面都部署了：运行中的 mux 上 `GET /v1/proxy/country-rules` 与 `PUT`/`DELETE /v1/proxy/country-rules/{code}` 都在，bundle 里有 `proxy.countryRules` / `proxy.noCountryRules`。**生产 `app.upstream_proxy_country_rules` 0 行**；而且规则的消费方是边缘代理运行时，承载缺口补上之前，写进去也选不中任何出口 |
 | Profile ↔ 代理绑定 | 有 | 有 | **无** | 按 Profile 而非按国家绑定上游 |
-| 流量统计 | 有 | 有 | **有** | 按小时累加 |
+| 流量统计 | 有 | 有 | **半** | 按小时累加，投影函数 `app.project_proxy_traffic` 已部署，`GET /v1/proxy/traffic` 在运行中的 mux 上。**生产 `app.proxy_traffic` 0 行** —— 没有代理在跑，就没有流量可累加。同一个承载缺口 |
 | UDP Associate 检查 | 半 | 有 | **无** | VoWiFi 数据面需要它 |
-| 导出代理 | 无 | 有 | **有** | `GET /v1/proxy/instances/export`：`socks5://user:pass@host:port` 逐行连接串，另有 json 与 csv。**只读账号被拒**，而且这条拒绝写在 handler 里 —— T023 的守卫按方法判定，这是 GET，会被放行；用的是守卫用的同一个 `MayWrite` 谓词。**导出进审计、口令不进**（记 actor 与 instance id），且审计追加在这条路由上是致命的：没留痕的凭据导出不允许发生。绑 0.0.0.0 的监听器不会被编出一个假地址，会带着 `?host=` 的修法列为不可导出。**控制台代理页有入口**（T071）：只读账号看不到这个按钮（画之前先问 `/v1/auth/session`，问不到按只读画）；口令只经响应体进 React state —— 不进查询串、不进 localStorage、不进浏览器历史，屏幕上显示的是抹掉口令的那一版，完整连接串只在点「复制」时进剪贴板；不可导出的监听器连同网关给的理由一起显示，不是一个空列表 |
+| 导出代理 | 无 | 有 | **半** | **云端这一半是完整的、已部署的；导出的连接串在这台设备上拨不通。** 缺口见本节末尾那段。云端部分：`GET /v1/proxy/instances/export` 在运行中的 mux 上已注册、无会话回 401，给 `socks5://user:pass@host:port` 逐行连接串，另有 json 与 csv。**只读账号被拒**，而且这条拒绝写在 handler 里 —— T023 的守卫按方法判定，这是 GET，会被放行；用的是守卫用的同一个 `MayWrite` 谓词。**导出进审计、口令不进**（记 actor 与 instance id）：部署后的网关二进制里 `proxy.instances_exported` 与 `proxy.instances_export_refused` 两条审计动作都在，**但生产 `app.audit_log` 里这两条各 0 次 —— 端点部署了，至今没人真导出过**。绑 0.0.0.0 的监听器不会被编出一个假地址，会带着 `?host=` 的修法列为不可导出（台上那唯一一个实例正好就是 `0.0.0.0:1080`，所以现在按下去会落在这条分支上）。**控制台代理页有入口**（T071；bundle 里实测有 `proxy.export` / `proxy.copy` / `proxy.copyAll` / `proxy.exportHost` / `proxy.exportHostHint` / `proxy.exportUnexportable`）：只读账号看不到这个按钮（画之前先问 `/v1/auth/session`，问不到按只读画）；口令只经响应体进 React state —— 不进查询串、不进 localStorage、不进浏览器历史，屏幕上显示的是抹掉口令的那一版，完整连接串只在点「复制」时进剪贴板；不可导出的监听器连同网关给的理由一起显示，不是一个空列表 |
+
+> **代理这一节为什么整节是「半」：云端做完了，边缘没有承载。**
+> `edge-proxy` 把 socket 用 `SO_BINDTODEVICE` 绑到 `wwan*`
+> （`edge-proxy/src/bind.rs:64` 是全树唯一的 `libc::SO_BINDTODEVICE` 调用点），
+> 而边缘机上 **`wwan0` / `wwan1` / `wwan2` 全部 `DOWN`、一个地址都没有**，
+> `ip route` 里只有 `default via 192.168.78.2 dev ens160` 和那条 link 路由，
+> **经模组的出口 0 条**（T070 的结论，2026-08-25 在边缘机上复核仍然如此）。
+> 于是：代理实例配下去起不来、上游探不了、国家规则选不中出口、流量表永远 0 行、
+> 导出的连接串拿去连没有人应答。
+>
+> **这不是代理代码的缺陷，是缺一层数据承载** —— 与 T027 查出的「边缘全树没有 WDS 服务、
+> 没有 `AT+CGDCONT`、没有 PDN/bearer 层」是同一个洞。T016 已证明**模组自己**有完整 IP 栈
+> （`AT+QIACT` 能拿到真 IP），但那个 IP 在模组里，不在主机的 `wwan` 接口上。
+> **补上它之前，这几行都不该写成不带保留的「有」。**
 
 ## 通知与自动化
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| Webhook / 邮件 / Bark | 有 | 有 | **有** | 三渠道已实现并接线，Webhook 带 HMAC-SHA256 签名 |
-| 渠道连通性测试 | 有 | 无 | **有** | 同步返回，控制台七个渠道各有一个按钮（按钮列表由字段表推导，不再手写第二份） |
-| 入站短信转发通知 | 有 | 有 | **有** | 通知只带发信人，不带正文（正文外发到第三方是另一回事） |
-| 命令失败通知 | 有 | 有 | **有** | — |
-| 设备掉线通知 | 有 | 有 | **有** | 按**缺席时长**判定而非会话结束即报，否则每次部署都告警。演练实测 179 秒送达 |
-| 契约违规通知 | 有 | 无 | **有** | 同一 (租户, kind, 违规字段) 一小时内只报一次——一个坏 enum 会让每条报文都违规 |
-| 备份失败通知 | 无 | 无 | **有** | `backup.sh` 的 trap 上报到 `/v1/ops/backup-failed`；备份不属于任何租户，收件人由 `VODOGE_OPS_TENANT` 指定 |
-| 通知投递重试 | 有 | 有 | **有** | 每渠道指数退避，重试窗口约 6 分钟（1s 起翻倍、封顶 45s）——此前是 3 次 × 2s，只扛得住约 4 秒中断。投递按 (租户, 渠道) 分道并行，一个卡住的渠道不再独占唯一的投递 goroutine 把别人的事件挤出队列。队列满仍然丢弃且是**故意的**（反压会拖垮 ingest），但丢了多少、重试了多少次现在可查：`/metrics` 的 `vodoge_notifications_dropped_total`、`vodoge_notification_retries_total`、`vodoge_notifications_total` |
-| Telegram / 飞书 / 企微 / Pushplus | 半 | 有 | **有** | 四个渠道都在 `channels.go` 里实现，走 T010 那套分道投递（指数退避 + 三个计数器），设置页各有输入框与「测试」按钮。飞书支持签名校验；飞书/企微在 HTTP 200 里用 `code`/`errcode` 表达拒绝，只看状态码会把每一次被拒都记成送达。Telegram 的 bot token 在 URL 路径里，错误信息会带出来，已在日志与页面上打码。**槽位与实现的集合相等由测试守着**（`TestEveryConfigurableChannelHasASender`）—— 上一次漂移就是槽位有、实现无，配了也不会发且不报错 |
-| Telegram 机器人远程控制 | 无 | 有 | **半** | `internal/telegram`：`/status` `/profiles` `/sms` `/switch` `/reset`，后三个走一次性确认按钮（3 分钟有效、只有发起者能按、按过即作废）。**长轮询不是 webhook** —— webhook 会在公网上多出一条不带会话、只读中间件直接放行的 POST 写路由，正是 2.4 刚收口掉的形状。**机器人没有自己的权限**:chat 映射到一个真实账号（设置页 `telegram.bot.operators`，每行 `telegram_id=邮箱`），网关为它签一张短期会话，再走**同一个 handler**（含只读中间件）下发；未映射的发送者什么都碰不到。通话未做（阶段 4）|
-| 定时自动任务 | 无 | 有 | **有** | `app.scheduled_tasks` + `internal/schedule`：按卡（ICCID）或按设备编排定时短信与公网 IP 巡检。**拨号仍缺**，因为契约里还没有 dial 命令 kind（阶段 4）；调度器不解释 kind，那一天到了不用改它 |
+| Webhook / 邮件 / Bark | 有 | 有 | **有** | 三渠道已实现并接线，Webhook 带 HMAC-SHA256 签名。部署后的网关二进制与控制台 bundle 里 `webhook` / `email` / `bark` 的字段都在（`f.webhook.*` / `f.email.*` / `f.bark.*`）。生产只配了 webhook 一个，而且它指向一个不存在的测试主机 `hooktest:19999`，所以 `/metrics` 上是 `vodoge_notifications_total{channel="webhook",result="failed"} 2` —— **那是配置里的占位地址，不是投递代码的问题**：同一套投递把 telegram 与 pushplus 各送成了 2 条 |
+| 渠道连通性测试 | 有 | 无 | **有** | 同步返回，控制台七个渠道各有一个按钮（按钮列表由字段表推导，不再手写第二份）。运行中的 mux 上 `POST /v1/settings/notifications/{channel}/test` 已注册；生产 `app.audit_log` 有 9 条 `settings.notification_tested`；七个渠道名（webhook / email / bark / telegram / feishu / wecom / pushplus）在网关二进制与 bundle 里都齐 |
+| 入站短信转发通知 | 有 | 有 | **有** | 通知只带发信人，不带正文（正文外发到第三方是另一回事）。生产 `/metrics` 实测已送达：`vodoge_notifications_total{channel="telegram",result="delivered"} 2`、`{channel="pushplus",result="delivered"} 2` |
+| 命令失败通知 | 有 | 有 | **有** | 走与上一行同一条分道投递管道。**注意 `/metrics` 只按渠道与结果分桶、不按事件类型分**，所以生产那 4 条已送达通知分不出是哪种事件触发的；素材倒是不缺（生产 `app.commands` 里 31 条 `send_sms` failed、4 条 `run_at_command` expired） |
+| 设备掉线通知 | 有 | 有 | **有** | 按**缺席时长**判定而非会话结束即报，否则每次部署都告警。演练实测 179 秒送达；生产侧的活对照是 `/metrics` 的 `vodoge_device_sessions_active`（当前 1）与 `app.devices` 的 `last_seen_at` / `resumed_at` 一直在走 |
+| 契约违规通知 | 有 | 无 | **有** | 同一 (租户, kind, 违规字段) 一小时内只报一次——一个坏 enum 会让每条报文都违规。生产 `/metrics` 上 `vodoge_contract_violations_total` 与 `vodoge_ingress_rejected_total` 都是 **0**：计数器部署着，至今没触发过 |
+| 备份失败通知 | 无 | 无 | **有** | `backup.sh` 的 trap 上报到 `/v1/ops/backup-failed`；备份不属于任何租户，收件人由 `VODOGE_OPS_TENANT` 指定。云主机上实测：`POST /v1/ops/backup-failed` 在运行中的 mux 上已注册，部署用的 `.env` 里 `VODOGE_OPS_TENANT` 已设，`vodoge-backup.timer` 是活的（上次触发 2026-08-24 03:30:04） |
+| 通知投递重试 | 有 | 有 | **有** | 每渠道指数退避，重试窗口约 6 分钟（1s 起翻倍、封顶 45s）——此前是 3 次 × 2s，只扛得住约 4 秒中断。投递按 (租户, 渠道) 分道并行，一个卡住的渠道不再独占唯一的投递 goroutine 把别人的事件挤出队列。队列满仍然丢弃且是**故意的**（反压会拖垮 ingest），但丢了多少、重试了多少次现在可查，而且**在生产上正好看得见**：`/metrics` 实测 `vodoge_notification_retries_total{channel="webhook"} 26`（那个占位 URL 一直连不上，退避在真跑）、`vodoge_notifications_dropped_total 0`、`vodoge_notifications_total` 按渠道与结果分桶 |
+| Telegram / 飞书 / 企微 / Pushplus | 有 | 有 | **有** | 四个渠道都在 `channels.go` 里实现，走 T010 那套分道投递（指数退避 + 三个计数器），设置页各有输入框与「测试」按钮 —— 部署后的 bundle 里 `f.telegram.*` / `f.feishu.*` / `f.wecom.*` / `f.pushplus.*` 字段齐全，生产 telegram 与 pushplus 各有 2 条 `result="delivered"`。飞书支持签名校验；飞书/企微在 HTTP 200 里用 `code`/`errcode` 表达拒绝，只看状态码会把每一次被拒都记成送达。Telegram 的 bot token 在 URL 路径里，错误信息会带出来，已在日志与页面上打码。**槽位与实现的集合相等由测试守着**（`TestEveryConfigurableChannelHasASender`）—— 上一次漂移就是槽位有、实现无，配了也不会发且不报错 |
+| Telegram 机器人远程控制 | 无 | 有 | **半** | `internal/telegram`：`/status` `/profiles` `/sms` `/switch` `/reset`，后三个走一次性确认按钮（3 分钟有效、只有发起者能按、按过即作废）。生产上它是**开着**的（`app.tenant_settings` 的 `notifications.telegram.bot.enabled = true`，operators 已配），bundle 里有 `f.telegram.bot.enabled` / `f.telegram.bot.operators`；但 `/metrics` 的 `vodoge_telegram_updates_total` 与 `vodoge_telegram_actions_total` **当前都是 0**，本轮网关启动以来没人用过。**长轮询不是 webhook** —— webhook 会在公网上多出一条不带会话、只读中间件直接放行的 POST 写路由，正是 2.4 刚收口掉的形状。**机器人没有自己的权限**:chat 映射到一个真实账号（设置页 `telegram.bot.operators`，每行 `telegram_id=邮箱`），网关为它签一张短期会话，再走**同一个 handler**（含只读中间件）下发；未映射的发送者什么都碰不到。通话未做（阶段 4）|
+| 定时自动任务 | 无 | 有 | **有** | `app.scheduled_tasks` + `internal/schedule`：按卡（ICCID）或按设备编排定时短信与公网 IP 巡检。**生产上正在跑**：4 条任务、2 条 enabled —— `keepalive-hourly-4820`（按卡 `89852351225042214201`，3600 秒，第 21 次触发于 2026-08-24 18:17，`last_status=issued`，幂等键 `schedule:<任务 id>:21`）与 `egress-ip-watch`（按设备，第 31 次触发于 18:21，`last_status=checked`，detail `{"found": true, "public_ip": "34.174.243.156"}`）。**拨号仍缺**，因为契约里还没有 dial 命令 kind（阶段 4）；调度器不解释 kind，那一天到了不用改它 |
 
 ## 运维与平台
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| 实时日志流 | 有 | 有 | **有** | — |
-| 历史日志 / 原始报文 | 有 | 有 | **有** | 云端可展开设备原始 envelope |
-| 日志保留策略 | 无 | 有 | **有** | `app.prune_ingress` 删除超过 **30 天**的 `DeviceState` 行（实测 2.6 万行/天、715 B/行，占 `app.ingress` 的 99.6%，且每个字段的当前值都在 `app.devices`/`app.modems` 里）。**SmsReceived / SmsStatusReport / CommandResult / Alert / Unstorable 一行都不删** —— 约 90 行/天，正是排障真正回头看的那些。挂在 2.1 调度器的每租户 tick 上（`app.tenants` 枚举不了，没有全局清扫这条路）。**要点**：`app.ingress_window` 的 committed_through 是从表里数出来的连续前缀，裸删一行就会让它塌成 0、设备重放整个 outbox；所以 0040 同时引入 `app.ingress_pruned` 高水位并让窗口函数从它起算，且水位只在证明该区间连续之后才前移 |
-| 审计日志 | 有 | 有 | **有** | — |
-| 登录限流 | 无 | 有 | **有** | — |
-| 访问策略 / 多角色 | 有 | 有 | **有** | `app.users.role` = admin / readonly；只读会话被网关在整张路由表外侧一处拒绝，30 条写路由逐条验过，只有本人的登出与改密除外 |
-| 系统信息与版本 | 有 | 有 | **半** | 有设备版本，无边缘主机信息 |
-| 检查更新 / 应用更新 | 有 | 有 | **半** | 有 `self_update` 命令，无制品发布与检查 |
-| 指标端点 | 无 | 有 | **有** | — |
-| 中英双语 | 有 | 有 | **有** | 有测试保证两个语言包键一致 |
-| 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户 |
-| 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复 |
-| PWA / 离线外壳 | 无 | 无 | **有** | — |
-| OpenAPI 文档 | 有 | 无 | **有** | OpenAPI 3.1，网关自己在 `GET /v1/openapi.json` 上供（走会话鉴权：它是整个攻击面的地图）。**不是手抄的静态文件** —— 见 [api.md](api.md)：漂移测试断言描述的路由集合 == 实际注册的集合，二进制在供出文档前还会拿活的 mux 复核一遍。路径参数、operationId、命令 kind 枚举、settings 段与通知渠道枚举、以及写路由的 403 都是从代码派生的 |
+| 实时日志流 | 有 | 有 | **有** | 租户级 SSE：运行中的 mux 上 `GET /v1/events` 已注册、无会话回 401，控制台设备页有 `devices.liveHint` |
+| 历史日志 / 原始报文 | 有 | 有 | **有** | 云端可展开设备原始 envelope：`GET /v1/journal` 在运行中的 mux 上，生产 `app.ingress` 72879 行五种 kind，bundle 的 journal 页有 `journal.show` / `journal.hide` 展开原始 payload |
+| 日志保留策略 | 无 | 有 | **有** | `app.prune_ingress` 删除超过 **30 天**的 `DeviceState` 行（生产实测 `app.ingress` 72879 行里 DeviceState 占 **72683 行 = 99.7%**，与当初量的 99.6% 吻合；每个字段的当前值都在 `app.devices`/`app.modems` 里）。**SmsReceived / SmsStatusReport / CommandResult / Alert / Unstorable 一行都不删** —— 生产里这几种合计 196 行，正是排障真正回头看的那些。挂在 2.1 调度器的每租户 tick 上（`app.tenants` 枚举不了，没有全局清扫这条路）。**函数与高水位表都在生产上**（`app.prune_ingress`、`app.ingress_pruned`），但 `app.ingress_pruned` 现在 0 行、最老的 ingress 才 2026-08-21 —— **30 天还没到，删除那一步至今没真跑过**。**要点**：`app.ingress_window` 的 committed_through 是从表里数出来的连续前缀，裸删一行就会让它塌成 0、设备重放整个 outbox；所以 0040 同时引入 `app.ingress_pruned` 高水位并让窗口函数从它起算，且水位只在证明该区间连续之后才前移 |
+| 审计日志 | 有 | 有 | **有** | 生产 `app.audit_log` 325 行、29 种 action（登录、各类命令下发、设置变更、删除都在里面）；`GET /v1/audit` 在运行中的 mux 上，控制台有 audit 页 |
+| 登录限流 | 无 | 有 | **有** | `/metrics` 上有 `vodoge_requests_rate_limited_total`（当前 0，没撞过限）；生产 `app.audit_log` 里 `auth.login` 32 条与 `auth.login.failed` 11 条分开记 |
+| 访问策略 / 多角色 | 有 | 有 | **有** | `app.users.role` = admin / readonly，生产两种角色各有一个真账号；只读会话被网关在整张路由表外侧一处拒绝，30 条写路由逐条验过，只有本人的登出与改密除外。运行中的 mux 上写路由共 33 条（30 拒 + 3 豁免），抽查的 `/v1/modems`、`/v1/audit`、`/v1/sessions`、`/v1/journal`、`/v1/events`、`/v1/openapi.json`、`/v1/proxy/instances/export` 无会话时全部 401「sign in required」。**只读会话被拒那一步要有登录态才看得到，2026-08-25 这一轮没验**（那一轮不铸会话） |
+| 系统信息与版本 | 有 | 有 | **半** | 有设备版本（生产 `app.devices.edge_version = 0.1.0`、`matrix_version = 2026-08-20`），无边缘主机信息 —— 生产 DeviceState 的 `host` 段实测只有 `public_ip` / `cpu_percent` / `memory_used_bytes` / `memory_total_bytes` 四个字段，没有主机名、内核、发行版、agent 构建号 |
+| 检查更新 / 应用更新 | 有 | 有 | **半** | 有 `self_update` 命令（生产 `app.command_kind` 枚举里有这个标签），无制品发布与检查；而且**部署后的控制台 bundle 里 `self_update` 零命中**（没有入口），生产 `app.commands` 里也 0 条 |
+| 指标端点 | 无 | 有 | **有** | 生产 `GET /metrics` 免鉴权 200，实测 13 组指标：HTTP 请求与耗时、ingress 接收与丢弃、命令入队、契约违规、限流、设备会话、通知三件套、Telegram 两件套 |
+| 中英双语 | 有 | 有 | **有** | 有测试保证两个语言包键一致 —— 而且在部署后的制品上直接验得了：容器里 `/app/messages/en.json` 与 `zh.json` 各 **491** 个扁平化键，两个方向的差集都是空 |
+| 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户。生产实测 `app` 下 27 张表里 **26 张** `relrowsecurity` 与 `relforcerowsecurity` 双开（唯一没开的是 `schema_migrations`，它不带租户列） |
+| 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复：云主机上 `vodoge-backup.timer` 是活的（上次 2026-08-24 03:30:04，下次 03:30），`/opt/vodoge-cloud/stage/` 下按日期躺着一串 `vodoge-*.dump` |
+| PWA / 离线外壳 | 无 | 无 | **有** | 线上实测 `GET /manifest.webmanifest` 200，返回 `display: standalone` 的清单；容器 `/app/public` 里有 `sw.js` 与 `offline.html` |
+| OpenAPI 文档 | 有 | 无 | **有** | OpenAPI 3.1，网关自己在 `GET /v1/openapi.json` 上供（走会话鉴权：它是整个攻击面的地图）—— 运行中的 mux 上这条已注册、无会话回 401，网关二进制里带着 `3.1.1` 版本串。**不是手抄的静态文件** —— 见 [api.md](api.md)：漂移测试断言描述的路由集合 == 实际注册的集合，二进制在供出文档前还会拿活的 mux 复核一遍。路径参数、operationId、命令 kind 枚举、settings 段与通知渠道枚举、以及写路由的 403 都是从代码派生的 |
 | 插件 / 扩展 | 有 | 有 | **不适用** | 已决定砍掉，理由见 [plugins-not-ported.md](plugins-not-ported.md) |
 | 自签 HTTPS 设置 | 有 | 有 | **不适用** | TLS 在网关与 Caddy 终结，不是租户的事 |
 | 卸载 / 自毁 | 有 | 无 | **不适用** | 单机概念 |
@@ -262,10 +302,10 @@ chat 映射到一个真实控制台账号，网关为那个账号签一张两分
 | 模组 IMEI | eUICC | Profile | 归属 |
 | --- | --- | --- | --- |
 | 862547055142811 | 有 | Club · 8985…9571 | 香港 CSL |
-| 867018069514820 | 有 | WEBBING · 8985…4201 | 香港 CSL |
+| 867018069514820 | 有 | WEBBING · 8985…4201（enabled）+ Wireless · 8901…2156（disabled） | 香港 CSL ＋ 美国 T-Mobile |
 | 867018069509705 | 无 | ISD-R 通道打不开 | 中国移动实体卡 |
 
-### 台上没有任何美国卡
+### 台上原本没有任何美国卡 —— 2026-08-24 起有了
 
 Saily 是 eSIM 供应商，它的美国 profile 要先通过 **SM-DP+ 下载**到 eUICC 上才会存在。
 
@@ -275,7 +315,16 @@ Saily 是 eSIM 供应商，它的美国 profile 要先通过 **SM-DP+ 下载**�
 
 阶段 3 因此是关键路径，且**不能只做一半**。
 
-### 每个 eUICC 只有一个 profile
+**这一段已经兑现。** 2026-08-24 10:19 一条 `download_esim_profile` 把
+`8901240527197122156`（T-Mobile，SM-DP+ `T-MOBILE.IDEMIA.IO`）装进了 867018069514820
+那颗 eUICC；13:50 又把它 enable 过一次，13:53 的芯片读回证实 `enabled=true`，
+13:55 切回 WEBBING。**台上现在有一张真的美国 profile**，判据②a 要的卡侧读数因此才谈得上。
+
+### 每个 eUICC 曾经只有一个 profile
 
 这同时解释了 profile 切换演练为什么一直做不了：禁用唯一的 profile 等于让卡脱网，
-且没有回滚路径。下载能力一并解开这个死结 —— **有了第二个 profile 才敢切换**。
+且没有回滚路径。下载能力一并解开这个死结 —— **有了第二个 profile 才敢切换**，
+2026-08-24 那次来回切换就是第一次真的敢做。
+
+现在 867018069514820 上有两个 profile；`862547055142811` 仍然只有一个，
+`867018069509705` 一个都没有（它不是 eUICC）。
