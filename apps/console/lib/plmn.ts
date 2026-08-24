@@ -2,10 +2,26 @@
 // edge keeps in edge-core/src/network.rs: the networks this product actually
 // meets, with the numeric pair as the fallback for everything else.
 //
+// Mirroring means the two lists drift, and the drift is silent: a PLMN this
+// one has not heard of renders as a bare "310-260" on a page that otherwise
+// shows operator names, and nothing fails. Anything added there belongs here
+// in the same change.
+//
 // The edge sends "460-01" style PLMN strings rather than names on purpose —
 // operator brands are neither unique nor stable, the numeric pair is — so
 // naming them is presentation work and belongs here.
 const OPERATORS: Record<string, string> = {
+  // United States. Every US MNC here is three digits, which is why the edge
+  // reads the MNC length off EF_AD rather than cutting the IMSI at two: a
+  // T-Mobile card sliced at two arrives as "310-26" and matches nothing here.
+  //
+  // No entry has a leading zero in its MNC on purpose. The edge renders the
+  // MNC with a minimum width of two, so 310-004 would arrive as "310-04";
+  // a key spelled that way would hide that rather than fix it.
+  "310-260": "T-Mobile",
+  "310-410": "AT&T",
+  "310-280": "AT&T",
+  "311-480": "Verizon",
   // Mainland China
   "460-00": "中国移动",
   "460-02": "中国移动",
@@ -36,6 +52,8 @@ const OPERATORS: Record<string, string> = {
 };
 
 const TERRITORIES: Record<string, string> = {
+  "310": "美国",
+  "311": "美国",
   "460": "中国大陆",
   "454": "中国香港",
   "455": "中国澳门",
