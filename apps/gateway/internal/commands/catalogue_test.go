@@ -199,6 +199,7 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		// treated it as "not given" would fail here rather than in the field.
 		sequence := int64(0)
 		request.SequenceNumber = &sequence
+		request.ActivationCode = "LPA:1$smdp.example.com$QQ111-22222-33333-44444"
 
 		_, payload, err := BuildPayload(request)
 		if err != nil {
@@ -433,5 +434,103 @@ func TestAnUnusableSmdpAddressIsRefused(t *testing.T) {
 		}); err == nil {
 			t.Fatalf("%q was accepted as an SM-DP+ address", address)
 		}
+	}
+}
+
+// Downloading a profile is the one action here that cannot be undone from the
+// console, so a code that cannot possibly work is refused while the operator
+// is still on the page rather than at an SM-DP+ that may consume the order.
+func TestAnActivationCodeIsCheckedBeforeItLeaves(t *testing.T) {
+	t.Parallel()
+
+	good := []string{
+		"LPA:1$smdp.example.com$QQ111-22222-33333-44444",
+		"1$smdp.example.com$QQ111-22222-33333-44444",
+		"1$smdp.example.com$AAAA$1.3.6.1.4.1.31746",
+		"1$smdp.example.com$AAAA$$1",
+	}
+	for _, code := range good {
+		if _, _, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "download_esim_profile", ModemIMEI: benchIMEI,
+			ActivationCode: code,
+		}); err != nil {
+			t.Fatalf("%q was refused: %v", code, err)
+		}
+	}
+
+	bad := []string{
+		"",
+		"QQ111-22222-33333-44444",
+		"LPA:2$smdp.example.com$AAAA",
+		"1$smdp.example.com",
+		"1$smdp.example.com$AAAA BBBB",
+		"https://smdp.example.com/AAAA",
+	}
+	for _, code := range bad {
+		if _, _, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "download_esim_profile", ModemIMEI: benchIMEI,
+			ActivationCode: code,
+		}); err == nil {
+			t.Fatalf("%q was accepted as an activation code", code)
+		}
+	}
+}
+
+// A refusal must not repeat the code back. An activation code in an error
+// message is an activation code in a log, and this one is a credential that
+// can be spent exactly once.
+func TestARefusedActivationCodeIsNotEchoed(t *testing.T) {
+	t.Parallel()
+
+	const secret = "1$smdp.example.com$SECRET MATCHING ID"
+	_, _, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "download_esim_profile", ModemIMEI: benchIMEI,
+		ActivationCode: secret,
+	})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("the refusal repeated the code: %v", err)
+	}
+}
+
+// An omitted confirmation code is absent from the payload rather than empty.
+// The contract gives it a minimum length, so an empty string would be rejected
+// at the edge as a malformed envelope instead of as a field nobody set.
+func TestAnAbsentConfirmationCodeIsOmitted(t *testing.T) {
+	t.Parallel()
+
+	_, payload, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "download_esim_profile", ModemIMEI: benchIMEI,
+		ActivationCode: "1$smdp.example.com$AAAA", ConfirmationCode: "  ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := decoded["confirmation_code"]; present {
+		t.Fatalf("confirmation_code should be absent, got %v", decoded)
+	}
+	if decoded["activation_code"] != "1$smdp.example.com$AAAA" {
+		t.Fatalf("activation_code = %v", decoded["activation_code"])
+	}
+
+	_, payload, err = BuildPayload(Request{
+		DeviceID: "d", Kind: "download_esim_profile", ModemIMEI: benchIMEI,
+		ActivationCode: "1$smdp.example.com$AAAA", ConfirmationCode: "13572468",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded = map[string]any{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["confirmation_code"] != "13572468" {
+		t.Fatalf("confirmation_code = %v", decoded["confirmation_code"])
 	}
 }

@@ -331,6 +331,13 @@ type InitiateEsimAuthenticationCommand struct {
 	SmdpAddress *string `json:"smdp_address,omitempty"`
 }
 
+type DownloadEsimProfileCommand struct {
+	Kind             string  `json:"kind"`
+	ModemImei        string  `json:"modem_imei"`
+	ActivationCode   string  `json:"activation_code"`
+	ConfirmationCode *string `json:"confirmation_code,omitempty"`
+}
+
 type ConfigureProxyCommand struct {
 	Kind      string              `json:"kind"`
 	Instances []ProxyInstanceSpec `json:"instances"`

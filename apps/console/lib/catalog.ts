@@ -994,6 +994,205 @@ function parseTrustAnchor(value: unknown): EsimTrustAnchor | null {
   };
 }
 
+
+/** One profile as the eUICC listed it during a download. */
+export type EsimDownloadedProfile = {
+  iccid: string;
+  label: string;
+  enabled: boolean;
+  provider: string | null;
+  name: string | null;
+};
+
+/** What the chip held at one moment, before or after a download. */
+export type EsimDownloadSnapshot = {
+  freeNonVolatileMemory: number | null;
+  profiles: EsimDownloadedProfile[];
+  notifications: EsimNotificationRow[];
+};
+
+/** One piece of a Bound Profile Package, and the blocks it took to send. */
+export type EsimBppSegment = {
+  label: string;
+  bytes: number;
+  blocks: number;
+};
+
+/**
+ * The result of one `download_esim_profile` command.
+ *
+ * Two snapshots rather than one verdict. "Downloaded" is a claim the command
+ * makes about itself; a second profile in the list, free memory that dropped
+ * by about the size of the package, and one fewer notification owed to the
+ * SM-DP+ are three facts that came off the chip, and they are what the page
+ * shows. Neither the activation code nor the matching id is here: they are
+ * one-time credentials and this object is stored.
+ */
+export type EsimDownload = {
+  imei: string;
+  eid: string;
+  smdpAddress: string;
+  transactionId: string;
+  matchingIdSupplied: boolean;
+  /** What the SM-DP+ said the profile is, read before anything was written. */
+  profileName: string | null;
+  serviceProviderName: string | null;
+  profileIccid: string | null;
+  /** Every policy rule the SM-DP+ attached, named. */
+  policyRules: string[];
+  /**
+   * The rules that stopped the download. `ppr1` forbids ever disabling the
+   * profile and `ppr2` forbids ever deleting it, and both are permanent from
+   * the moment it is installed.
+   */
+  refusedPolicyRules: string[];
+  before: EsimDownloadSnapshot;
+  after: EsimDownloadSnapshot | null;
+  freeMemoryConsumed: number | null;
+  profilesAdded: number | null;
+  authenticateServerBlocks: number;
+  prepareDownloadBlocks: number;
+  boundProfilePackageBytes: number;
+  boundProfilePackageBlocks: number;
+  boundProfilePackageSegments: EsimBppSegment[];
+  installed: boolean;
+  /** Always false. Installing and enabling are two operations, and only one
+   * of them happened. */
+  enabled: boolean;
+  installationIccid: string | null;
+  installationError: string | null;
+  failedBppCommand: string | null;
+  notificationSequenceNumber: number | null;
+  notificationDelivered: boolean;
+  notificationDeliveryError: string | null;
+  notificationRemovedCode: number | null;
+  notificationsPendingBefore: number;
+  notificationsPendingAfter: number | null;
+  sessionCancelled: string | null;
+  cancelError: string | null;
+  stoppedAfter: string | null;
+  certificateSignedByCi: boolean;
+  serverSignatureValid: boolean;
+  challengeEchoed: boolean;
+  ciKeyAcceptedByChip: boolean;
+  negotiatedTls: string | null;
+  trustAnchorKeyId: string;
+};
+
+function parseDownloadedProfile(value: unknown): EsimDownloadedProfile | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const iccid = asString(row.iccid);
+  if (!iccid) {
+    return null;
+  }
+  return {
+    iccid,
+    label: asString(row.label) ?? iccid,
+    enabled: row.enabled === true,
+    provider: asString(row.provider),
+    name: asString(row.name),
+  };
+}
+
+function parseDownloadSnapshot(value: unknown): EsimDownloadSnapshot {
+  const row = (value ?? {}) as Record<string, unknown>;
+  return {
+    freeNonVolatileMemory: asNumber(row.free_non_volatile_memory),
+    profiles: arrayOf(row.profiles)
+      .map(parseDownloadedProfile)
+      .filter((entry): entry is EsimDownloadedProfile => entry !== null),
+    notifications: arrayOf(row.notifications)
+      .map(parseEsimNotification)
+      .filter((entry): entry is EsimNotificationRow => entry !== null),
+  };
+}
+
+function parseBppSegment(value: unknown): EsimBppSegment | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const label = asString(row.label);
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    bytes: asNumber(row.bytes) ?? 0,
+    blocks: asNumber(row.blocks) ?? 0,
+  };
+}
+
+/**
+ * Read one download out of a command result.
+ *
+ * Null unless the exchange got as far as a transaction. A download panel with
+ * an empty transaction id would be reporting that something happened when what
+ * happened is that nothing did.
+ */
+export function parseEsimDownload(value: unknown): EsimDownload | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const imei = asString(row.imei);
+  const eid = asString(row.eid);
+  const transactionId = asString(row.transaction_id);
+  if (!imei || !eid || !transactionId) {
+    return null;
+  }
+  const profile = (row.profile ?? {}) as Record<string, unknown>;
+  return {
+    imei,
+    eid,
+    smdpAddress: asString(row.smdp_address) ?? "",
+    transactionId,
+    matchingIdSupplied: row.matching_id_supplied === true,
+    profileName: asString(profile.profile_name),
+    serviceProviderName: asString(profile.service_provider_name),
+    profileIccid: asString(profile.iccid),
+    policyRules: stringsOf(profile.policy_rules),
+    refusedPolicyRules: stringsOf(row.refused_policy_rules),
+    before: parseDownloadSnapshot(row.before),
+    after: row.after ? parseDownloadSnapshot(row.after) : null,
+    freeMemoryConsumed: asNumber(row.free_memory_consumed),
+    profilesAdded: asNumber(row.profiles_added),
+    authenticateServerBlocks: asNumber(row.authenticate_server_blocks) ?? 0,
+    prepareDownloadBlocks: asNumber(row.prepare_download_blocks) ?? 0,
+    boundProfilePackageBytes: asNumber(row.bound_profile_package_bytes) ?? 0,
+    boundProfilePackageBlocks: asNumber(row.bound_profile_package_blocks) ?? 0,
+    boundProfilePackageSegments: arrayOf(row.bound_profile_package_segments)
+      .map(parseBppSegment)
+      .filter((entry): entry is EsimBppSegment => entry !== null),
+    // Compared against `true` rather than coerced: an absent field is not a
+    // successful install, and the difference matters on the one command here
+    // that cannot be undone.
+    installed: row.installed === true,
+    enabled: row.enabled === true,
+    installationIccid: asString(row.installation_iccid),
+    installationError: asString(row.installation_error),
+    failedBppCommand: asString(row.failed_bpp_command),
+    notificationSequenceNumber: asNumber(row.notification_sequence_number),
+    notificationDelivered: row.notification_delivered === true,
+    notificationDeliveryError: asString(row.notification_delivery_error),
+    notificationRemovedCode: asNumber(row.notification_removed_code),
+    notificationsPendingBefore: asNumber(row.notifications_pending_before) ?? 0,
+    notificationsPendingAfter: asNumber(row.notifications_pending_after),
+    sessionCancelled: asString(row.session_cancelled),
+    cancelError: asString(row.cancel_error),
+    stoppedAfter: asString(row.stopped_after),
+    certificateSignedByCi: row.certificate_signed_by_ci === true,
+    serverSignatureValid: row.server_signature_valid === true,
+    challengeEchoed: row.challenge_echoed === true,
+    ciKeyAcceptedByChip: row.ci_key_accepted_by_chip === true,
+    negotiatedTls: asString(row.negotiated_tls),
+    trustAnchorKeyId: asString(row.trust_anchor_key_id) ?? "",
+  };
+}
+
 function stringsOf(value: unknown): string[] {
   return arrayOf(value).filter((entry): entry is string => typeof entry === "string");
 }

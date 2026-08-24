@@ -80,6 +80,16 @@ type Request struct {
 	// InitiateEsimAuthentication. Empty means "ask the chip".
 	SmdpAddress string `json:"smdp_address"`
 
+	// DownloadEsimProfile.
+	//
+	// A one-time credential. It is validated here and forwarded, and it is
+	// never written to a log line, an error message or a command result: this
+	// struct is the only place in the cloud that ever holds it, and the
+	// payload it goes into is stored because the edge has to be able to read
+	// it after a reconnect.
+	ActivationCode   string `json:"activation_code"`
+	ConfirmationCode string `json:"confirmation_code"`
+
 	// SelfUpdate
 	Version   string `json:"version"`
 	URL       string `json:"url"`
@@ -103,6 +113,13 @@ var (
 	// the edge, where it surfaces as a DNS failure minutes later.
 	smdpAddressPattern = regexp.MustCompile(
 		`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
+	// An SGP.22 activation code: `1$<SM-DP+ address>$<matching id>` with two
+	// optional trailing fields. Checked here rather than only at the edge
+	// because the failure this prevents is expensive in a way a bad phone
+	// number is not -- a mistyped code that reaches an SM-DP+ can consume an
+	// order, and the operator is still on the page while this runs.
+	activationCodePattern = regexp.MustCompile(
+		`^(?:LPA:)?1\$[^$\s]{4,253}\$[^$\s]{1,128}(?:\$[^$\s]{0,255})?(?:\$1)?$`)
 )
 
 // The USB network functions a module can expose. Quectel's `usbnet` setting
@@ -332,6 +349,42 @@ var catalogue = map[string]Spec{
 					return nil, ErrInvalid{"smdp_address must be a host name"}
 				}
 				payload["smdp_address"] = address
+			}
+			return payload, nil
+		},
+	},
+	"download_esim_profile": {
+		// The one command in this catalogue that cannot be undone from the
+		// console. It writes a profile into an eUICC nobody can physically
+		// reach, and a Profile Policy Rule that arrives with it is permanent.
+		// The edge reads those rules and refuses before installing; this end
+		// only makes sure a malformed code never gets that far.
+		Kind: "download_esim_profile", ContractKind: "DownloadEsimProfile",
+		NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			code := strings.TrimSpace(request.ActivationCode)
+			if code == "" {
+				return nil, ErrInvalid{"activation_code is required"}
+			}
+			if !activationCodePattern.MatchString(code) {
+				// Deliberately does not echo the value. An activation code in
+				// an error message is an activation code in a log.
+				return nil, ErrInvalid{
+					"activation_code must look like 1$<SM-DP+ address>$<matching id>",
+				}
+			}
+			payload := map[string]any{
+				"kind": "DownloadEsimProfile", "modem_imei": request.ModemIMEI,
+				"activation_code": code,
+			}
+			// Optional, and only present when it has a value: an empty string
+			// would fail the contract's minLength and be rejected at the edge
+			// as a malformed envelope rather than as a missing field.
+			if confirmation := strings.TrimSpace(request.ConfirmationCode); confirmation != "" {
+				if len(confirmation) > 128 {
+					return nil, ErrInvalid{"confirmation_code is too long"}
+				}
+				payload["confirmation_code"] = confirmation
 			}
 			return payload, nil
 		},

@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   parseEsimAuthentication,
+  parseEsimDownload,
   parseEsimInfoResult,
   parseRetrievedNotification,
   type EsimAuthentication,
+  type EsimDownload,
   type EsimInfoResult,
   type EsimProfileRow,
   type RetrievedNotification,
@@ -60,6 +62,12 @@ export function EsimPanel({
   // server page that hands it a fixed label set, so the ones added here read
   // the locale the same way the device console does.
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
+  // Held only until the request goes out. An activation code is a one-time
+  // credential, so it lives in this component and nowhere else -- not in the
+  // URL, not in a form that survives a reload, and not in the command result
+  // the edge sends back.
+  const [activationCode, setActivationCode] = useState("");
+  const [confirmationCode, setConfirmationCode] = useState("");
 
   const pending = commands.some(
     (row) => isEsimRead(row.kind) && !TERMINAL.has(row.status),
@@ -70,6 +78,12 @@ export function EsimPanel({
   // that has nothing to do with it.
   const authPending = commands.some(
     (row) => row.kind === "initiate_esim_authentication" && !TERMINAL.has(row.status),
+  );
+  // A download runs for tens of seconds: an ES9+ round trip on either side of
+  // a profile package fed to the card in 255-byte blocks. Its own flag, so the
+  // page keeps polling for it after the shorter commands have settled.
+  const downloadPending = commands.some(
+    (row) => row.kind === "download_esim_profile" && !TERMINAL.has(row.status),
   );
 
   const refresh = useCallback(async () => {
@@ -86,10 +100,10 @@ export function EsimPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!pending && !authPending) return;
+    if (!pending && !authPending && !downloadPending) return;
     const timer = setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
-  }, [pending, authPending, refresh]);
+  }, [pending, authPending, downloadPending, refresh]);
 
   async function issue(kind: string, extra: Record<string, unknown>) {
     setBusy(true);
@@ -127,6 +141,8 @@ export function EsimPanel({
     commands,
     "initiate_esim_authentication",
   );
+  const downloads = latestDownloads(commands);
+  const failedDownload = newestFailureAfterSuccess(commands, "download_esim_profile");
 
   return (
     <div className="stack">
@@ -359,6 +375,77 @@ export function EsimPanel({
           />
         ))
       )}
+
+      <h4 className="section-title">{t("esim.dlTitle", locale)}</h4>
+      <p className="faint">{t("esim.dlSecret", locale)}</p>
+      <div className="stack">
+        <label>
+          {t("esim.dlCode", locale)}
+          <input
+            type="text"
+            value={activationCode}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="LPA:1$smdp.example.com$MATCHING-ID"
+            onChange={(event) => setActivationCode(event.target.value)}
+          />
+        </label>
+        <label>
+          {t("esim.dlConfirm", locale)}
+          <input
+            type="text"
+            value={confirmationCode}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setConfirmationCode(event.target.value)}
+          />
+        </label>
+      </div>
+      <div className="button-row">
+        {modems.map((modem) => (
+          <button
+            key={`download-${modem.imei}`}
+            type="button"
+            className="risk"
+            disabled={busy || activationCode.trim() === ""}
+            onClick={() => {
+              if (!window.confirm(t("esim.dlWarn", locale))) return;
+              const code = activationCode.trim();
+              const confirmation = confirmationCode.trim();
+              // Cleared before the request rather than after it. The code is a
+              // one-time credential and leaving it in a field invites a second
+              // click that spends an order which no longer exists.
+              setActivationCode("");
+              setConfirmationCode("");
+              void issue("download_esim_profile", {
+                modem_imei: modem.imei,
+                activation_code: code,
+                ...(confirmation === "" ? {} : { confirmation_code: confirmation }),
+              });
+            }}
+          >
+            {t("esim.dlStart", locale)} — {modem.imei}
+          </button>
+        ))}
+      </div>
+      {downloadPending ? <p className="faint">{t("esim.dlBusy", locale)}</p> : null}
+      {failedDownload ? (
+        <p className="error">
+          {t("esim.dlFailed", locale)}: {failedDownload.result?.reason ?? ""}
+        </p>
+      ) : null}
+      {downloads.length === 0 ? (
+        <p className="faint">{t("esim.dlNone", locale)}</p>
+      ) : (
+        downloads.map(({ download, completedAt }) => (
+          <DownloadSection
+            key={`${download.eid}-${download.transactionId}`}
+            download={download}
+            completedAt={completedAt}
+            locale={locale}
+          />
+        ))
+      )}
     </div>
   );
 }
@@ -525,6 +612,190 @@ function latestAuthentications(
   return [...seen.values()].sort((left, right) =>
     left.authentication.eid.localeCompare(right.authentication.eid),
   );
+}
+
+
+/**
+ * One download, rendered as before-and-after rather than as a verdict.
+ *
+ * The command reporting success is the weakest thing on this page. The strong
+ * things are next to it: a profile list that grew by one, a free-memory figure
+ * that fell by roughly the size of the package, and a notification the card no
+ * longer owes anybody. Those came off the chip.
+ */
+function DownloadSection({
+  download,
+  completedAt,
+  locale,
+}: {
+  download: EsimDownload;
+  completedAt: number | null;
+  locale: Locale;
+}) {
+  const before = download.before;
+  const after = download.after;
+  const rows: [string, string | null][] = [
+    [t("esim.dlProfile", locale), download.profileName],
+    [t("esim.dlProvider", locale), download.serviceProviderName],
+    [t("esim.dlIccid", locale), download.installationIccid ?? download.profileIccid],
+    [
+      t("esim.dlPolicy", locale),
+      download.policyRules.length === 0 ? t("esim.dlNoPolicy", locale) : download.policyRules.join(", "),
+    ],
+    [t("esim.dlFreeBefore", locale), bytesOrNull(before.freeNonVolatileMemory, locale)],
+    [t("esim.dlFreeAfter", locale), bytesOrNull(after?.freeNonVolatileMemory ?? null, locale)],
+    [t("esim.dlConsumed", locale), bytesOrNull(download.freeMemoryConsumed, locale)],
+    [t("esim.dlBppBytes", locale), bytesOrNull(download.boundProfilePackageBytes, locale)],
+    [
+      t("esim.dlBppBlocks", locale),
+      `${download.boundProfilePackageBlocks} (${download.boundProfilePackageSegments.length} ${t("esim.dlSegments", locale)})`,
+    ],
+    [t("esim.dlAuthBlocks", locale), numberOrNull(download.authenticateServerBlocks)],
+    [t("esim.dlPrepareBlocks", locale), numberOrNull(download.prepareDownloadBlocks)],
+    [t("esim.dlNotifSeq", locale), numberOrNull(download.notificationSequenceNumber)],
+    [
+      t("esim.dlNotifPending", locale),
+      after
+        ? `${download.notificationsPendingBefore} → ${download.notificationsPendingAfter ?? "?"}`
+        : null,
+    ],
+    [t("esim.aTransaction", locale), download.transactionId],
+    [t("esim.aSmdp", locale), download.smdpAddress],
+    [t("esim.aTls", locale), download.negotiatedTls],
+  ];
+  const checks: [string, boolean][] = [
+    [t("esim.dlInstalled", locale), download.installed],
+    // Rendered as a check that has to be *false*. Installing and enabling are
+    // separate operations and only one of them was asked for; a page that left
+    // this out would let "downloaded" be read as "in use".
+    [t("esim.dlNotEnabled", locale), !download.enabled],
+    [t("esim.dlNotifDelivered", locale), download.notificationDelivered],
+    [t("esim.dlNotifRemoved", locale), download.notificationRemovedCode === 0],
+    [t("esim.checkCert", locale), download.certificateSignedByCi],
+    [t("esim.checkCiKey", locale), download.ciKeyAcceptedByChip],
+  ];
+  return (
+    <section className="stack">
+      <h4 className="section-title mono">
+        {download.eid} · {download.imei}
+      </h4>
+      {download.refusedPolicyRules.length > 0 ? (
+        <p className="error">
+          <strong>
+            {t("esim.dlRefused", locale, { rules: download.refusedPolicyRules.join(", ") })}
+          </strong>
+        </p>
+      ) : null}
+      {download.installationError ? (
+        <p className="error">
+          {t("esim.dlError", locale)}: {download.installationError}
+          {download.failedBppCommand ? ` (${download.failedBppCommand})` : ""}
+        </p>
+      ) : null}
+      {download.notificationDeliveryError ? (
+        <p className="error">{download.notificationDeliveryError}</p>
+      ) : null}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{t("esim.colField", locale)}</th>
+              <th>{t("esim.colValue", locale)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([field, value]) => (
+              <tr key={field}>
+                <td>{field}</td>
+                <td className="mono">{value ?? "—"}</td>
+              </tr>
+            ))}
+            <tr>
+              <td>{t("esim.authAt", locale)}</td>
+              <td className="mono faint">
+                {completedAt
+                  ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
+                  : "—"}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {checks.map(([label, passed]) => (
+              <tr key={label}>
+                <td>{label}</td>
+                <td>
+                  <span className={`badge ${passed ? "badge-ok" : "badge-bad"}`}>
+                    {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h4 className="section-title">{t("esim.dlProfilesAfter", locale)}</h4>
+      {after === null || after.profiles.length === 0 ? (
+        <p className="faint">—</p>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("esim.colIccid", locale)}</th>
+                <th>{t("esim.colNickname", locale)}</th>
+                <th>{t("esim.colState", locale)}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {after.profiles.map((profile) => (
+                <tr key={profile.iccid}>
+                  <td className="mono">{profile.iccid}</td>
+                  <td>{profile.label}</td>
+                  <td>
+                    <StateBadge state={profile.enabled ? "enabled" : "disabled"} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {download.stoppedAfter ? (
+        <p className="faint">
+          <strong>{t("esim.dlStopped", locale, { why: download.stoppedAfter })}</strong>
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * The most recent download per EID.
+ *
+ * Keyed by EID rather than by module, for the same reason the chip readings
+ * are: the chip is what a download was about.
+ */
+function latestDownloads(
+  commands: CommandRow[],
+): { download: EsimDownload; completedAt: number | null }[] {
+  const seen = new Map<string, { download: EsimDownload; completedAt: number | null }>();
+  for (const row of commands) {
+    if (row.kind !== "download_esim_profile" || row.status !== "succeeded") continue;
+    const download = parseEsimDownload(row.result?.details);
+    if (!download) continue;
+    const existing = seen.get(download.eid);
+    if (!existing || (row.completed_at ?? 0) >= (existing.completedAt ?? 0)) {
+      seen.set(download.eid, { download, completedAt: row.completed_at });
+    }
+  }
+  return [...seen.values()];
 }
 
 function StateBadge({ state }: { state: string }) {

@@ -12,6 +12,8 @@ export type Iccid = string;
 export type Imsi = string;
 export type Plmn = string;
 export type Imei = string;
+export type ActivationCode = string;
+export type ConfirmationCode = string;
 export type SmdpAddress = string;
 export type Sha256 = string;
 export type HttpsUrl = string;
@@ -345,6 +347,13 @@ export interface InitiateEsimAuthenticationCommand {
   smdp_address?: SmdpAddress;
 }
 
+export interface DownloadEsimProfileCommand {
+  kind: "DownloadEsimProfile";
+  modem_imei: Imei;
+  activation_code: ActivationCode;
+  confirmation_code?: ConfirmationCode;
+}
+
 export interface ConfigureProxyCommand {
   kind: "ConfigureProxy";
   instances: Array<ProxyInstanceSpec>;
@@ -441,6 +450,7 @@ export type Command =
   | ReadEsimInfoCommand |
   | RetrieveEsimNotificationCommand |
   | InitiateEsimAuthenticationCommand |
+  | DownloadEsimProfileCommand |
   | RunAtCommandCommand |
   | SendUssdCommand |
   | SetRadioCommand |

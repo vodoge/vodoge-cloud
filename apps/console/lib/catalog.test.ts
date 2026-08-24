@@ -12,6 +12,7 @@ import {
   fetchThreads,
   parseDevice,
   parseEsimAuthentication,
+  parseEsimDownload,
   parseEsimInfoResult,
   parseMessage,
   parseRetrievedNotification,
@@ -661,4 +662,128 @@ test("an exchange with no transaction identifies nothing and is dropped", () => 
   assert.equal(parseEsimAuthentication(withoutTransaction), null);
   assert.equal(parseEsimAuthentication(null), null);
   assert.equal(parseEsimAuthentication("nope"), null);
+});
+
+// A download result the edge would send after a profile arrived. Shaped after
+// EsimDownloadBody in edge-bin, and deliberately without an activation code or
+// a matching id: neither is in that struct, and a test that carried one would
+// be pinning behaviour nobody wants.
+const DOWNLOAD: Record<string, unknown> = {
+  imei: "867018069514820",
+  eid: "89086030202200000026000178339240",
+  smdp_address: "smdp.example.com",
+  transaction_id: "AC4F5FD6139AB3433069F3B76BF53382",
+  matching_id_supplied: true,
+  profile: {
+    iccid: "8944478100000123456",
+    service_provider_name: "Example US",
+    profile_name: "Example",
+    class: 2,
+    policy_rules: [],
+  },
+  refused_policy_rules: [],
+  before: {
+    free_non_volatile_memory: 162256,
+    profiles: [{ iccid: "89852351225042214201", label: "WEBBING", enabled: true }],
+    notifications: [{ sequence_number: 0, operations: ["install"], address: "a.example.com" }],
+  },
+  after: {
+    free_non_volatile_memory: 121904,
+    profiles: [
+      { iccid: "89852351225042214201", label: "WEBBING", enabled: true },
+      { iccid: "8944478100000123456", label: "Example", enabled: false },
+    ],
+    notifications: [{ sequence_number: 0, operations: ["install"], address: "a.example.com" }],
+  },
+  free_memory_consumed: 40352,
+  profiles_added: 1,
+  authenticate_server_blocks: 6,
+  prepare_download_blocks: 4,
+  bound_profile_package_bytes: 24576,
+  bound_profile_package_blocks: 103,
+  bound_profile_package_segments: [
+    { label: "header+initialiseSecureChannelRequest", bytes: 120, blocks: 1 },
+    { label: "86[0]", bytes: 2048, blocks: 9 },
+  ],
+  installed: true,
+  enabled: false,
+  installation_iccid: "8944478100000123456",
+  notification_sequence_number: 4,
+  notification_bytes: 1400,
+  notification_delivered: true,
+  notification_removed_code: 0,
+  notifications_pending_before: 1,
+  notifications_pending_after: 1,
+  certificate_signed_by_ci: true,
+  server_signature_valid: true,
+  challenge_echoed: true,
+  ci_key_accepted_by_chip: true,
+  negotiated_tls: "TLSv1_3",
+  trust_anchor_key_id: "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+};
+
+test("a download is read as before and after, not as a verdict", () => {
+  const value = parseEsimDownload(DOWNLOAD);
+  assert.ok(value);
+  assert.equal(value.installed, true);
+  // Installing and enabling are separate operations, and the page has to be
+  // able to say the second one did not happen.
+  assert.equal(value.enabled, false);
+  assert.equal(value.before.profiles.length, 1);
+  assert.equal(value.after?.profiles.length, 2);
+  assert.equal(value.after?.profiles[1]?.enabled, false);
+  assert.equal(value.freeMemoryConsumed, 40352);
+  assert.equal(value.profilesAdded, 1);
+  assert.equal(value.boundProfilePackageBlocks, 103);
+  assert.equal(value.boundProfilePackageSegments.length, 2);
+  assert.equal(value.notificationDelivered, true);
+  assert.equal(value.notificationRemovedCode, 0);
+  assert.equal(value.profileName, "Example");
+  assert.deepEqual(value.policyRules, []);
+});
+
+test("a refused download names the policy rules that stopped it", () => {
+  const refused: Record<string, unknown> = {
+    ...DOWNLOAD,
+    profile: { ...(DOWNLOAD.profile as Record<string, unknown>), policy_rules: ["ppr1"] },
+    refused_policy_rules: ["ppr1"],
+    installed: false,
+    after: DOWNLOAD.before,
+    free_memory_consumed: 0,
+    profiles_added: 0,
+    session_cancelled: "pprNotAllowed",
+    stopped_after: "the profile carries ppr1, which cannot be removed once installed",
+  };
+  const value = parseEsimDownload(refused);
+  assert.ok(value);
+  assert.equal(value.installed, false);
+  assert.deepEqual(value.refusedPolicyRules, ["ppr1"]);
+  assert.equal(value.sessionCancelled, "pprNotAllowed");
+  assert.equal(value.profilesAdded, 0);
+});
+
+// An edge that is older than this page sends none of the confirmations. They
+// have to read as "not done" rather than as "done": on this command, coercing
+// an absent field to true is the difference between a page that says a profile
+// was installed and a chip that has nothing on it.
+test("a download result missing its confirmations claims nothing", () => {
+  const partial: Record<string, unknown> = { ...DOWNLOAD };
+  delete partial.installed;
+  delete partial.notification_delivered;
+  delete partial.certificate_signed_by_ci;
+  delete partial.after;
+  const value = parseEsimDownload(partial);
+  assert.ok(value);
+  assert.equal(value.installed, false);
+  assert.equal(value.notificationDelivered, false);
+  assert.equal(value.certificateSignedByCi, false);
+  assert.equal(value.after, null);
+});
+
+test("a download with no transaction identifies nothing and is dropped", () => {
+  const withoutTransaction: Record<string, unknown> = { ...DOWNLOAD };
+  delete withoutTransaction.transaction_id;
+  assert.equal(parseEsimDownload(withoutTransaction), null);
+  assert.equal(parseEsimDownload(null), null);
+  assert.equal(parseEsimDownload("nope"), null);
 });
