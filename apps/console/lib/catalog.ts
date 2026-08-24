@@ -757,6 +757,61 @@ export type EsimInfoResult = {
   profilesError: string | null;
 };
 
+/** One GSMA CI root the edge had loaded when it ran the exchange. */
+export type EsimTrustAnchor = {
+  label: string;
+  keyId: string;
+  sha256: string;
+  /** ASN.1 `notAfter`, so a rotation is a date rather than a surprise. */
+  notAfter: string;
+};
+
+/**
+ * The result of one `initiate_esim_authentication` command.
+ *
+ * Every check is a separate field rather than one `verified` flag. Three
+ * different things were established -- the CI signed the certificate, the
+ * certificate signed the answer, and the answer is about this chip's
+ * challenge -- and a single boolean would make any one failing read as all
+ * three failing, which is the opposite of what someone reading this page
+ * needs.
+ */
+export type EsimAuthentication = {
+  imei: string;
+  eid: string;
+  smdpAddress: string;
+  smdpAddressSource: string;
+  configuredDefaultSmdp: string | null;
+  configuredRootSmds: string | null;
+  notificationAddresses: string[];
+  euiccChallenge: string;
+  transactionId: string;
+  serverAddress: string;
+  serverChallenge: string;
+  echoedEuiccChallenge: string;
+  euiccCiPkidToBeUsed: string;
+  chipCiKeyIds: string[];
+  ciKeyAcceptedByChip: boolean;
+  certificateKeyId: string;
+  certificateAuthorityKeyId: string;
+  certificateSha256: string;
+  certificateNotAfter: string;
+  certificateSignedByCi: boolean;
+  serverSignatureValid: boolean;
+  challengeEchoed: boolean;
+  trustAnchorLabel: string;
+  trustAnchorKeyId: string;
+  trustDirectory: string;
+  trustAnchors: EsimTrustAnchor[];
+  negotiatedTls: string | null;
+  adminProtocol: string | null;
+  httpStatus: number;
+  elapsedMs: number;
+  /** False, and rendered as such rather than left to be assumed. */
+  profileDownloaded: boolean;
+  stoppedAfter: string | null;
+};
+
 /** The result of one `retrieve_esim_notification` command. */
 export type RetrievedNotification = {
   imei: string;
@@ -859,6 +914,83 @@ export function parseRetrievedNotification(value: unknown): RetrievedNotificatio
     payloadBytes: asNumber(row.payload_bytes) ?? 0,
     delivered: row.delivered === true,
     deliveryBlockedBy: asString(row.delivery_blocked_by),
+  };
+}
+
+/**
+ * Read one ES9+ exchange out of a command result.
+ *
+ * Null unless the server actually named a transaction. A page that rendered
+ * an authentication panel with an empty transaction id would be showing that
+ * something happened when what happened is that nothing did.
+ */
+export function parseEsimAuthentication(value: unknown): EsimAuthentication | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const transactionId = asString(row.transaction_id);
+  const imei = asString(row.imei);
+  const smdpAddress = asString(row.smdp_address);
+  if (!transactionId || !imei || !smdpAddress) {
+    return null;
+  }
+  return {
+    imei,
+    eid: asString(row.eid) ?? "",
+    smdpAddress,
+    smdpAddressSource: asString(row.smdp_address_source) ?? "",
+    configuredDefaultSmdp: asString(row.configured_default_smdp),
+    configuredRootSmds: asString(row.configured_root_smds),
+    notificationAddresses: stringsOf(row.notification_addresses),
+    euiccChallenge: asString(row.euicc_challenge) ?? "",
+    transactionId,
+    serverAddress: asString(row.server_address) ?? "",
+    serverChallenge: asString(row.server_challenge) ?? "",
+    echoedEuiccChallenge: asString(row.echoed_euicc_challenge) ?? "",
+    euiccCiPkidToBeUsed: asString(row.euicc_ci_pkid_to_be_used) ?? "",
+    chipCiKeyIds: stringsOf(row.chip_ci_key_ids),
+    // Compared against `true` rather than coerced: an absent field is not a
+    // passed check, and this is the difference between a page that says a
+    // signature verified and one that says an old edge did not report it.
+    ciKeyAcceptedByChip: row.ci_key_accepted_by_chip === true,
+    certificateKeyId: asString(row.certificate_key_id) ?? "",
+    certificateAuthorityKeyId: asString(row.certificate_authority_key_id) ?? "",
+    certificateSha256: asString(row.certificate_sha256) ?? "",
+    certificateNotAfter: asString(row.certificate_not_after) ?? "",
+    certificateSignedByCi: row.certificate_signed_by_ci === true,
+    serverSignatureValid: row.server_signature_valid === true,
+    challengeEchoed: row.challenge_echoed === true,
+    trustAnchorLabel: asString(row.trust_anchor_label) ?? "",
+    trustAnchorKeyId: asString(row.trust_anchor_key_id) ?? "",
+    trustDirectory: asString(row.trust_directory) ?? "",
+    trustAnchors: arrayOf(row.trust_anchors)
+      .map(parseTrustAnchor)
+      .filter((entry): entry is EsimTrustAnchor => entry !== null),
+    negotiatedTls: asString(row.negotiated_tls),
+    adminProtocol: asString(row.admin_protocol),
+    httpStatus: asNumber(row.http_status) ?? 0,
+    elapsedMs: asNumber(row.elapsed_ms) ?? 0,
+    profileDownloaded: row.profile_downloaded === true,
+    stoppedAfter: asString(row.stopped_after),
+  };
+}
+
+function parseTrustAnchor(value: unknown): EsimTrustAnchor | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const label = asString(row.label);
+  const keyId = asString(row.key_id);
+  if (!label || !keyId) {
+    return null;
+  }
+  return {
+    label,
+    keyId,
+    sha256: asString(row.sha256) ?? "",
+    notAfter: asString(row.not_after) ?? "",
   };
 }
 

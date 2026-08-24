@@ -3,8 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
+  parseEsimAuthentication,
   parseEsimInfoResult,
   parseRetrievedNotification,
+  type EsimAuthentication,
   type EsimInfoResult,
   type EsimProfileRow,
   type RetrievedNotification,
@@ -62,6 +64,13 @@ export function EsimPanel({
   const pending = commands.some(
     (row) => isEsimRead(row.kind) && !TERMINAL.has(row.status),
   );
+  // Tracked separately from the chip reads. An ES9+ round trip runs for a
+  // second or two against a server on another continent, and folding it into
+  // the same flag would leave the chip section saying "waiting" for a command
+  // that has nothing to do with it.
+  const authPending = commands.some(
+    (row) => row.kind === "initiate_esim_authentication" && !TERMINAL.has(row.status),
+  );
 
   const refresh = useCallback(async () => {
     const query = new URLSearchParams({ device_id: deviceId, limit: "60" });
@@ -77,10 +86,10 @@ export function EsimPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!pending) return;
+    if (!pending && !authPending) return;
     const timer = setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
-  }, [pending, refresh]);
+  }, [pending, authPending, refresh]);
 
   async function issue(kind: string, extra: Record<string, unknown>) {
     setBusy(true);
@@ -109,6 +118,10 @@ export function EsimPanel({
     (row) => row.kind === "read_esim_info" && row.status === "failed",
   );
   const retrieved = latestRetrieval(commands);
+  const authentications = latestAuthentications(commands);
+  const failedAuthentication = commands.find(
+    (row) => row.kind === "initiate_esim_authentication" && row.status === "failed",
+  );
 
   return (
     <div className="stack">
@@ -307,7 +320,201 @@ export function EsimPanel({
           )}
         </p>
       ) : null}
+
+      <h4 className="section-title">{t("esim.authTitle", locale)}</h4>
+      <div className="button-row">
+        {modems.map((modem) => (
+          <button
+            key={`auth-${modem.imei}`}
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void issue("initiate_esim_authentication", { modem_imei: modem.imei })
+            }
+          >
+            {t("esim.authStart", locale)} — {modem.imei}
+          </button>
+        ))}
+      </div>
+      {authPending ? <p className="faint">{t("esim.authBusy", locale)}</p> : null}
+      {failedAuthentication ? (
+        <p className="error">
+          {t("esim.authFailed", locale)}: {failedAuthentication.result?.reason ?? ""}
+        </p>
+      ) : null}
+      {authentications.length === 0 ? (
+        <p className="faint">{t("esim.authNone", locale)}</p>
+      ) : (
+        authentications.map(({ authentication, completedAt }) => (
+          <AuthenticationSection
+            key={`${authentication.eid}-${authentication.transactionId}`}
+            authentication={authentication}
+            completedAt={completedAt}
+            locale={locale}
+          />
+        ))
+      )}
     </div>
+  );
+}
+
+/**
+ * One ES9+ exchange, rendered as evidence rather than as a status.
+ *
+ * The checks are listed individually and by name. A green tick that means
+ * "the command returned" is exactly the failure this project has hit before:
+ * four buttons rendering perfectly while every request behind them was 401.
+ */
+function AuthenticationSection({
+  authentication,
+  completedAt,
+  locale,
+}: {
+  authentication: EsimAuthentication;
+  completedAt: number | null;
+  locale: Locale;
+}) {
+  const checks: [string, boolean][] = [
+    [t("esim.checkCert", locale), authentication.certificateSignedByCi],
+    [t("esim.checkSignature", locale), authentication.serverSignatureValid],
+    [t("esim.checkChallenge", locale), authentication.challengeEchoed],
+    [t("esim.checkCiKey", locale), authentication.ciKeyAcceptedByChip],
+  ];
+  return (
+    <section className="stack">
+      <h4 className="section-title mono">
+        {t("esim.aSmdp", locale)} {authentication.smdpAddress} · {authentication.eid}
+      </h4>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{t("esim.colField", locale)}</th>
+              <th>{t("esim.colValue", locale)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {authenticationFields(authentication, locale).map(([field, value]) => (
+              <tr key={field}>
+                <td>{field}</td>
+                <td className="mono">{value}</td>
+              </tr>
+            ))}
+            <tr>
+              <td>{t("esim.authAt", locale)}</td>
+              <td className="mono faint">
+                {completedAt
+                  ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
+                  : "—"}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4 className="section-title">{t("esim.checksTitle", locale)}</h4>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {checks.map(([label, passed]) => (
+              <tr key={label}>
+                <td>{label}</td>
+                <td>
+                  <span className={`badge ${passed ? "badge-ok" : "badge-bad"}`}>
+                    {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h4 className="section-title">{t("esim.aAnchors", locale)}</h4>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {authentication.trustAnchors.map((anchor) => (
+              <tr key={anchor.label}>
+                <td className="mono">{anchor.label}</td>
+                <td className="mono">{anchor.keyId}</td>
+                <td className="mono faint">{anchor.notAfter}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {authentication.profileDownloaded ? null : (
+        <p className="faint">
+          <strong>
+            {t("esim.authStopped", locale, { why: authentication.stoppedAfter ?? "" })}
+          </strong>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function authenticationFields(
+  authentication: EsimAuthentication,
+  locale: Locale,
+): [string, string][] {
+  const source =
+    authentication.smdpAddressSource === "request"
+      ? t("esim.aSourceRequest", locale)
+      : authentication.smdpAddressSource === "euicc_configured_addresses"
+        ? t("esim.aSourceConfigured", locale)
+        : authentication.smdpAddressSource === "pending_notification"
+          ? t("esim.aSourceNotification", locale)
+          : authentication.smdpAddressSource;
+  const rows: [string, string | null][] = [
+    [t("esim.aSmdpSource", locale), source],
+    [t("esim.aTransaction", locale), authentication.transactionId],
+    [t("esim.aChallenge", locale), authentication.euiccChallenge],
+    [t("esim.aEchoed", locale), authentication.echoedEuiccChallenge],
+    [t("esim.aServerChallenge", locale), authentication.serverChallenge],
+    [t("esim.aCiChosen", locale), authentication.euiccCiPkidToBeUsed],
+    [t("esim.aCertKey", locale), authentication.certificateKeyId],
+    [t("esim.aCertAuthority", locale), authentication.certificateAuthorityKeyId],
+    [t("esim.aCertSha", locale), authentication.certificateSha256],
+    [t("esim.aCertExpiry", locale), authentication.certificateNotAfter],
+    [t("esim.aAnchorUsed", locale), authentication.trustAnchorLabel],
+    [t("esim.aTrustDir", locale), authentication.trustDirectory],
+    [t("esim.aTls", locale), authentication.negotiatedTls],
+    [t("esim.aAdminProtocol", locale), authentication.adminProtocol],
+    [
+      t("esim.aElapsed", locale),
+      t("esim.aMs", locale, { count: authentication.elapsedMs }),
+    ],
+  ];
+  return rows.map(([field, value]) => [field, value ?? "—"]);
+}
+
+/**
+ * The most recent successful exchange per EID.
+ *
+ * Keyed by EID for the same reason the chip readings are: the chip is what a
+ * transaction was about, and one module read twice should not appear twice
+ * with different answers.
+ */
+function latestAuthentications(
+  commands: CommandRow[],
+): { authentication: EsimAuthentication; completedAt: number | null }[] {
+  const seen = new Map<
+    string,
+    { authentication: EsimAuthentication; completedAt: number | null }
+  >();
+  for (const row of commands) {
+    if (row.kind !== "initiate_esim_authentication" || row.status !== "succeeded") continue;
+    const authentication = parseEsimAuthentication(row.result?.details);
+    if (!authentication) continue;
+    const existing = seen.get(authentication.eid);
+    if (existing && (existing.completedAt ?? 0) >= (row.completed_at ?? 0)) continue;
+    seen.set(authentication.eid, { authentication, completedAt: row.completed_at });
+  }
+  return [...seen.values()].sort((left, right) =>
+    left.authentication.eid.localeCompare(right.authentication.eid),
   );
 }
 

@@ -244,9 +244,15 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	// both only read it: the chip's identity, its capabilities, and the
 	// notifications it still owes an SM-DP+. Marking either of them mutating
 	// would put a confirmation prompt in front of a reading.
+	//
+	// initiate_esim_authentication reaches a real SM-DP+, which sounds like it
+	// belongs on the other list, but the function it calls needs no activation
+	// code and leaves nothing behind at either end: a challenge out, a signed
+	// answer back, and no profile and no notification move.
 	readOnly := map[string]bool{
 		"modem_report": true, "list_esim_profiles": true, "refresh_modems": true,
 		"read_esim_info": true, "retrieve_esim_notification": true,
+		"initiate_esim_authentication": true,
 	}
 	// rotate_ip drops the data session, so it belongs with the disruptive
 	// actions even though it reads as a small thing.
@@ -368,5 +374,64 @@ func TestReadingAChipNamesItsModem(t *testing.T) {
 	}
 	if _, _, err := BuildPayload(Request{DeviceID: "d", Kind: "read_esim_info"}); err == nil {
 		t.Fatal("a chip reading with no imei was accepted")
+	}
+}
+
+// The SM-DP+ address is optional, and an omitted one is not an empty one.
+//
+// The normal path is to let the edge ask the chip: on both bench eUICCs
+// GetEuiccConfiguredAddresses returns no default SM-DP+, so the address comes
+// off a pending notification. Sending "smdp_address": "" instead of omitting
+// the field would fail the contract's pattern at the edge, minutes later, as
+// something that reads like a DNS problem.
+func TestAnAbsentSmdpAddressMeansAskTheChip(t *testing.T) {
+	t.Parallel()
+
+	_, payload, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "initiate_esim_authentication", ModemIMEI: benchIMEI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := decoded["smdp_address"]; present {
+		t.Fatalf("an omitted address became %v", decoded["smdp_address"])
+	}
+
+	_, payload, err = BuildPayload(Request{
+		DeviceID: "d", Kind: "initiate_esim_authentication", ModemIMEI: benchIMEI,
+		SmdpAddress: "  wbg.prod.ondemandconnectivity.com  ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["smdp_address"] != "wbg.prod.ondemandconnectivity.com" {
+		t.Fatalf("smdp_address = %v", decoded["smdp_address"])
+	}
+}
+
+// An address that is not a host name is refused here rather than at the edge.
+func TestAnUnusableSmdpAddressIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, address := range []string{
+		"https://wbg.prod.ondemandconnectivity.com",
+		"wbg.prod.ondemandconnectivity.com/gsma",
+		"localhost",
+		"-leading.dash.example.com",
+		"has space.example.com",
+	} {
+		if _, _, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "initiate_esim_authentication", ModemIMEI: benchIMEI,
+			SmdpAddress: address,
+		}); err == nil {
+			t.Fatalf("%q was accepted as an SM-DP+ address", address)
+		}
 	}
 }

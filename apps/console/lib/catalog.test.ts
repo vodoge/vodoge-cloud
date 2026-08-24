@@ -11,6 +11,7 @@ import {
   fetchThread,
   fetchThreads,
   parseDevice,
+  parseEsimAuthentication,
   parseEsimInfoResult,
   parseMessage,
   parseRetrievedNotification,
@@ -575,4 +576,89 @@ test("a fetched notification is not a delivered one", () => {
   assert.equal(value.payloadBytes, 1460);
   assert.equal(value.delivered, false);
   assert.match(value.deliveryBlockedBy ?? "", /ES9\+/);
+});
+
+// One real exchange with wbg.prod.ondemandconnectivity.com, trimmed to the
+// fields the page reads.
+const REAL_AUTHENTICATION = {
+  imei: "867018069514820",
+  eid: "89086030202200000026000178339240",
+  smdp_address: "wbg.prod.ondemandconnectivity.com",
+  smdp_address_source: "pending_notification",
+  configured_default_smdp: null,
+  configured_root_smds: "testrootsmds.gsma.com",
+  notification_addresses: ["wbg.prod.ondemandconnectivity.com"],
+  euicc_challenge: "8BCF1BE4ADA9C98AF062987330056103",
+  transaction_id: "E4F6996D64A543FC8A7F6F8F97F9428D",
+  server_address: "wbg.prod.ondemandconnectivity.com",
+  server_challenge: "0982F87937A6C56B25569C568E4C4D68",
+  echoed_euicc_challenge: "8BCF1BE4ADA9C98AF062987330056103",
+  euicc_ci_pkid_to_be_used: "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+  chip_ci_key_ids: ["81370F5125D0B1D408D4C3B232E6D25E795BEBFB"],
+  ci_key_accepted_by_chip: true,
+  certificate_key_id: "25F709B3736C0BDA32D6A94A31BDE47CB12A25AA",
+  certificate_authority_key_id: "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+  certificate_sha256:
+    "7f93b55b56a9da4e29bc4d4118f698a3dd8d5354b28f936734e7fa0efd8ea9b5",
+  certificate_not_after: "270925235959Z",
+  certificate_signed_by_ci: true,
+  server_signature_valid: true,
+  challenge_echoed: true,
+  trust_anchor_label: "gsma-rsp2-root-ci1.pem",
+  trust_anchor_key_id: "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+  trust_directory: "/etc/vodoge/rsp-trust",
+  trust_anchors: [
+    {
+      label: "gsma-rsp2-root-ci1.pem",
+      key_id: "81370F5125D0B1D408D4C3B232E6D25E795BEBFB",
+      sha256: "5e3e91fd454327c3af5d32a7a73bbc59fe43aa7d85fd32d5db44423f80a56bb3",
+      not_after: "20520221235959Z",
+    },
+  ],
+  negotiated_tls: "TLSv1_3",
+  admin_protocol: "gsma/rsp/v2.2.0",
+  http_status: 200,
+  elapsed_ms: 812,
+  profile_downloaded: false,
+  stopped_after: "the server's signed answer",
+};
+
+test("an ES9+ exchange keeps each check separate", () => {
+  const value = parseEsimAuthentication(REAL_AUTHENTICATION);
+  assert.ok(value);
+  assert.equal(value.transactionId, "E4F6996D64A543FC8A7F6F8F97F9428D");
+  // The chip's challenge and the one the server signed back have to be
+  // compared by the reader, so both are carried rather than one flag.
+  assert.equal(value.euiccChallenge, value.echoedEuiccChallenge);
+  assert.equal(value.certificateSignedByCi, true);
+  assert.equal(value.serverSignatureValid, true);
+  assert.equal(value.challengeEchoed, true);
+  assert.equal(value.ciKeyAcceptedByChip, true);
+  assert.equal(value.trustAnchors.length, 1);
+  assert.equal(value.trustAnchors[0].notAfter, "20520221235959Z");
+  // Stated, not implied.
+  assert.equal(value.profileDownloaded, false);
+});
+
+test("an edge that did not report a check is not a passed check", () => {
+  // An older agent answering this command would leave the verification
+  // fields out entirely. Coercing an absent field to true is how a page
+  // ends up claiming a signature verified when nothing verified it.
+  const partial: Record<string, unknown> = { ...REAL_AUTHENTICATION };
+  delete partial.certificate_signed_by_ci;
+  delete partial.server_signature_valid;
+  delete partial.challenge_echoed;
+  const value = parseEsimAuthentication(partial);
+  assert.ok(value);
+  assert.equal(value.certificateSignedByCi, false);
+  assert.equal(value.serverSignatureValid, false);
+  assert.equal(value.challengeEchoed, false);
+});
+
+test("an exchange with no transaction identifies nothing and is dropped", () => {
+  const withoutTransaction: Record<string, unknown> = { ...REAL_AUTHENTICATION };
+  delete withoutTransaction.transaction_id;
+  assert.equal(parseEsimAuthentication(withoutTransaction), null);
+  assert.equal(parseEsimAuthentication(null), null);
+  assert.equal(parseEsimAuthentication("nope"), null);
 });

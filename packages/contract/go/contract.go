@@ -325,6 +325,12 @@ type RetrieveEsimNotificationCommand struct {
 	SequenceNumber int64  `json:"sequence_number"`
 }
 
+type InitiateEsimAuthenticationCommand struct {
+	Kind        string  `json:"kind"`
+	ModemImei   string  `json:"modem_imei"`
+	SmdpAddress *string `json:"smdp_address,omitempty"`
+}
+
 type ConfigureProxyCommand struct {
 	Kind      string              `json:"kind"`
 	Instances []ProxyInstanceSpec `json:"instances"`

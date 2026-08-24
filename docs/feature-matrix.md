@@ -118,8 +118,9 @@
 | 切换 / 启用 | 有 | 有 | **有** | — |
 | 禁用当前 Profile | 有 | 有 | **无** | 边缘 `es10c.rs` 有 `disable_profile_apdu`，云端未接 |
 | EID 与芯片信息 | 有 | 有 | **有** | 控制台 eSIM 面板的 `read_esim_info`，一条 ISD-R 通道读完 EID + `GetEUICCInfo2`（16 个字段全解码，含剩余非易失内存与 GSMA CI 公钥）+ 通知列表 + profile 列表。注意 GET DATA `5A` 在台上两颗 eUICC 上都回 `6D00`，实际用的是 ES10c `GetEUICCData` |
-| 通知列表与重试 | 有 | 有 | **半** | 列表与**取回**（`ListNotification` / `RetrieveNotificationsList`）都有，控制台可见可点。**投递还没有**：ES9+ `handleNotification` 要 HTTPS 客户端与 GSMA CI 信任链，删除还要写卡，都在 3.3。另：两颗 eUICC 都拒绝 `seqNumber` 检索（回 `BF2B 03 81 01 7F`），所以取一条要取全部再挑 |
-| Profile 下载（SM-DP+） | 有 | 有 | **无** | 最大的单项工程 |
+| 通知列表与重试 | 有 | 有 | **半** | 列表与**取回**（`ListNotification` / `RetrieveNotificationsList`）都有，控制台可见可点。**投递仍然没有**，但拦路的东西变了：HTTPS 客户端与 GSMA CI 信任链现在有了（见下面的 ES9+ 一行），剩下的是 `handleNotification` 之后必须 `RemoveNotificationFromList`，那是写卡，而且投递 delete 通知会让运营商释放用户真实付费账户上的 profile —— 这是一个要用户拍板的动作，不是一个技术缺口。另：两颗 eUICC 都拒绝 `seqNumber` 检索（回 `BF2B 03 81 01 7F`），所以取一条要取全部再挑 |
+| ES9+ 与 SM-DP+ 认证 | 有 | 有 | **有** | 控制台按钮 `initiate_esim_authentication` 对**真实生产 SM-DP+**（`wbg.prod.ondemandconnectivity.com`，Thales）跑 ES9+ `InitiateAuthentication`，拿回 `transactionId` 与签名响应并渲染。TLS 与 RSP 两层都按 **GSMA CI 根**（`GSM Association - RSP2 Root CI1`，SKI `81370F51…795BEBFB`，与两颗芯片 `euiccCiPKIdListForVerification` 一致）验过；根证书是 `/etc/vodoge/rsp-trust/` 下的文件而不是编进二进制，页面上显示它的指纹与到期日。地址取自卡上：ES10a `GetEuiccConfiguredAddresses` 在两颗芯片上都**没有**默认 SM-DP+（只有 GSMA 测试 SM-DS），所以回落到待投递通知自带的地址。对卡与账户零副作用 |
+| Profile 下载（SM-DP+） | 有 | 有 | **无** | 最大的单项工程。ES9+ 传输层与 CI 信任链已通（见上一行），还差 `AuthenticateServer` / `AuthenticateClient` / `PrepareDownload` / `GetBoundProfilePackage` 与把 BPP 经 STORE DATA 分块链装进卡 —— 而这些都要一个真实激活码 |
 | 重命名 / 删除 Profile | 有 | 有 | **无** | 边缘也还没有 |
 | 按 ICCID 的卡策略 | 有 | 有 | **有** | 下发到全部设备 |
 | PC/SC 读卡器 | 有 | 有 | **无** | 外接读卡器写卡 |

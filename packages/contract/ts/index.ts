@@ -12,6 +12,7 @@ export type Iccid = string;
 export type Imsi = string;
 export type Plmn = string;
 export type Imei = string;
+export type SmdpAddress = string;
 export type Sha256 = string;
 export type HttpsUrl = string;
 
@@ -338,6 +339,12 @@ export interface RetrieveEsimNotificationCommand {
   sequence_number: number;
 }
 
+export interface InitiateEsimAuthenticationCommand {
+  kind: "InitiateEsimAuthentication";
+  modem_imei: Imei;
+  smdp_address?: SmdpAddress;
+}
+
 export interface ConfigureProxyCommand {
   kind: "ConfigureProxy";
   instances: Array<ProxyInstanceSpec>;
@@ -433,6 +440,7 @@ export type Command =
   | ListEsimProfilesCommand |
   | ReadEsimInfoCommand |
   | RetrieveEsimNotificationCommand |
+  | InitiateEsimAuthenticationCommand |
   | RunAtCommandCommand |
   | SendUssdCommand |
   | SetRadioCommand |

@@ -77,6 +77,9 @@ type Request struct {
 	// omitted field and a deliberate 0 have to be told apart.
 	SequenceNumber *int64 `json:"sequence_number"`
 
+	// InitiateEsimAuthentication. Empty means "ask the chip".
+	SmdpAddress string `json:"smdp_address"`
+
 	// SelfUpdate
 	Version   string `json:"version"`
 	URL       string `json:"url"`
@@ -95,6 +98,11 @@ var (
 	phonePattern  = regexp.MustCompile(`^\+?[0-9]{1,15}$`)
 	plmnPattern   = regexp.MustCompile(`^[0-9]{3}-[0-9]{2,3}$`)
 	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	// Must match SmdpAddress in the contract schema. A value the schema would
+	// reject should be refused while the caller is still here rather than at
+	// the edge, where it surfaces as a DNS failure minutes later.
+	smdpAddressPattern = regexp.MustCompile(
+		`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
 )
 
 // The USB network functions a module can expose. Quectel's `usbnet` setting
@@ -298,6 +306,34 @@ var catalogue = map[string]Spec{
 				"kind": "RetrieveEsimNotification", "modem_imei": request.ModemIMEI,
 				"sequence_number": *request.SequenceNumber,
 			}, nil
+		},
+	},
+	"initiate_esim_authentication": {
+		// Not mutating, and that is a property of this particular ES9+
+		// function rather than of ES9+ in general. InitiateAuthentication
+		// needs no activation code and leaves nothing behind at either end:
+		// the card generates a challenge, the SM-DP+ signs an answer, and the
+		// exchange stops there. Downloading a profile or delivering a
+		// notification would be a different matter and is a different command.
+		Kind: "initiate_esim_authentication", ContractKind: "InitiateEsimAuthentication",
+		NeedsModem: true,
+		Build: func(request Request) (map[string]any, error) {
+			payload := map[string]any{
+				"kind": "InitiateEsimAuthentication", "modem_imei": request.ModemIMEI,
+			}
+			// Optional on purpose: the usual path is to let the edge ask the
+			// chip, which knows either a configured SM-DP+ or the address its
+			// pending notifications name. An operator overriding it is the
+			// exception, so an empty field means "ask the chip" rather than
+			// being an error.
+			address := strings.TrimSpace(request.SmdpAddress)
+			if address != "" {
+				if !smdpAddressPattern.MatchString(address) {
+					return nil, ErrInvalid{"smdp_address must be a host name"}
+				}
+				payload["smdp_address"] = address
+			}
+			return payload, nil
 		},
 	},
 	"self_update": {
