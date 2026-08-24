@@ -13,10 +13,20 @@
 #    这个脚本则提供那条本来就该走的路。
 #
 # 2. 恢复时用了 `docker compose up -d --no-build gateway`,**容器仍然跑在旧镜像
-#    上** —— 镜像 tag 没变,Compose 就认为不需要重建,而且它报告成功。容器安静地
-#    跑着上周的代码,比机器倒下更阴险:哪儿都看不出不对。所以这里
-#    **必须 --force-recreate**,而且换完之后要**把容器实际使用的镜像 ID 和刚
-#    构建出来的镜像 ID 比一遍**。只看 "Up" 不算数,那正是当时看到的东西。
+#    上,而命令退出 0**。
+#
+#    当时的解释是「tag 没变,Compose 就不重建」。这个解释在本机实测过,**是错的**
+#    (Compose v5.4.0,两行的临时镜像,两种情形都复现过):
+#
+#      tag 指向了新镜像       up -d --no-build 会重建,加不加 --force-recreate 一样
+#      docker build 失败/没跑  tag 还指着旧镜像。不加 = 什么都不做退出 0;
+#                             加了 = 把容器重建到**旧镜像**上,照样退出 0
+#
+#    也就是说 --force-recreate **救不了**真正会咬人的那一种,它只会让这次部署看起来
+#    更像成功了。真正的护栏只有一条:**换完之后把容器实际使用的镜像 ID 和刚构建出来
+#    的镜像 ID 比一遍**,不等就报错。只看 "Up" 不算数 —— "Up" 正是当时屏幕上的东西。
+#
+#    --force-recreate 仍然保留:tag 没变时它才能让进程真的重启,而且不花什么代价。
 #
 # 顺带把产物的 sha256 写进镜像 label,于是「这个容器到底是哪份产物」以后不用猜:
 #
@@ -112,9 +122,9 @@ deploy_one() {
   built_id=$(docker image inspect -f '{{.Id}}' "$image")
   log "$svc: 新镜像 ${built_id:7:12}"
 
-  # --force-recreate 是这一行的全部重点。没有它,tag 没变 = Compose 认为不需要
-  # 动,容器留在旧镜像上,而命令退出 0 报告成功。
-  # --no-build 挡的是另一件事:让 Compose 自己去构建 = 在这台机器上编译。
+  # --no-build 挡的是编译:不让 Compose 在这台机器上自己构建。
+  # --force-recreate 挡的是「tag 没变所以不动」,顺带保证进程真的重启。
+  # 两个都不能保证容器换到了新镜像 —— 那件事由下面那段比对来保证。
   log "$svc: up -d --no-build --force-recreate"
   "${COMPOSE[@]}" up -d --no-build --force-recreate "$svc"
 

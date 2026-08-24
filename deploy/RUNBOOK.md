@@ -85,8 +85,36 @@ container image   1168be0d…   ← old, unchanged
 freshly built     a2edbce0…
 ```
 
-The image *tag* had not changed, so Compose saw nothing to do. The deploy looked
-finished. It was not. The pair that works:
+The obvious reading is that Compose ignores a rebuilt tag. That reading was
+tested on this host and is **wrong** — which matters, because acting on it
+leaves the real hole open:
+
+| What actually happened | `up -d --no-build` | with `--force-recreate` too |
+| --- | --- | --- |
+| tag rebuilt to a new image id | recreates onto the new image | same |
+| `docker build` failed, or was never run, so the tag still points at the old image | does nothing, exits 0 | recreates onto the **old** image, exits 0 |
+
+Both rows were reproduced on this host with Compose v5.4.0 and a two-line
+scratch image. Compose does notice a changed image id by itself. What it cannot
+notice is a build that never produced one — and that is the case that ends with
+a container serving old code while every command reported success.
+`--force-recreate` does not rescue it. It makes the deploy look *more* like it
+happened.
+
+So `--force-recreate` stays in every command below, because it is what makes
+redeploying an unchanged tag actually restart the process, and it costs nothing.
+But it is not the safety net. The safety net is comparing what is running
+against what you meant to ship:
+
+```sh
+docker inspect      -f '{{.Image}}' vodoge-cloud-gateway-1   # must equal
+docker image inspect -f '{{.Id}}'   vodoge-cloud-gateway     # this
+```
+
+`bin/deploy.sh` does that and refuses to report success otherwise. **"Up" is not
+evidence** — "Up" is precisely what was on screen while the old binary ran.
+
+By hand, the pair is:
 
 ```sh
 docker build -f Dockerfile.<svc>.prebuilt -t vodoge-cloud-<svc> .
@@ -94,12 +122,8 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml \
   up -d --no-build --force-recreate <svc>
 ```
 
-`--no-build` keeps Compose from compiling here. `--force-recreate` keeps it from
-reusing a container that already matches the tag. Drop either and it fails
-silently in its own direction, which is why `bin/deploy.sh` passes both and then
-compares `docker inspect -f '{{.Image}}'` with the id it just built. **"Up" is
-not evidence** — "Up" is precisely what was on screen while the old binary ran.
-
+`--no-build` is what keeps Compose from compiling here. Then check the two ids,
+every time.
 ### Producing the gateway artifact
 
 On the workstation:

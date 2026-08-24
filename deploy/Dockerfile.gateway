@@ -51,12 +51,13 @@ RUN set -e; \
 '    on the host' \
 '      /opt/vodoge-cloud/bin/deploy.sh gateway' \
 '' \
-'    or, by hand, both lines -- the second one matters:' \
+'    or by hand -- and then verify, because neither line does:' \
 '      docker build -f Dockerfile.gateway.prebuilt -t vodoge-cloud-gateway .' \
 '      docker compose ... up -d --no-build --force-recreate gateway' \
 '' \
-'  Without --force-recreate the tag has not changed, so Compose keeps' \
-'  the old container and reports success. See deploy/RUNBOOK.md.' \
+'  Then check the container really is on the image you just built:' \
+'  a build that failed leaves the old one running and every command' \
+'  still exits 0. bin/deploy.sh checks; "Up" is not evidence.' \
 '' \
 '  If this machine really can compile, say so:' \
 '      docker build --build-arg VODOGE_BUILD_FROM_SOURCE=yes \' \
