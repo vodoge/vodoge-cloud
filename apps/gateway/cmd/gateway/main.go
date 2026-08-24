@@ -760,6 +760,13 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /metrics", observe.Handler(process.metrics))
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
+	// The machine-readable description of everything below. Registered as a
+	// literal like every other route, because the test that enumerates write
+	// routes reads these patterns out of the source; and behind a session,
+	// because the document is a complete map of the attack surface and the
+	// only caller that cannot hold one is a build-time tool, which can read
+	// openapi.go directly. See cmd/gateway/openapi.go.
+	mux.HandleFunc("GET /v1/openapi.json", process.serveOpenAPI(mux))
 	// Sign-in has no session yet, and tenant lookup is what the console uses to
 	// decide whether a subdomain exists at all. Both stay open; neither returns
 	// tenant data.

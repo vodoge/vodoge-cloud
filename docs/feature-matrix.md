@@ -8,13 +8,20 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 40） | 66 条路由（去重后 64 条模式，其中 33 条是写） |
+| 我们的云端 | `apps/gateway`（schema 40） | 67 条注册（去重后 65 条模式，其中 33 条是写） |
 
 云端路由数可以自己数：`grep -rn "mux.Handle" apps/gateway/ | grep -v _test | wc -l`
 （分布在 `main.go` 与 `card_routes.go` / `device_routes.go` /
 `messaging_routes.go` / `proxy_routes.go` / `schedule_routes.go` 六个文件里）。
-写路由的只读拒绝不靠人工清单：`cmd/gateway/main_test.go` 从这张表里现取，
-新增一条没被挡住的写路由，测试就红。
+**注册数比模式数多 2**：`POST /v1/enroll` 与 `POST /v1/ops/backup-failed`
+各自在 if/else 两个分支里注册同一个 pattern（配置好的版本与 503 版本），
+去重后是一条。**这两个数字都不要手抄** —— 见下。
+
+**这份表的数字不是权威，测试才是。** 这一行曾经长期写着「56 条路由」而实际是 66，
+没有任何东西提醒过。现在有两处会红：
+`cmd/gateway/main_test.go` 的只读拒绝测试从源码现取路由表（新增一条没被挡住的写路由就红），
+`cmd/gateway/openapi_test.go` 的漂移测试断言 OpenAPI 描述的路由集合 == 实际注册的集合
+（两个方向都查：漏写描述红，描述了不存在的路由也红）。
 
 三项能力已定案，全部要做：**VoWiFi 与 E911（仅美国）**、**语音通话**、**SM-DP+ 下载**。
 决策依据见 [decisions.md](decisions.md)，分阶段计划见 [execution-plan.md](execution-plan.md)。
@@ -182,7 +189,7 @@
 | 多租户与行级隔离 | 无 | 无 | **有** | 我们独有，两边都是单机单用户 |
 | 数据库备份与恢复 | 无 | 无 | **有** | 每日转储 + 已演练恢复 |
 | PWA / 离线外壳 | 无 | 无 | **有** | — |
-| OpenAPI 文档 | 有 | 无 | **无** | 契约有 JSON Schema，但 66 条 HTTP 路由没有机器可读描述 |
+| OpenAPI 文档 | 有 | 无 | **有** | OpenAPI 3.1，网关自己在 `GET /v1/openapi.json` 上供（走会话鉴权：它是整个攻击面的地图）。**不是手抄的静态文件** —— 见 [api.md](api.md)：漂移测试断言描述的路由集合 == 实际注册的集合，二进制在供出文档前还会拿活的 mux 复核一遍。路径参数、operationId、命令 kind 枚举、settings 段与通知渠道枚举、以及写路由的 403 都是从代码派生的 |
 | 插件 / 扩展 | 有 | 有 | **不适用** | 已决定砍掉，理由见 [plugins-not-ported.md](plugins-not-ported.md) |
 | 自签 HTTPS 设置 | 有 | 有 | **不适用** | TLS 在网关与 Caddy 终结，不是租户的事 |
 | 卸载 / 自毁 | 有 | 无 | **不适用** | 单机概念 |
