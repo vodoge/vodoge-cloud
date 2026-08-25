@@ -2168,6 +2168,8 @@ test("a column with a control in it never drops off the phone", () => {
     }
   }
   assert.deepEqual(hidden, [], "a control is being hidden on a phone, not a reading");
+});
+
 /**
  * Recipes that ask for a border width and never say what kind of border.
  *
@@ -2573,6 +2575,9 @@ test("the card policy requests are the ones this component always sent", () => {
 
   // The native dialog is gone, and with it the one string it could show.
   assert.ok(!/window\.confirm/.test(codeOnly(source)), "window.confirm is back");
+});
+
+/**
  * Counting call sites, not imports, for the reason the overview's version of
  * this gives: an import survives the deletion of the thing it was wired to.
  *

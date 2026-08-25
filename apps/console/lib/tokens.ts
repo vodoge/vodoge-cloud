@@ -1032,7 +1032,7 @@ export const PWA = {
    * because the browser's own toolbar already occupies that strip.
    */
   install: {
-    bar: "flex flex-wrap items-center gap-x-s3 gap-y-s2 border-b border-line bg-surface-raised px-s3 py-s2 text-sm sm:px-s5",
+    bar: "flex flex-wrap items-center gap-x-s3 gap-y-s2 border-0 border-b border-solid border-line bg-surface-raised px-s3 py-s2 text-sm sm:px-s5",
     text: "flex flex-wrap items-baseline gap-x-s2 gap-y-s1",
     title: "font-semibold text-fg",
     hint: "text-fg-muted",
@@ -1047,7 +1047,7 @@ export const PWA = {
    * number above it is already out of date.
    */
   connection: {
-    bar: "fixed inset-x-0 bottom-0 z-20 border-t border-bad bg-bad-wash shadow-lg",
+    bar: "fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-bad bg-bad-wash shadow-lg",
     inner:
       "mx-auto flex w-full max-w-page flex-wrap items-center gap-x-s3 gap-y-s1 px-s3 py-s3 text-sm sm:px-s5",
     mark: "size-s2 shrink-0 rounded-pill bg-bad",
