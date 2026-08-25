@@ -11,10 +11,12 @@ import { cn } from "./cn.ts";
 import * as TOKENS from "./tokens.ts";
 import {
   BUTTON,
+  CARD_POLICY_CONFIRMATIONS,
   CLASSES_NEEDING_AN_ANCESTOR,
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
+  CONFIRMED_WRITES,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
@@ -50,6 +52,8 @@ import {
   assertConsequence,
   badgeClass,
   buttonClass,
+  cardPolicyGuardFor,
+  cardPolicyPatch,
   consequenceProblem,
   navState,
   rootTokenValues,
@@ -213,8 +217,17 @@ type Literal = { readonly start: number; readonly text: string };
  * `${…}` skipped as well, or every interpolation reads as a broken class name.
  */
 function scan(source: string): { masked: string; code: string; literals: Literal[] } {
-  const masked = [...source];
-  const code = [...source];
+  // 🔴 `split("")`, never `[...source]`. Every index this function is handed or
+  // hands out — `indexOf`, a regex match index, `source.length` — counts UTF-16
+  // units, and spreading a string splits it by *code points*. One emoji in a
+  // comment therefore made the two working arrays a element shorter from that
+  // point on, and every blank after it landed one character early: the closing
+  // quote of a string was erased while the first character of its contents was
+  // kept. Six `.tsx` files already carry one of these in a comment, so this was
+  // live, and it is the kind of defect that shows up as a brace count rather
+  // than as anything readable.
+  const masked = source.split("");
+  const code = source.split("");
   const literals: Literal[] = [];
   const blank = (target: string[], from: number, to: number) => {
     for (let i = from; i < to; i++) if (target[i] !== "\n") target[i] = " ";
@@ -454,6 +467,10 @@ const NOT_A_RECIPE = new Set([
   "CONFIRM_LABEL_KEYS",
   "CONFIRM_MIN_CONSEQUENCE",
   "REDACTED_SECRET",
+  // Message keys and function names: which dialog an edit needs, and which
+  // writes are only allowed to happen after somebody answered one.
+  "CARD_POLICY_CONFIRMATIONS",
+  "CONFIRMED_WRITES",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -792,6 +809,35 @@ test("the source scanner keeps its place in every file it reads", () => {
   assert.deepEqual(broken, [], "the scanner lost track; the guards built on it are unreliable");
 });
 
+/**
+ * And it keeps its place past a character outside the basic plane.
+ *
+ * A red circle is one code point and two UTF-16 units. Every index the scanner
+ * works with counts units, so building its working copy by spreading the string
+ * — which splits by code points — shifted everything after the first emoji by
+ * one, and each blank after that landed a character early: the closing quote of
+ * a literal erased, the first character of its contents left behind. Six `.tsx`
+ * files already have one of these in a comment.
+ *
+ * It surfaced as an unbalanced brace count in the check above, which is the
+ * only reason it was found at all — nothing else built on `scan` would have
+ * said anything, they would just have been reading a mask that was wrong from
+ * the first emoji onwards.
+ */
+test("the scanner keeps its place past a character outside the basic plane", () => {
+  const source = 'const a = "\u{1F534}";\nconst b = { c: "dd" };\n';
+  const { masked, code } = scan(source);
+  const at = source.indexOf('"dd"');
+
+  assert.equal(masked.slice(at, at + 4), '"  "', "a literal was blanked one character early");
+  assert.equal(code.slice(at, at + 4), '"dd"', "the code view lost its place");
+  assert.equal(
+    (masked.match(/\{/g) ?? []).length,
+    (masked.match(/\}/g) ?? []).length,
+    "the mask no longer balances, which is how this was found",
+  );
+});
+
 /* ── Nothing escapes the guards ──────────────────────────────────────── */
 
 /**
@@ -1013,7 +1059,20 @@ test("the old ui barrel still exports every name its ten importers ask for", () 
   }
 
   assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
-  assert.equal(importers.length, 10, `${importers.length} pages import the barrel, not ten`);
+
+  // A bound rather than the ten it started at. Ten was right on the day the
+  // barrel was sealed and is wrong the moment any of the seven page cards lands
+  // — T014 took `/inbox` and `/inbox/[peer]` off it, so it is eight — and a
+  // count that every card has to edit is a count that produces seven merge
+  // conflicts and says nothing. What has to stay true is both ends: above zero,
+  // or the regex broke and this test is measuring nothing; at or below ten, or
+  // a page has started importing the compatibility layer again, which is the
+  // direction nothing should be moving in.
+  assert.ok(importers.length > 0, "no page imports the barrel: the import regex has broken");
+  assert.ok(
+    importers.length <= 10,
+    `${importers.length} pages import the barrel; it was ten and only goes down`,
+  );
 });
 
 /**
@@ -1485,6 +1544,117 @@ test("the confirmation dialog cannot be given a consequence it does not have", (
   }
 });
 
+/* ── And the confirmation is in front of the write ───────────────────────
+ *
+ * The dialog existing is not the same as the dialog being in the way. Every
+ * guard above stays green if somebody later wires the control straight back to
+ * the request: the component is still imported, the copy is still in both
+ * catalogues, the consequence still passes its own rule. This board has been
+ * here before — T004's three assertions were false greens because
+ * `page.contains("guardFor(command)")` also matches `function guardFor(command)`.
+ *
+ * So the rule is about the call site: the function that performs the write has
+ * to be reachable from an `onConfirm` and unreachable from an `onClick` or an
+ * `onSubmit`. Comments are stripped before any of it is read, so naming the
+ * function in a comment satisfies nothing.
+ */
+
+/** Every `attribute={…}` expression in a file, comments already gone. */
+function attributeExpressions(source: string, attribute: string): string[] {
+  const { masked, code } = scan(source);
+  const out: string[] = [];
+  for (const match of masked.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*`, "g"))) {
+    const at = match.index + match[0].length;
+    if (masked[at] !== "{") continue;
+    const close = closingBracket(masked, at);
+    if (close === -1) continue;
+    out.push(code.slice(at, close + 1));
+  }
+  return out;
+}
+
+/** The body of `function name(…) { … }`, comments already gone. */
+function functionBody(source: string, name: string): string | null {
+  const { masked, code } = scan(source);
+  const declared = new RegExp(`\\bfunction\\s+${name}\\s*\\(`);
+  const at = masked.search(declared);
+  if (at === -1) return null;
+  const open = masked.indexOf("{", masked.indexOf(")", at));
+  if (open === -1) return null;
+  const close = closingBracket(masked, open);
+  return close === -1 ? null : code.slice(open, close + 1);
+}
+
+test("a dangerous write is reachable only from a confirmation", () => {
+  const notDeclared: string[] = [];
+  const notAWrite: string[] = [];
+  const notConfirmed: string[] = [];
+  const alsoDirect: string[] = [];
+
+  for (const [relative, actions] of Object.entries(CONFIRMED_WRITES)) {
+    const source = readSource(relative);
+    assert.ok(
+      scan(source).code.includes("<ConfirmDialog"),
+      `${relative} renders no confirmation dialog at all`,
+    );
+
+    const confirmed = attributeExpressions(source, "onConfirm");
+    assert.ok(confirmed.length > 0, `${relative}: nothing is wired to onConfirm`);
+    const direct = [
+      ...attributeExpressions(source, "onClick"),
+      ...attributeExpressions(source, "onSubmit"),
+      // The defect this file actually had: a tick and a picker that wrote to
+      // the whole fleet from their own `onChange`, with nothing asked.
+      ...attributeExpressions(source, "onChange"),
+    ];
+
+    for (const name of actions) {
+      const body = functionBody(source, name);
+      if (body === null) {
+        notDeclared.push(`${relative}: ${name}`);
+        continue;
+      }
+      // It has to be the thing that talks to the gateway, or naming it here
+      // proves nothing about the request.
+      if (!/fetch\s*\(/.test(body) || !/method:\s*"(POST|PUT|DELETE)"/.test(body)) {
+        notAWrite.push(`${relative}: ${name}`);
+      }
+
+      const mentions = new RegExp(`\\b${name}\\b`);
+      if (!confirmed.some((expression) => mentions.test(expression))) {
+        notConfirmed.push(`${relative}: ${name}`);
+      }
+      if (direct.some((expression) => mentions.test(expression))) {
+        alsoDirect.push(`${relative}: ${name}`);
+      }
+    }
+
+    // And nothing *else* in the file writes either. Without this the rule only
+    // covers the functions somebody remembered to list, and a second mutating
+    // `fetch` written straight into a handler passes every line above.
+    const mutations = /method:\s*"(POST|PUT|DELETE)"/g;
+    const inFile = (scan(source).code.match(mutations) ?? []).length;
+    const inConfirmed = actions.reduce(
+      (total, name) => total + ((functionBody(source, name) ?? "").match(mutations) ?? []).length,
+      0,
+    );
+    assert.equal(
+      inConfirmed,
+      inFile,
+      `${relative} sends ${inFile} mutating requests and ${inConfirmed} are behind the dialog`,
+    );
+  }
+
+  assert.deepEqual(notDeclared, [], "a write named in CONFIRMED_WRITES no longer exists");
+  assert.deepEqual(notAWrite, [], "this function no longer performs the request it is listed for");
+  assert.deepEqual(notConfirmed, [], "a write nothing asks about before it happens");
+  assert.deepEqual(
+    alsoDirect,
+    [],
+    "a control calls the write directly, so the dialog is decoration",
+  );
+});
+
 /* ── A stored secret ─────────────────────────────────────────────────────── */
 
 /**
@@ -1865,6 +2035,311 @@ test("the overview stays a read-only server component", () => {
     (code.match(/\bt\("[^"]+",\s*locale\b/g) ?? []).length,
     "a t() call on this page is missing its locale argument",
   );
+});
+
+/* ── The device list, and the narrow-screen table pattern ─────────────────
+ *
+ * This page holds the two widest tables in the console — nine columns of ids,
+ * addresses and timestamps, then eight of IMEIs and ICCIDs — so it is where the
+ * pattern the six page cards after it copy has to be shown working. The pattern
+ * itself is `TABLE.cellSecondary` and was sealed with `components/ui/table.tsx`;
+ * what is checked here is the part a page gets wrong.
+ */
+
+type Column = { readonly attributes: string; readonly contents: string };
+
+/**
+ * The columns of each `<Table>` in a file: the header cells in order, and the
+ * body cells in order.
+ *
+ * A regex over the whole file cannot answer the question that matters, which is
+ * whether the *same* column is marked in both rows. `secondary` on a header and
+ * `secondary` on a body cell are two different columns as easily as one, and a
+ * count of each would be equal either way — which is a check that passes while
+ * the header of one column and the body of another disappear on a phone,
+ * leaving a table whose remaining headings name the wrong values.
+ */
+function tableColumns(source: string): { headers: Column[]; cells: Column[] }[] {
+  const { masked, code } = scan(source);
+  const tables: { headers: Column[]; cells: Column[] }[] = [];
+  const opened: { name: string; start: number; end: number }[] = [];
+
+  for (const match of masked.matchAll(/<(Table|TableHeaderCell|TableCell)\b/g)) {
+    const start = match.index;
+    let depth = 0;
+    let end = -1;
+    for (let i = start + match[0].length; i < masked.length; i++) {
+      const ch = masked[i];
+      if ("({[".includes(ch)) depth += 1;
+      else if (")}]".includes(ch)) depth -= 1;
+      else if (ch === ">" && depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) continue;
+    opened.push({ name: match[1], start, end });
+  }
+
+  for (const [index, tag] of opened.entries()) {
+    if (tag.name === "Table") {
+      tables.push({ headers: [], cells: [] });
+      continue;
+    }
+    const table = tables[tables.length - 1];
+    if (!table) continue;
+    // A cell's contents run to whatever opens next, or to the end of the body.
+    const next = opened[index + 1];
+    const bodyEnd = code.indexOf("</TableBody>", tag.end);
+    const stop = Math.min(
+      next ? next.start : code.length,
+      bodyEnd === -1 ? code.length : bodyEnd,
+    );
+    const column = {
+      attributes: code.slice(tag.start, tag.end + 1),
+      contents: code.slice(tag.end + 1, stop),
+    };
+    if (tag.name === "TableHeaderCell") table.headers.push(column);
+    else table.cells.push(column);
+  }
+  return tables;
+}
+
+const NARROW_SCREEN_TABLES = ["app/devices/page.tsx", "components/card-policies.tsx"];
+
+test("a column that drops off the phone drops off in its header and its body alike", () => {
+  const mismatched: string[] = [];
+  let checked = 0;
+
+  for (const relative of NARROW_SCREEN_TABLES) {
+    const tables = tableColumns(readSource(relative));
+    assert.ok(tables.length > 0, `${relative} renders no <Table>`);
+    for (const [index, table] of tables.entries()) {
+      const secondary = (column: Column) => /\bsecondary\b/.test(column.attributes);
+      const headers = table.headers.map(secondary);
+      const cells = table.cells.map(secondary);
+      if (headers.length !== cells.length || headers.some((on, at) => on !== cells[at])) {
+        mismatched.push(`${relative} table ${index}: ${headers.join()} vs ${cells.join()}`);
+      }
+      // A table where nothing is secondary is a table that scrolls sideways on
+      // a phone for every one of its columns, and would pass the line above
+      // without the pattern having been applied at all.
+      assert.ok(
+        headers.some(Boolean),
+        `${relative} table ${index} drops no column on a phone`,
+      );
+      checked += headers.length;
+    }
+  }
+
+  assert.deepEqual(mismatched, [], "a column is secondary in one row and not the other");
+  // The two tables on the device page are nine and eight columns; the card
+  // policy table is five. A count here so that a table which stops being found
+  // fails rather than quietly reducing this test to nothing.
+  assert.equal(checked, 22, `${checked} columns found, not the 22 these three tables have`);
+});
+
+test("a column with a control in it never drops off the phone", () => {
+  // Hiding a reading below `sm` is deprioritising context. Hiding a link, a
+  // tick, a picker or a button is removing the ability to do the thing, on the
+  // device where it is hardest to get it back.
+  const controls = /<(Link|Button|Select|Checkbox|InlineField|RowActions|a|button|select|input)\b/;
+  const hidden: string[] = [];
+  for (const relative of NARROW_SCREEN_TABLES) {
+    for (const table of tableColumns(readSource(relative))) {
+      for (const cell of table.cells) {
+        if (!/\bsecondary\b/.test(cell.attributes)) continue;
+        if (controls.test(cell.contents)) hidden.push(`${relative}: ${cell.attributes}`);
+      }
+    }
+  }
+  assert.deepEqual(hidden, [], "a control is being hidden on a phone, not a reading");
+});
+
+/**
+ * Every part of the page comes from the shared components, at the point of use.
+ *
+ * Counting call sites rather than imports, for the reason the overview's
+ * version of this says: an import survives the deletion of the thing it was
+ * wired to.
+ */
+test("the device list is drawn by the shared components, at the point of use", () => {
+  const code = codeOnly(readSource("app/devices/page.tsx"));
+  const uses = (pattern: RegExp) => (code.match(pattern) ?? []).length;
+
+  assert.equal(uses(/<Table\b/g), 2, "the fleet table and the module table");
+  // Seventeen, which is what this page actually has. T021 reported nineteen and
+  // T030 recounted it; the number is here so that a column added without a
+  // narrow-screen decision fails rather than arrives.
+  assert.equal(uses(/<TableHeaderCell\b/g), 17, "nine columns then eight");
+  assert.equal(uses(/<CardEmpty\b/g), 2, "both empty cases still say what would be here");
+  assert.equal(uses(/<Card\b/g), 3, "devices, modules, card policies");
+  // Preflight is off, so a bare `<table>` is not merely a second implementation:
+  // the legacy stylesheet would style it, which is the mechanism by which two
+  // implementations drift apart.
+  assert.equal(uses(/<(table|thead|tbody|tr|th|td)\b/g), 0, "hand-written table markup is back");
+  assert.equal(uses(/<section\b/g), 0, "a card was written by hand beside the components");
+
+  // The page reads nothing on the client and the locale is the server's.
+  assert.ok(!/"use client"/.test(code), "the device list stopped being a server component");
+  assert.match(code, /await getRequestLocale\(\)/, "the locale is no longer resolved server-side");
+  assert.equal(
+    (code.match(/\bt\(/g) ?? []).length,
+    (code.match(/\bt\([^,()]+,\s*locale\b/g) ?? []).length,
+    "a t() call on this page is missing its locale argument",
+  );
+});
+
+/**
+ * The four pills this page drew by hand.
+ *
+ * `class="badge badge-warn"` beside a `StateBadge` the same file already
+ * imports is how one console ends up with two ideas of what "warn" looks like.
+ * The tones are asserted, not just the count: turning the backlog pill neutral
+ * or giving the roaming pill no tone at all keeps every count correct.
+ */
+test("the four hand-written pills on the device list are the shared badge", () => {
+  const code = codeOnly(readSource("app/devices/page.tsx"));
+  const rendered = code.match(/<Badge\b[^>]*/g) ?? [];
+  assert.equal(rendered.length, 4, "four hand-written pills, four shared badges");
+
+  const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);
+  assert.deepEqual(
+    tones,
+    ["warn", "warn", "neutral", "warn"],
+    "backlog, not-manageable, bearer, roaming — the tones the old classes had",
+  );
+  // A count and a category are not states, so they take no status dot; the two
+  // that qualify a module's condition keep theirs.
+  assert.equal(
+    rendered.filter((tag) => /dot=\{false\}/.test(tag)).length,
+    2,
+    "the backlog count and the bearer are not states",
+  );
+  assert.equal(
+    (code.match(/<StateBadge\b/g) ?? []).length,
+    2,
+    "the device state and the module state, which were already the component",
+  );
+
+  const handWritten = classListsIn(code).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
+  assert.deepEqual(handWritten, [], "a badge is still being drawn from the old stylesheet");
+});
+
+/* ── The card policy table ───────────────────────────────────────────────
+ *
+ * Five edits, every one of them a `PUT` or a `DELETE` that reaches every device
+ * in the tenant, and until this card not one of them asked anything. The guard
+ * that the request cannot be reached except through the dialog is the shared
+ * `CONFIRMED_WRITES` one above. These are about the other half: that the dialog
+ * has something true to say, and that the request it finally sends is the
+ * request this component always sent.
+ */
+
+test("every card policy edit has a dialog, and every dialog has both halves", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const guards = Object.keys(CARD_POLICY_CONFIRMATIONS);
+  assert.ok(guards.length > 0, "an empty table confirms nothing");
+
+  const missing: string[] = [];
+  for (const [guard, keys] of Object.entries(CARD_POLICY_CONFIRMATIONS)) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      if (typeof catalogue[keys.title] !== "string") missing.push(`${language} ${keys.title}`);
+      if (typeof catalogue[keys.consequence] !== "string") {
+        missing.push(`${language} ${keys.consequence}`);
+      }
+    }
+    // The consequence has to be on the list the rule is run over, or it is a
+    // paragraph nothing has ever read. That list is what catches "写了中文,
+    // 英文忘了" and "this is a question, not a consequence".
+    assert.ok(
+      (CONFIRM_CONSEQUENCE_KEYS as readonly string[]).includes(keys.consequence),
+      `${guard}'s consequence is not in CONFIRM_CONSEQUENCE_KEYS, so no rule is run over it`,
+    );
+  }
+  assert.deepEqual(missing, [], "a card policy dialog has no copy in one of the languages");
+
+  // Every guard the function can return has an entry, and every entry is
+  // reachable. A sixth kind of edit whose copy was never written fails here.
+  const returned = new Set(
+    [
+      cardPolicyGuardFor({ kind: "cellular", enabled: false }),
+      cardPolicyGuardFor({ kind: "cellular", enabled: true }),
+      cardPolicyGuardFor({ kind: "vertical", from: "cn", to: "intl" }),
+      cardPolicyGuardFor({ kind: "add" }),
+      cardPolicyGuardFor({ kind: "remove" }),
+    ].filter((guard): guard is NonNullable<typeof guard> => guard !== null),
+  );
+  assert.deepEqual([...returned].sort(), guards.sort(), "a dialog nobody opens, or an edit with none");
+});
+
+test("an edit that changes nothing sends nothing, and null never means send", () => {
+  // The tick, both ways round. Allowing data is not the harmless direction: a
+  // card blocked to stop it billing was blocked on purpose.
+  assert.equal(cardPolicyGuardFor({ kind: "cellular", enabled: false }), "cellularOff");
+  assert.equal(cardPolicyGuardFor({ kind: "cellular", enabled: true }), "cellularOn");
+  assert.equal(cardPolicyGuardFor({ kind: "vertical", from: "cn", to: "intl" }), "vertical");
+  assert.equal(cardPolicyGuardFor({ kind: "add" }), "add");
+  assert.equal(cardPolicyGuardFor({ kind: "remove" }), "remove");
+
+  // The only `null`, and it means "there is nothing to send" — a picker put
+  // back on the value it started from. The component treats `null` as a dead
+  // end rather than as permission, which is what makes the dialog the only way
+  // out of `propose`.
+  assert.equal(cardPolicyGuardFor({ kind: "vertical", from: "cn", to: "cn" }), null);
+
+  const propose = functionBody(readSource("components/card-policies.tsx"), "propose");
+  assert.ok(propose, "the single entry point every control goes through is gone");
+  assert.match(propose, /cardPolicyGuardFor\(/, "propose no longer asks which dialog is needed");
+  assert.match(propose, /if\s*\(guard === null\)\s*return/, "a null guard stopped being a dead end");
+  for (const escape of [/fetch\s*\(/, /\bsave\s*\(/, /\bremovePolicy\s*\(/]) {
+    assert.ok(!escape.test(propose), `propose can reach ${escape} without a dialog`);
+  }
+});
+
+/**
+ * The request is the one this component always sent.
+ *
+ * The confirmation is the only thing this card was allowed to add. The body of
+ * the `PUT` is four fields with a two-step fallback each — the patch, then the
+ * row being edited, then the same default the gateway would apply — and `??`
+ * rather than `||` is load-bearing on the first of them: `false || existing` is
+ * how "block this card" turns into "leave it as it was".
+ */
+test("the card policy requests are the ones this component always sent", () => {
+  const source = readSource("components/card-policies.tsx");
+  const save = functionBody(source, "save");
+  const removePolicy = functionBody(source, "removePolicy");
+  assert.ok(save, "the function that sends the PUT is gone");
+  assert.ok(removePolicy, "the function that sends the DELETE is gone");
+
+  assert.match(save, /fetch\(`\/v1\/cards\/\$\{iccid\}\/policy`,/);
+  assert.match(save, /method:\s*"PUT"/);
+  assert.match(save, /"content-type":\s*"application\/json"/);
+  assert.match(save, /cellular_enabled:\s*patch\.cellularEnabled \?\? existing\?\.cellularEnabled \?\? true/);
+  assert.match(save, /vertical:\s*patch\.vertical \?\? existing\?\.vertical \?\? "cn"/);
+  assert.match(save, /apn:\s*patch\.apn \?\? existing\?\.apn \?\? null/);
+  assert.match(save, /note:\s*patch\.note \?\? existing\?\.note \?\? ""/);
+  assert.ok(!/\|\|\s*existing/.test(save), "a ?? became a ||, and false is not absent");
+
+  assert.match(removePolicy, /fetch\(`\/v1\/cards\/\$\{iccid\}\/policy`,\s*\{\s*method:\s*"DELETE"\s*\}/);
+
+  // And the patch each edit turns into is the one the old call sites passed:
+  // `{ cellularEnabled }` from the tick, `{ vertical }` from the picker, and
+  // both from the add form, which is what a card with no row has to be given.
+  assert.deepEqual(cardPolicyPatch({ kind: "cellular", enabled: false }), {
+    cellularEnabled: false,
+  });
+  assert.deepEqual(cardPolicyPatch({ kind: "cellular", enabled: true }), { cellularEnabled: true });
+  assert.deepEqual(cardPolicyPatch({ kind: "vertical", from: "cn", to: "intl" }), {
+    vertical: "intl",
+  });
+  assert.deepEqual(cardPolicyPatch({ kind: "add" }), { cellularEnabled: true, vertical: "cn" });
+
+  // The native dialog is gone, and with it the one string it could show.
+  assert.ok(!/window\.confirm/.test(codeOnly(source)), "window.confirm is back");
 });
 
 /* ── The helpers ─────────────────────────────────────────────────────── */
