@@ -1,5 +1,14 @@
 import Link from "next/link";
-import { Card, EmptyState, StateBadge } from "@/components/ui";
+import { Badge, StateBadge } from "@/components/ui/badge";
+import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import { CardPolicies } from "@/components/card-policies";
 import {
   fetchCardPolicies,
@@ -10,10 +19,43 @@ import {
   type ModemRow,
 } from "@/lib/catalog";
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
-import {t, type Locale } from "@/lib/i18n";
+import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import { CARD_POLICY_CONFIRMATIONS, PAGE, TABLE, type CardPolicyGuard } from "@/lib/tokens";
 
+/**
+ * The fleet, its modules, and the policies that follow a SIM between them.
+ *
+ * ## The narrow-screen table pattern is settled on this page
+ *
+ * This is the widest table in the console — nine columns of UUIDs, addresses
+ * and timestamps — so it is where the pattern the six page cards after this one
+ * copy had to be proved. It is not invented here: `components/ui/table.tsx` was
+ * sealed with it, and this page is the first caller.
+ *
+ * 1. The table scrolls sideways **inside its card**, never taking the page with
+ *    it. A card that scrolls leaves the page's own layout alone.
+ * 2. A column that is context rather than the answer carries `secondary`, on
+ *    **both** its header cell and its body cell, and drops off below `sm`.
+ * 3. 🔴 **A column containing a control is never `secondary`.** Hiding a link,
+ *    a tick, a picker or a button on a phone is not deprioritising context; it
+ *    is removing the ability to do the thing. Every column dropped below is a
+ *    reading.
+ *
+ * Measured at 390 × 844, not reasoned about: with the widest real content this
+ * page can hold — a 36-character device id, a public address, a 20-digit ICCID
+ * — the page itself does not overflow, and the four columns left on the devices
+ * table fit without the card needing to scroll either. See
+ * `notes/T009-devices-table-pattern.md`.
+ *
+ * ## What did not change
+ *
+ * The three fetches, the failure case, both empty cases and every value shown
+ * are what they were. `locale` is resolved on the server and passed down, never
+ * read from a cookie in an effect — this console has shipped that bug twice and
+ * it renders the server's HTML in the default language every time.
+ */
 export default async function DevicesPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
@@ -35,175 +77,190 @@ export default async function DevicesPage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("devices.title", locale)}</h1>
-          <p className="page-desc">{t("devices.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("devices.title", locale)}</h1>
+          <p className={PAGE.description}>{t("devices.desc", locale)}</p>
         </div>
       </div>
 
-      {loadError ? <p className="danger">{t("devices.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("devices.loadError", locale)}</p> : null}
 
-      <Card bodyless>
-        {devices.length === 0 ? (
-          <EmptyState
-            title={t("empty.devices.title", locale)}
-            desc={t("empty.devices.desc", locale)}
-          />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("devices.colName", locale)}</th>
-                  <th>{t("devices.colId", locale)}</th>
-                  <th>{t("devices.colState", locale)}</th>
-                  <th>{t("devices.colVersionShort", locale)}</th>
-                  <th>{t("devices.colQueue", locale)}</th>
-                  <th>{t("devices.colPublicIp", locale)}</th>
-                  <th>{t("devices.colHostCpu", locale)}</th>
-                  <th>{t("devices.colHostMemory", locale)}</th>
-                  <th>{t("devices.colLastSeen", locale)}</th>
-                </tr>
-              </thead>
-              <tbody>
+      <div className={PAGE.stack}>
+        <Card bodyless>
+          {devices.length === 0 ? (
+            <CardEmpty
+              title={t("empty.devices.title", locale)}
+              description={t("empty.devices.desc", locale)}
+            />
+          ) : (
+            <Table>
+              <TableHead>
+                <TableRow head>
+                  <TableHeaderCell>{t("devices.colName", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>{t("devices.colId", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("devices.colState", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>
+                    {t("devices.colVersionShort", locale)}
+                  </TableHeaderCell>
+                  <TableHeaderCell>{t("devices.colQueue", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>
+                    {t("devices.colPublicIp", locale)}
+                  </TableHeaderCell>
+                  <TableHeaderCell secondary>{t("devices.colHostCpu", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>
+                    {t("devices.colHostMemory", locale)}
+                  </TableHeaderCell>
+                  <TableHeaderCell>{t("devices.colLastSeen", locale)}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {devices.map((device) => (
-                  <tr key={device.id}>
-                    <td>
-                      <Link href={`/devices/${device.id}`}>{device.name}</Link>
-                    </td>
-                    <td className="mono faint">{device.id}</td>
-                    <td>
+                  <TableRow key={device.id}>
+                    {/* The name is the way in to everything else about this
+                        box, so it is the one column that survives every
+                        breakpoint. */}
+                    <TableCell>
+                      <Link className={TABLE.cellLink} href={`/devices/${device.id}`}>
+                        {device.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {device.id}
+                    </TableCell>
+                    <TableCell>
                       <StateBadge
                         state={device.state}
                         label={t(`state.${device.state}`, locale)}
                       />
-                    </td>
-                    <td className="mono faint">{device.edgeVersion ?? "—"}</td>
-                    <td className="mono">
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {device.edgeVersion ?? "—"}
+                    </TableCell>
+                    <TableCell mono>
                       {/* A backlog is the number worth seeing at a glance:
                           a device that is online and behind looks healthy
-                          everywhere else. */}
+                          everywhere else. That is also why it stays on the
+                          phone while the host readings do not. */}
                       {device.queueRecords === null ? (
                         "—"
                       ) : device.queueRecords > 0 ? (
-                        <span className="badge badge-warn">{device.queueRecords}</span>
+                        <Badge tone="warn" dot={false}>
+                          {device.queueRecords}
+                        </Badge>
                       ) : (
-                        <span className="faint">0</span>
+                        <span className={TABLE.cellFaint}>0</span>
                       )}
-                    </td>
+                    </TableCell>
                     {/* The one fact about the egress path the box cannot
                         work out for itself: every interface it owns has a
                         private address. */}
-                    <td className="mono">{device.publicIp ?? "—"}</td>
-                    <td className="mono">
+                    <TableCell mono secondary>
+                      {device.publicIp ?? "—"}
+                    </TableCell>
+                    <TableCell mono secondary>
                       {device.cpuPercent === null ? "—" : `${device.cpuPercent.toFixed(1)}%`}
-                    </td>
-                    <td className="mono">
+                    </TableCell>
+                    <TableCell mono secondary>
                       <HostMemory
                         used={device.memoryUsedBytes}
                         total={device.memoryTotalBytes}
                       />
-                    </td>
-                    <td className="mono faint">
+                    </TableCell>
+                    <TableCell mono faint>
                       {device.lastSeen
                         ? new Date(device.lastSeen).toISOString().replace("T", " ").slice(0, 19)
                         : t("common.never", locale)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+              </TableBody>
+            </Table>
+          )}
+        </Card>
 
-      <div style={{ marginTop: "var(--s5)" }}>
-        <Card
-          title={t("devices.modems", locale)}
-          note={t("devices.modemsNote", locale)}
-          bodyless
-        >
+        <Card title={t("devices.modems", locale)} note={t("devices.modemsNote", locale)} bodyless>
           {modems.length === 0 ? (
-            <EmptyState
+            <CardEmpty
               title={t("empty.modems.title", locale)}
-              desc={t("empty.modems.desc", locale)}
+              description={t("empty.modems.desc", locale)}
             />
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("modems.colImei", locale)}</th>
-                    <th>{t("modems.colIccid", locale)}</th>
-                    <th>{t("modems.colNetwork", locale)}</th>
-                    <th>{t("modems.colState", locale)}</th>
-                    <th>{t("modems.colSignal", locale)}</th>
-                    <th title={t("modems.qualityHint", locale)}>
-                      {t("modems.colQuality", locale)}
-                    </th>
-                    <th>{t("modems.colSms", locale)}</th>
-                    <th>{t("modems.colSeen", locale)}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {modems.map((modem) => (
-                    <tr key={modem.id}>
-                      <td className="mono">
+            <Table>
+              <TableHead>
+                <TableRow head>
+                  <TableHeaderCell>{t("modems.colImei", locale)}</TableHeaderCell>
+                  {/* The widest value in the console: nineteen or twenty
+                      digits of monospace, and the identity of the
+                      subscription rather than of the module the row is
+                      about. */}
+                  <TableHeaderCell secondary>{t("modems.colIccid", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("modems.colNetwork", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("modems.colState", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("modems.colSignal", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary title={t("modems.qualityHint", locale)}>
+                    {t("modems.colQuality", locale)}
+                  </TableHeaderCell>
+                  <TableHeaderCell secondary>{t("modems.colSms", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>{t("modems.colSeen", locale)}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {modems.map((modem) => (
+                  <TableRow key={modem.id}>
+                    <TableCell mono>
+                      <span className={TABLE.cellPair}>
                         {modem.imei}
                         {/* Visible but not drivable. Before the edge enumerated
                             AT ports as a second path, a module in this state
                             did not appear at all. */}
                         {modem.manageable === false ? (
-                          <span
-                            className="badge badge-warn"
-                            style={{ marginLeft: "var(--s2)" }}
-                            title={t("modems.unmanagedHint", locale)}
-                          >
+                          <Badge tone="warn" title={t("modems.unmanagedHint", locale)}>
                             {t("modems.unmanaged", locale)}
-                          </span>
+                          </Badge>
                         ) : null}
-                      </td>
-                      <td className="mono faint">{modem.iccid ?? "—"}</td>
-                      <td>
-                        <ModemNetwork
-                          home={modem.homePlmn}
-                          serving={modem.servingPlmn}
-                          locale={locale}
-                        />
-                      </td>
-                      <td>
-                        <StateBadge state={modem.state ?? "unknown"} />
-                      </td>
-                      <td className="mono">
-                        {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
-                      </td>
-                      <td className="mono">
-                        <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
-                      </td>
-                      <td>
-                        {/* The bearer the edge resolved. A blank here means the
-                            matrix has no answer for this combination, which is
-                            different from "cannot send". */}
-                        <span className="badge badge-idle">
-                          {modem.smsMt ?? "—"}
-                        </span>
-                      </td>
-                      <td className="mono faint">
-                        {modem.lastSeen
-                          ? new Date(modem.lastSeen).toISOString().replace("T", " ").slice(0, 19)
-                          : t("common.never", locale)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </span>
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {modem.iccid ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <ModemNetwork
+                        home={modem.homePlmn}
+                        serving={modem.servingPlmn}
+                        locale={locale}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <StateBadge state={modem.state ?? "unknown"} />
+                    </TableCell>
+                    <TableCell mono>
+                      {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
+                    </TableCell>
+                    <TableCell mono secondary>
+                      <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
+                    </TableCell>
+                    <TableCell secondary>
+                      {/* The bearer the edge resolved. A blank here means the
+                          matrix has no answer for this combination, which is
+                          different from "cannot send" — and a transport is a
+                          category rather than a state, so it takes no dot. */}
+                      <Badge tone="neutral" dot={false}>
+                        {modem.smsMt ?? "—"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {modem.lastSeen
+                        ? new Date(modem.lastSeen).toISOString().replace("T", " ").slice(0, 19)
+                        : t("common.never", locale)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </Card>
-      </div>
 
-      <div style={{ marginTop: "var(--s5)" }}>
         <Card title={t("cards.title", locale)} note={t("cards.note", locale)}>
           <CardPolicies
             policies={policies}
@@ -228,8 +285,27 @@ export default async function DevicesPage() {
               addFor: t("cards.addFor", locale),
               remove: t("cards.remove", locale),
               failed: t("cards.failed", locale),
-              confirmRemove: t("cards.confirmRemove", locale),
             }}
+            confirmLabels={{
+              question: t("confirm.question", locale),
+              proceed: t("confirm.proceed", locale),
+              cancel: t("confirm.cancel", locale),
+            }}
+            // Resolved from the ledger rather than listed here, so a sixth kind
+            // of edit cannot arrive with its consequence left in English or
+            // left out. The ledger is what `tokens.test.ts` holds to the
+            // consequence rule in both languages.
+            confirmations={
+              Object.fromEntries(
+                Object.entries(CARD_POLICY_CONFIRMATIONS).map(([guard, keys]) => [
+                  guard,
+                  {
+                    title: t(keys.title, locale),
+                    consequence: t(keys.consequence, locale),
+                  },
+                ]),
+              ) as Record<CardPolicyGuard, { title: string; consequence: string }>
+            }
           />
         </Card>
       </div>
@@ -251,18 +327,20 @@ function ModemNetwork({
   serving: string | null;
   locale: Locale;
 }) {
-  if (!home && !serving) return <span className="faint">—</span>;
+  if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
   const identity = home ?? serving!;
   const territory = territoryName(identity);
   const roaming = home !== null && serving !== null && isRoaming(home, serving);
   return (
-    <span>
-      {operatorName(identity)}
-      {territory ? <span className="faint"> · {territory}</span> : null}
+    <span className={TABLE.cellPair}>
+      <span>
+        {operatorName(identity)}
+        {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
+      </span>
       {roaming ? (
-        <span className="badge badge-warn" style={{ marginLeft: "var(--s2)" }}>
+        <Badge tone="warn">
           {t("modems.roaming", locale)} → {operatorName(serving)}
-        </span>
+        </Badge>
       ) : null}
     </span>
   );
@@ -286,16 +364,16 @@ function ModemQuality({
   sinr: number | null;
 }) {
   if (rsrp === null && rsrq === null && sinr === null) {
-    return <span className="faint">—</span>;
+    return <span className={TABLE.cellFaint}>—</span>;
   }
   return (
     <span>
       {rsrp === null ? "—" : `${rsrp}`}
-      <span className="faint"> / </span>
+      <span className={TABLE.cellFaint}> / </span>
       {rsrq === null ? "—" : `${rsrq}`}
-      <span className="faint"> / </span>
+      <span className={TABLE.cellFaint}> / </span>
       {sinr === null ? "—" : `${sinr}`}
-      <span className="faint"> dB</span>
+      <span className={TABLE.cellFaint}> dB</span>
     </span>
   );
 }
@@ -309,7 +387,7 @@ function ModemQuality({
  */
 function HostMemory({ used, total }: { used: number | null; total: number | null }) {
   if (used === null || total === null || total === 0) {
-    return <span className="faint">—</span>;
+    return <span className={TABLE.cellFaint}>—</span>;
   }
   return <span>{Math.round((used / total) * 100)}%</span>;
 }

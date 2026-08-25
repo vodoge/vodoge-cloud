@@ -587,6 +587,27 @@ export const TABLE = {
    */
   cellSecondary: "hidden sm:table-cell",
   /**
+   * A reading and the qualifier on it, in one cell.
+   *
+   * Two cells on the device list are a value with a pill after it — an IMEI
+   * with "not manageable", an operator with "roaming → …". Both used to space
+   * the pill with an inline `marginLeft`, which is a gap written twice, in the
+   * one place no test can read, and on the wrong element: a margin does not
+   * wrap, so at 390px the pill sat past the right edge of its own column.
+   */
+  cellPair: "flex flex-wrap items-center gap-s2",
+  /**
+   * A link inside a cell.
+   *
+   * The old stylesheet's only rule for an anchor is `color: inherit;
+   * text-decoration: none` (`globals.css:162`), so the device name — the one
+   * thing on that page you are meant to click — has been rendering as plain
+   * text with a pointer cursor. Preflight does not restore that when the legacy
+   * layer goes; it hands the browser's own blue-and-underlined default back.
+   * Saying it here is both the migration and the fix.
+   */
+  cellLink: "font-medium text-accent hover:underline",
+  /**
    * The other table shape: a two-column field/value specification.
    *
    * Four tables here are `<th>`-less pairs of a name and a reading — the eSIM
@@ -1120,7 +1141,19 @@ export function assertConsequence(consequence: string): string {
  * control shows above its own button. T011 attaches it to that control's
  * confirmation and adds the seven it has to write.
  */
-export const CONFIRM_CONSEQUENCE_KEYS = ["device.usbnetWarning"] as const;
+export const CONFIRM_CONSEQUENCE_KEYS = [
+  "device.usbnetWarning",
+  /**
+   * The five edits the card policy table can make. Every one of them is a write
+   * that reaches every device in the tenant, and until this card none of the
+   * five asked anything at all — see the note above `CARD_POLICY_CONFIRMATIONS`.
+   */
+  "cards.confirmCellularOff",
+  "cards.confirmCellularOn",
+  "cards.confirmVertical",
+  "cards.confirmAdd",
+  "cards.confirmRemove",
+] as const;
 
 /** The dialog's own chrome, so every confirmation asks in the same words. */
 export const CONFIRM_LABEL_KEYS = [
@@ -1128,6 +1161,142 @@ export const CONFIRM_LABEL_KEYS = [
   "confirm.proceed",
   "confirm.cancel",
 ] as const;
+
+/* ── Editing a card policy is a write to the whole fleet ─────────────────
+ *
+ * `components/card-policies.tsx` has no save button. A tick in a row and a
+ * picker in the next cell each called `save()` from their own `onChange`, and
+ * `save()` is a `PUT` to `/v1/cards/{iccid}/policy` — a policy this console
+ * pushes to every device in the tenant, which is what `cards.note` has always
+ * said in as many words. Clearing that tick takes cellular data away from that
+ * SIM everywhere, with nothing asked first and nothing to undo it but ticking
+ * it again.
+ *
+ * T021's survey of dangerous actions has twenty-three rows and this is not one
+ * of them. T030 found it by reading the file. It is the same defect as seven
+ * commands sharing one question, reached from the other side: there was no
+ * question.
+ *
+ * Every edit this component can make is now the answer to a dialog, and this is
+ * the table of which dialog. Confirming *all five* rather than only the
+ * destructive direction is deliberate, for two reasons:
+ *
+ * - The guard in `tokens.test.ts` is about the call site: the function that
+ *   performs the request has to be reachable from an `onConfirm` and from
+ *   nowhere else. A component with one confirmed path and one unconfirmed path
+ *   into the same `fetch` cannot make that claim, and a guard that is green
+ *   while an unconfirmed path exists is the false green this board has paid for
+ *   six times.
+ * - There is no small edit here. Allowing data on a card starts it billing;
+ *   changing its vertical re-routes it and drops the sessions in flight; adding
+ *   a policy takes the card off every device's defaults. The tick was only the
+ *   loudest of the five.
+ *
+ * ⚠️ **None of this belongs in the design system.** It is here for the reason
+ * `secretInputProps` is: `lib/tokens.ts` was the only file under `lib/` this
+ * card was allowed to edit, and a `.tsx` cannot be tested in this app, so the
+ * alternative was not a better home — it was no test at all. Move it to its own
+ * module the moment a card owns one.
+ */
+
+/** An edit the card policy table can make, before anything has been sent. */
+export type CardPolicyEdit =
+  | { readonly kind: "cellular"; readonly enabled: boolean }
+  | { readonly kind: "vertical"; readonly from: string; readonly to: string }
+  | { readonly kind: "add" }
+  | { readonly kind: "remove" };
+
+/** Which of the five dialogs an edit goes through. */
+export type CardPolicyGuard = keyof typeof CARD_POLICY_CONFIRMATIONS;
+
+/**
+ * The copy for each dialog: what is about to happen, and what it will do.
+ *
+ * Data rather than five call sites choosing their own strings, so that
+ * `tokens.test.ts` can hold every one of them to `consequenceProblem` in both
+ * languages and the page can hand the whole table down without listing it by
+ * hand. A sixth edit added here without its copy is a failing test.
+ */
+export const CARD_POLICY_CONFIRMATIONS = {
+  cellularOff: { title: "cards.confirmCellularOffTitle", consequence: "cards.confirmCellularOff" },
+  cellularOn: { title: "cards.confirmCellularOnTitle", consequence: "cards.confirmCellularOn" },
+  vertical: { title: "cards.confirmVerticalTitle", consequence: "cards.confirmVertical" },
+  add: { title: "cards.confirmAddTitle", consequence: "cards.confirmAdd" },
+  remove: { title: "cards.confirmRemoveTitle", consequence: "cards.confirmRemove" },
+} as const;
+
+/**
+ * The confirmation an edit needs, or `null` when there is nothing to do.
+ *
+ * 🔴 `null` means **send nothing**, and never "send it without asking". That is
+ * the whole shape of the fix: the component's one entry point asks this
+ * question and can only either open a dialog or drop the edit, so there is no
+ * branch left that reaches a `fetch` on its own. The only `null` case today is
+ * a picker that ends up on the value it started from, which a browser does not
+ * even fire — but a re-render that resets a control is exactly how one would
+ * arrive, and a no-op `PUT` on the whole fleet is not a no-op.
+ */
+export function cardPolicyGuardFor(edit: CardPolicyEdit): CardPolicyGuard | null {
+  switch (edit.kind) {
+    case "cellular":
+      // Both directions ask. Allowing data is not the harmless one: a card
+      // blocked to stop it billing is a card somebody blocked on purpose.
+      return edit.enabled ? "cellularOn" : "cellularOff";
+    case "vertical":
+      return edit.to === edit.from ? null : "vertical";
+    case "add":
+      return "add";
+    case "remove":
+      return "remove";
+  }
+}
+
+/**
+ * The fields an edit changes. Everything else in the request body comes from
+ * the row being edited, exactly as it did before.
+ *
+ * `remove` is not a parameter: it is a `DELETE`, and typing it out of this
+ * function is cheaper than a branch that returns something nobody sends.
+ */
+export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }>): {
+  cellularEnabled?: boolean;
+  vertical?: string;
+} {
+  switch (edit.kind) {
+    case "cellular":
+      return { cellularEnabled: edit.enabled };
+    case "vertical":
+      return { vertical: edit.to };
+    case "add":
+      // What the "add policy" form has always sent for a card that has none.
+      return { cellularEnabled: true, vertical: "cn" };
+  }
+}
+
+/**
+ * Writes that may only happen after somebody answered the question.
+ *
+ * Keyed by file, valued by the function that performs the request. The check in
+ * `tokens.test.ts` is deliberately about **where the call site is**, not about
+ * whether a dialog exists somewhere in the file: each name here has to perform
+ * a mutating `fetch`, has to be reachable from a `ConfirmDialog`'s `onConfirm`,
+ * and must **not** be named in any `onClick` or `onSubmit`.
+ *
+ * That last clause is the whole point. A file can keep its dialog, keep its
+ * confirmation copy, and have somebody wire the button straight back to the
+ * function during a later change; every other guard in this repository stays
+ * green through that, because the dialog is still *defined*. This board has
+ * already been bitten once by an assertion that matched a definition rather
+ * than a use (T004), so the rule here is the use.
+ *
+ * Only the card policy table is listed. The other dangerous actions T030 found
+ * live in files this card could not edit, and a name added here for a function
+ * that does not exist yet is a failing test rather than a reminder — which is
+ * the right way round: the card that writes the confirmation adds the line.
+ */
+export const CONFIRMED_WRITES = {
+  "components/card-policies.tsx": ["save", "removePolicy"],
+} as const;
 
 /* ── Secrets that are already stored ─────────────────────────────────────── */
 
@@ -1207,11 +1376,13 @@ export function secretInputProps(value: unknown): SecretInputProps {
  */
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
+  "app/devices/page.tsx",
   "app/layout.tsx",
   "app/login/page.tsx",
   "app/not-found.tsx",
   "app/not-a-tenant/page.tsx",
   "app/page.tsx",
+  "components/card-policies.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
@@ -1403,7 +1574,6 @@ export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
  */
 export const UNMIGRATED_SOURCES = [
   "app/devices/[deviceId]/page.tsx",
-  "app/devices/page.tsx",
   "app/inbox/[peer]/page.tsx",
   "app/inbox/page.tsx",
   "app/journal/page.tsx",
@@ -1413,7 +1583,6 @@ export const UNMIGRATED_SOURCES = [
   "app/sessions/page.tsx",
   "app/settings/page.tsx",
   "app/unknown-tenant/page.tsx",
-  "components/card-policies.tsx",
   "components/conversation.tsx",
   "components/device-admin.tsx",
   "components/device-console.tsx",
