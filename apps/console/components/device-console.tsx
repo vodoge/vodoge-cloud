@@ -13,7 +13,7 @@ import {
   type UssdRequest,
   type UssdStageLabelKey,
 } from "@/lib/catalog";
-import { DEFAULT_LOCALE, isLocale, LOCALE_COOKIE, t, type Locale } from "@/lib/i18n";
+import { t, type Locale } from "@/lib/i18n";
 import { operatorName } from "@/lib/plmn";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 
@@ -152,10 +152,34 @@ export function DeviceConsole({
   deviceId,
   modems,
   labels,
+  locale,
 }: {
   deviceId: string;
   modems: ModemRow[];
   labels: Labels;
+  /**
+   * The locale of the request, resolved on the server.
+   *
+   * Almost everything drawn here arrives already translated in `labels`, which
+   * the page renders per request. The exception was the one sentence the page
+   * cannot render for this component, because it depends on something the
+   * server does not know: whether the session may write. That sentence was
+   * looked up against a `useState<Locale>(DEFAULT_LOCALE)` that only became
+   * the real locale inside an effect -- after hydration. The server runs no
+   * effects and has no such state, so the HTML it sent said the default
+   * language every time: an English request shipped `<html lang="en">` with a
+   * Chinese read-only notice inside it, and the browser quietly corrected it on
+   * mount. That is why it went unnoticed for so long. Reading the live DOM
+   * shows the corrected text; only fetching the response without executing
+   * JavaScript shows what was actually served.
+   *
+   * Taking the locale as a prop -- the same fix EsimPanel already carries
+   * (T066) -- is what removes it, because a prop exists before the first
+   * render. The permission still resolves after mount, and it has to: nothing
+   * on the server knows it. What changes is that the sentence it produces is
+   * now in the language that was asked for.
+   */
+  locale: Locale;
 }) {
   const [imei, setImei] = useState(modems[0]?.imei ?? "");
   const [commands, setCommands] = useState<CommandRow[]>([]);
@@ -168,7 +192,6 @@ export function DeviceConsole({
   // one paint late. What it costs is a moment of empty console for an operator
   // who does have the rights.
   const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
-  const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   // Polling stops once nothing is outstanding, so an idle page costs nothing.
   const pending = commands.some((row) => !TERMINAL.has(row.status));
   const mounted = useRef(true);
@@ -181,7 +204,6 @@ export function DeviceConsole({
   }, []);
 
   useEffect(() => {
-    setLocale(localeFromCookie(document.cookie));
     let alive = true;
     void (async () => {
       try {
@@ -698,24 +720,4 @@ function StatusPill({ status }: { status: string }) {
         ? "badge-bad"
         : "badge-warn";
   return <span className={`badge ${tone}`}>{status}</span>;
-}
-
-/**
- * The chosen language, from the cookie the switch writes.
- *
- * The page passes this component its strings already translated, but it cannot
- * pass one for a state it does not know about: whether the account is
- * read-only is decided here, after the server has finished rendering. So the
- * one string this component owns is looked up here, from the same cookie the
- * server read.
- */
-function localeFromCookie(cookies: string): Locale {
-  for (const part of cookies.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === LOCALE_COOKIE) {
-      const value = decodeURIComponent(rest.join("="));
-      if (isLocale(value)) return value;
-    }
-  }
-  return DEFAULT_LOCALE;
 }

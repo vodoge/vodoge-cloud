@@ -170,7 +170,17 @@ export default async function DevicePage({
           title={t("device.console", locale)}
           note={t("device.consoleNote", locale)}
         >
-          <DeviceConsole deviceId={deviceId} modems={own} labels={deviceLabels(locale)} />
+          {/* The locale as well as the labels. The labels cover every string
+              the page can resolve for this component; the read-only notice is
+              the one it cannot, because whether the session may write is only
+              known after mount. Looked up against a client-side default, that
+              sentence went out in Chinese on every request. */}
+          <DeviceConsole
+            deviceId={deviceId}
+            modems={own}
+            labels={deviceLabels(locale)}
+            locale={locale}
+          />
         </Card>
         <Card
           className="card-span-all"
