@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { Conversation } from "@/components/conversation";
-import { Card } from "@/components/ui";
+import { CardPanel as Card } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
 import { fetchThread, fetchThreads, type ThreadMessage } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import { INBOX, PAGE } from "@/lib/tokens";
 
 export default async function ThreadPage({
   params,
@@ -32,34 +34,43 @@ export default async function ThreadPage({
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <Link href="/inbox" className="back-link">
+          <Link href="/inbox" className={INBOX.backLink}>
             ← {t("inbox.title", locale)}
           </Link>
           {/* The name leads when there is one, with the number kept below:
               an operator checking which SIM answered still needs the digits,
               and a heading that replaced them would hide the one field that
               is unambiguous. */}
-          <h1 className={name ? "page-title" : "page-title mono"}>{name || peer}</h1>
-          <p className="page-desc">
-            {name ? <span className="mono faint">{peer} · </span> : null}
+          <h1 className={cn(PAGE.title, name ? undefined : INBOX.titleMono)}>{name || peer}</h1>
+          <p className={PAGE.description}>
+            {name ? <span className={INBOX.peerUnder}>{peer} · </span> : null}
             {messages.length} {t("inbox.messages", locale)}
           </p>
         </div>
       </div>
 
-      {loadError ? <p className="danger">{t("inbox.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("inbox.loadError", locale)}</p> : null}
 
-      <Card className="card-span-all">
+      <Card>
         <Conversation
           peer={peer}
           name={name}
           messages={messages}
+          confirmLabels={{
+            question: t("confirm.question", locale),
+            proceed: t("confirm.proceed", locale),
+            cancel: t("confirm.cancel", locale),
+          }}
           labels={{
             remove: t("inbox.remove", locale),
             deleteThread: t("inbox.deleteThread", locale),
             confirmDeleteThread: t("inbox.confirmDeleteThread", locale),
+            confirmDeleteMessageTitle: t("inbox.confirmDeleteMessageTitle", locale),
+            confirmDeleteMessage: t("inbox.confirmDeleteMessage", locale),
+            confirmForgetContactTitle: t("inbox.confirmForgetContactTitle", locale),
+            confirmForgetContact: t("inbox.confirmForgetContact", locale),
             nameContact: t("inbox.nameContact", locale),
             renameContact: t("inbox.renameContact", locale),
             contactName: t("inbox.contactName", locale),

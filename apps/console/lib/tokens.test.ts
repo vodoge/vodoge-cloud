@@ -15,6 +15,7 @@ import {
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
+  CONFIRMED_WRITES,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
@@ -23,6 +24,7 @@ import {
   NON_UTILITY_CLASSES,
   REDACTED_SECRET,
   SAFE_AREA,
+  SMS_BLOCKED_MODULES,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
@@ -49,6 +51,7 @@ import {
   UNMIGRATED_SOURCES,
   assertConsequence,
   badgeClass,
+  blockedSendModules,
   buttonClass,
   consequenceProblem,
   navState,
@@ -453,7 +456,12 @@ const NOT_A_RECIPE = new Set([
   "CONFIRM_CONSEQUENCE_KEYS",
   "CONFIRM_LABEL_KEYS",
   "CONFIRM_MIN_CONSEQUENCE",
+  "CONFIRMED_WRITES",
   "REDACTED_SECRET",
+  // IMEIs and message keys, not classes. See the note above it in tokens.ts:
+  // it is in that file because the card that wrote it could edit one file
+  // under lib/, and it should move out the moment a card owns another.
+  "SMS_BLOCKED_MODULES",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -1013,7 +1021,20 @@ test("the old ui barrel still exports every name its ten importers ask for", () 
   }
 
   assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
-  assert.equal(importers.length, 10, `${importers.length} pages import the barrel, not ten`);
+
+  // A bound rather than the ten it started at. Ten was right on the day the
+  // barrel was sealed and is wrong the moment any of the seven page cards lands
+  // — T014 took `/inbox` and `/inbox/[peer]` off it, so it is eight — and a
+  // count that every card has to edit is a count that produces seven merge
+  // conflicts and says nothing. What has to stay true is both ends: above zero,
+  // or the regex broke and this test is measuring nothing; at or below ten, or
+  // a page has started importing the compatibility layer again, which is the
+  // direction nothing should be moving in.
+  assert.ok(importers.length > 0, "no page imports the barrel: the import regex has broken");
+  assert.ok(
+    importers.length <= 10,
+    `${importers.length} pages import the barrel; it was ten and only goes down`,
+  );
 });
 
 /**
@@ -1485,6 +1506,196 @@ test("the confirmation dialog cannot be given a consequence it does not have", (
   }
 });
 
+/* ── And the confirmation is in front of the write ───────────────────────
+ *
+ * The dialog existing is not the same as the dialog being in the way. T014
+ * added three confirmations to two files that between them send a text message
+ * and delete two things from the gateway, and every guard above stays green if
+ * somebody later wires the button straight back to the request: the component
+ * is still imported, the copy is still in both catalogues, the consequence
+ * still passes its own rule. This board has been here before — T004's three
+ * assertions were false greens because `page.contains("guardFor(command)")`
+ * also matches `function guardFor(command)`.
+ *
+ * So the rule is about the call site: the function that performs the write has
+ * to be reachable from an `onConfirm` and unreachable from an `onClick` or an
+ * `onSubmit`. Comments are stripped before any of it is read, so naming the
+ * function in a comment satisfies nothing.
+ */
+
+/** Every `attribute={…}` expression in a file, comments already gone. */
+function attributeExpressions(source: string, attribute: string): string[] {
+  const { masked, code } = scan(source);
+  const out: string[] = [];
+  for (const match of masked.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*`, "g"))) {
+    const at = match.index + match[0].length;
+    if (masked[at] !== "{") continue;
+    const close = closingBracket(masked, at);
+    if (close === -1) continue;
+    out.push(code.slice(at, close + 1));
+  }
+  return out;
+}
+
+/** The body of `function name(…) { … }`, comments already gone. */
+function functionBody(source: string, name: string): string | null {
+  const { masked, code } = scan(source);
+  const declared = new RegExp(`\\bfunction\\s+${name}\\s*\\(`);
+  const at = masked.search(declared);
+  if (at === -1) return null;
+  const open = masked.indexOf("{", masked.indexOf(")", at));
+  if (open === -1) return null;
+  const close = closingBracket(masked, open);
+  return close === -1 ? null : code.slice(open, close + 1);
+}
+
+test("the inbox's dangerous writes are reachable only from a confirmation", () => {
+  const notDeclared: string[] = [];
+  const notAWrite: string[] = [];
+  const notConfirmed: string[] = [];
+  const alsoDirect: string[] = [];
+
+  for (const [relative, actions] of Object.entries(CONFIRMED_WRITES)) {
+    const source = readSource(relative);
+    assert.ok(
+      scan(source).code.includes("<ConfirmDialog"),
+      `${relative} renders no confirmation dialog at all`,
+    );
+
+    const confirmed = attributeExpressions(source, "onConfirm");
+    assert.ok(confirmed.length > 0, `${relative}: nothing is wired to onConfirm`);
+    const direct = [
+      ...attributeExpressions(source, "onClick"),
+      ...attributeExpressions(source, "onSubmit"),
+    ];
+
+    for (const name of actions) {
+      const body = functionBody(source, name);
+      if (body === null) {
+        notDeclared.push(`${relative}: ${name}`);
+        continue;
+      }
+      // It has to be the thing that talks to the gateway, or naming it here
+      // proves nothing about the request.
+      if (!/fetch\s*\(/.test(body) || !/method:\s*"(POST|PUT|DELETE)"/.test(body)) {
+        notAWrite.push(`${relative}: ${name}`);
+      }
+
+      const mentions = new RegExp(`\\b${name}\\b`);
+      if (!confirmed.some((expression) => mentions.test(expression))) {
+        notConfirmed.push(`${relative}: ${name}`);
+      }
+      if (direct.some((expression) => mentions.test(expression))) {
+        alsoDirect.push(`${relative}: ${name}`);
+      }
+    }
+  }
+
+  assert.deepEqual(notDeclared, [], "a write named in CONFIRMED_WRITES no longer exists");
+  assert.deepEqual(notAWrite, [], "this function no longer performs the request it is listed for");
+  assert.deepEqual(notConfirmed, [], "a write nothing asks about before it happens");
+  assert.deepEqual(
+    alsoDirect,
+    [],
+    "a control calls the write directly, so the dialog is decoration",
+  );
+});
+
+/* ── The module this console will not send from ──────────────────────────
+ *
+ * `867018069509705` leaves the USB bus on every MO submit. What makes this a
+ * test rather than a comment is the *wording*: the board believed for two days
+ * that its MO path was dead, and `edge-bin/src/main.rs:537-560` records the
+ * opposite — the SIM's own `EF_SMSS` counter advanced by 34 over a day of sends
+ * the console called failures, and 10086 kept replying. Told the message
+ * failed, an operator sends it again and the recipient gets it twice.
+ *
+ * So "cannot send" is the wrong refusal and "costs you the module" is the right
+ * one, and the difference lives entirely in `messages/*.json` where no type can
+ * reach it.
+ */
+
+test("a device carrying the module that leaves the bus cannot be sent from", () => {
+  const fleet = [
+    { deviceId: "edge-a", imei: "867018069509705" },
+    // On the same device, and healthy. Without it this fixture would only show
+    // that a device with one bad module is refused, which is the easy half:
+    // the console sends to a *device* and cannot aim at a module, so a device
+    // with a good module and a bad one has to be refused as well.
+    { deviceId: "edge-a", imei: "867018069514820" },
+    { deviceId: "edge-b", imei: "862547055142811" },
+  ];
+
+  const blocked = blockedSendModules(fleet, "edge-a");
+  assert.equal(blocked.length, 1, "the refusal has to name which module it is about");
+  assert.equal(blocked[0].imei, "867018069509705");
+  assert.deepEqual(blockedSendModules(fleet, "edge-b"), [], "no other device is refused");
+
+  // A module list that could not be read is an empty one, and it must not read
+  // as "checked and clean" anywhere but here — see `inbox.smsModemsUnknown`.
+  assert.deepEqual(blockedSendModules([], "edge-a"), []);
+});
+
+test("the blocked module says what it costs, and never that the message failed", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const entries = Object.entries(SMS_BLOCKED_MODULES);
+  assert.ok(entries.length > 0, "an empty block list checks nothing");
+
+  for (const [imei, keys] of entries) {
+    assert.match(imei, /^\d{15}$/, "keyed by IMEI, because the card in it can be moved");
+
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      const why = catalogue[keys.why];
+      const cost = catalogue[keys.cost];
+      assert.equal(typeof why, "string", `${language} ${keys.why} is missing`);
+      assert.equal(typeof cost, "string", `${language} ${keys.cost} is missing`);
+
+      // Which module, not "a module": there are three on this bench.
+      assert.ok(why.includes("{imei}"), `${language} ${keys.why} does not name the module`);
+      // What actually happens, in both transports' shared terms.
+      for (const term of ["QMI", "USB"]) {
+        assert.ok(why.includes(term), `${language} ${keys.why} stopped saying what happens: ${term}`);
+      }
+      // And the correction, which is the reason this key exists at all. These
+      // two are the evidence, not decoration: without them the sentence is an
+      // opinion, and the opinion it replaces is the one that gets a recipient
+      // the same message twice.
+      for (const term of ["EF_SMSS", "34"]) {
+        assert.ok(
+          cost.includes(term),
+          `${language} ${keys.cost} dropped the evidence that the message goes out: ${term}`,
+        );
+      }
+    }
+  }
+});
+
+test("the refusal reaches the button and the handler, not just one of them", () => {
+  const source = readSource("components/send-sms.tsx");
+
+  const submit = openingTags(source).find((tag) => /type=\{?"submit"/.test(tag.text));
+  assert.ok(submit, "the send form has no submit button any more");
+  assert.match(
+    submit.text,
+    /disabled=\{[^}]*blocked\.length/,
+    "the send button is enabled on a device that must not send",
+  );
+
+  // And again in the handler. Return submits a form without the button being
+  // pressed, so a guard that lives only in an attribute is one keystroke and
+  // one stale render away from not existing — which is exactly the note the
+  // edge panel carries over the same module.
+  const body = functionBody(source, "onSubmit");
+  assert.ok(body, "the send form has no submit handler");
+  assert.match(body, /blocked\.length[^;]*\)\s*return;/, "the submit handler does not refuse");
+  assert.ok(
+    body.indexOf("blocked.length") < body.indexOf("setPending"),
+    "the handler refuses after it has already started asking",
+  );
+});
+
 /* ── A stored secret ─────────────────────────────────────────────────────── */
 
 /**
@@ -1602,6 +1813,15 @@ const RULES_SHIPPED_UNASKED = [
   "max-sm:grid",
   "sm:grid",
   "sr-only",
+  // `grid` itself, added by T014 and for the same reason as the two above it:
+  // `LEGACY_UTILITY_COLLISIONS` and `FORBIDDEN_IN_MIGRATED_SOURCES` both spell
+  // the name out in `lib/tokens.ts`, which is Tailwind content, so the rule is
+  // built from the ledger that exists to forbid it. It became unasked rather
+  // than newly shipped: `app/inbox/page.tsx:54` was the last `className="grid
+  // grid-wide"` in the console, and migrating that page took the last caller
+  // away. Deleting the name from the ledger is not the fix — the ledger is
+  // what the guard reads.
+  "grid",
 ];
 
 test("the stylesheet contains no rule that no file asks for", async () => {
