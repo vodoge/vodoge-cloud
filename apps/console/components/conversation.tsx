@@ -35,6 +35,27 @@ type Labels = Record<string, string>;
  * consequence. The thread's own confirmation was kept and rewritten rather than
  * kept as it was: `window.confirm` shows one string, and the Chinese one was
  * fourteen characters ending in a question mark.
+ *
+ * ## `writable`, added by T032
+ *
+ * Every request this component makes except the initial render is a write, and
+ * a read-only session is refused all of them by the gateway — including the
+ * `POST /v1/messages/thread/read` that opening a conversation used to fire, so
+ * that account was generating a 403 and a router refresh on every conversation
+ * it opened. Nothing here was ever *able* to change anything it should not:
+ * `cmd/gateway/main.go:858` refuses every non-GET from such a session. The
+ * controls were simply being offered.
+ *
+ * The prop is required rather than defaulted. `writable = true` as a default
+ * would mean that forgetting to pass it draws the whole write surface, which is
+ * the failure this card exists to remove; `writable = false` as a default would
+ * be safe and silent, and a conversation nobody can act on looks like a bug
+ * rather than a mistake. So: no default, and the compiler asks.
+ *
+ * The gate is on the controls *and* inside each request function. That is not
+ * belt and braces for its own sake — the same doubling is on the send form, for
+ * the reason written there: a guard that lives only in what is rendered is one
+ * stale render away from not existing.
  */
 export function Conversation({
   peer,
@@ -42,12 +63,15 @@ export function Conversation({
   messages,
   labels,
   confirmLabels,
+  writable,
 }: {
   peer: string;
   name: string;
   messages: ThreadMessage[];
   labels: Labels;
   confirmLabels: ConfirmLabels;
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -65,9 +89,13 @@ export function Conversation({
   // and Next renders those more than once — on a prefetch, and again on the
   // real navigation. A read that happened during rendering would clear the
   // badge for a conversation nobody opened.
+  //
+  // Not for a read-only account: marking read is a POST, the gateway refuses
+  // it, and the only thing the attempt achieved was a 403 in the log and a
+  // refresh that re-rendered the same unread badge.
   const marked = useRef(false);
   useEffect(() => {
-    if (!unread || marked.current) return;
+    if (!writable || !unread || marked.current) return;
     marked.current = true;
     void (async () => {
       await fetch("/v1/messages/thread/read", {
@@ -77,9 +105,10 @@ export function Conversation({
       });
       router.refresh();
     })();
-  }, [peer, unread, router]);
+  }, [peer, unread, router, writable]);
 
   async function removeThread() {
+    if (!writable) return;
     setBusy(true);
     // The number travels in the body, not the URL: a phone number in a path
     // ends up in every access log between here and the browser.
@@ -95,6 +124,7 @@ export function Conversation({
   }
 
   async function removeMessage(id: string) {
+    if (!writable) return;
     setBusy(true);
     await fetch(`/v1/messages/${id}`, { method: "DELETE" });
     setBusy(false);
@@ -115,23 +145,30 @@ export function Conversation({
 
   return (
     <div className={INBOX.stack}>
-      <ButtonRow>
-        <ContactName
-          peer={peer}
-          name={name}
-          busy={busy}
-          setBusy={setBusy}
-          labels={labels}
-          confirmLabels={confirmLabels}
-        />
-        <Button
-          variant="risk"
-          disabled={busy}
-          onClick={() => setPending({ kind: "thread" })}
-        >
-          {labels.deleteThread}
-        </Button>
-      </ButtonRow>
+      {writable ? (
+        <ButtonRow>
+          <ContactName
+            peer={peer}
+            name={name}
+            busy={busy}
+            setBusy={setBusy}
+            labels={labels}
+            confirmLabels={confirmLabels}
+            writable={writable}
+          />
+          <Button
+            variant="risk"
+            disabled={busy}
+            onClick={() => setPending({ kind: "thread" })}
+          >
+            {labels.deleteThread}
+          </Button>
+        </ButtonRow>
+      ) : (
+        // Where the controls were. An empty space above a conversation reads
+        // as a page that failed to finish loading.
+        <p className={INBOX.note}>{labels.readOnly}</p>
+      )}
 
       <ol className={INBOX.list}>
         {messages.map((message) => (
@@ -161,14 +198,16 @@ export function Conversation({
               {message.direction === "outbound" ? (
                 <DeliveryBadge message={message} labels={labels} />
               ) : null}
-              <Button
-                variant="subtle"
-                size="sm"
-                disabled={busy}
-                onClick={() => setPending({ kind: "message", id: message.id })}
-              >
-                {labels.remove}
-              </Button>
+              {writable ? (
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => setPending({ kind: "message", id: message.id })}
+                >
+                  {labels.remove}
+                </Button>
+              ) : null}
             </div>
           </li>
         ))}
@@ -208,6 +247,7 @@ function ContactName({
   setBusy,
   labels,
   confirmLabels,
+  writable,
 }: {
   peer: string;
   name: string;
@@ -215,6 +255,9 @@ function ContactName({
   setBusy: (value: boolean) => void;
   labels: Labels;
   confirmLabels: ConfirmLabels;
+  /** Passed down rather than assumed. Renaming is a `PUT`; forgetting is a
+      `DELETE`. Both are refused for a read-only session. */
+  writable: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -222,6 +265,7 @@ function ContactName({
   const [asking, setAsking] = useState(false);
 
   async function forgetContact() {
+    if (!writable) return;
     setBusy(true);
     // A blank name would render as an empty heading where the number was, so
     // an emptied field removes the record instead of storing nothing.
@@ -237,6 +281,7 @@ function ContactName({
   }
 
   async function rename(trimmed: string) {
+    if (!writable) return;
     setBusy(true);
     await fetch("/v1/messages/contact", {
       method: "PUT",
@@ -256,6 +301,11 @@ function ContactName({
     }
     void rename(trimmed);
   }
+
+  // Not rendered at all for a read-only account. The caller does not render
+  // this component in that case either; the check is repeated here so that
+  // the guard survives the component being used from somewhere else.
+  if (!writable) return null;
 
   if (!editing) {
     return (

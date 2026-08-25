@@ -22,7 +22,16 @@ import {
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
-import { INBOX, PAGE, blockedSendModules } from "@/lib/tokens";
+import {
+  bearerHeader,
+  mayWrite,
+  roleFromSessionBody,
+  SESSION_ENDPOINT,
+  type ConsoleRole,
+} from "@/lib/session";
+import { blockedSendModules } from "@/lib/sms-safety";
+import { gatewayBaseUrl } from "@/lib/tenant";
+import { INBOX, PAGE } from "@/lib/tokens";
 
 /**
  * The inbox: send a message, name a number, open a conversation.
@@ -37,7 +46,7 @@ import { INBOX, PAGE, blockedSendModules } from "@/lib/tokens";
  * `/v1/commands` takes a `device_id` and no module, so which module carries a
  * message is decided at the edge — and with nothing to aim it, the edge takes
  * the first entry out of its modem map. One module in this fleet leaves the USB
- * bus on every MO submit (`SMS_BLOCKED_MODULES` in `lib/tokens.ts`), so the
+ * bus on every MO submit (`SMS_BLOCKED_MODULES` in `lib/sms-safety.ts`), so the
  * device holding it is a device this page cannot promise anything about. That
  * is why the module list is read here at all: without it the refusal has
  * nothing to match against, and the operator finds out by losing a module.
@@ -45,11 +54,28 @@ import { INBOX, PAGE, blockedSendModules } from "@/lib/tokens";
  * Its own `try`, deliberately. Folding it into the one below would turn a
  * failed module read into "could not load messages", and leaving it out of a
  * `try` altogether would turn it into a page that does not render.
+ *
+ * ⚠️ **A failed read now holds the send** rather than leaving it live with a
+ * note. That is a change of behaviour and the reasoning is in `sendHold`.
+ *
+ * ## The read-only gate, which this page did not have
+ *
+ * It has one now, copied from `app/settings/page.tsx` rather than invented:
+ * the same `GET /v1/auth/session`, the same `mayWrite`, the same fail-closed
+ * `catch`. Until this card the page drew the send form for every account, and
+ * `viewer@vodoge.com` could fill it in — the gateway refused the POST at its
+ * one read-only chokepoint (`cmd/gateway/main.go:858`), so nothing was ever
+ * sent by an account that may not send. This is not a hole being closed. It is
+ * a control being taken off the screen because the server was always going to
+ * say no to it, which is courtesy rather than a permission model; the model is
+ * the gateway's, and `/v1` is reachable with curl and a token whatever this
+ * page draws.
  */
 export default async function InboxPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
+  const writable = mayWrite(await currentRole(host, token));
   let threads: ThreadRow[] = [];
   let contacts: ContactRow[] = [];
   let devices: { id: string; name: string }[] = [];
@@ -100,37 +126,52 @@ export default async function InboxPage() {
               {unread} {t("inbox.unread", locale)}
             </Badge>
           ) : null}
+          {writable ? null : (
+            <Badge tone="warn" dot={false}>
+              {t("role.readOnlyBadge", locale)}
+            </Badge>
+          )}
         </div>
       </div>
       {loadError ? <p className={PAGE.error}>{t("inbox.loadError", locale)}</p> : null}
 
       <div className={PAGE.stack}>
+        {/* Read-only keeps the card and loses the form. Hiding the whole card
+            would take away the answer to "why is there nowhere to send from";
+            a paragraph in its place says which of the two it is. The same
+            shape as the settings page, which renders values where a read-only
+            account would otherwise get a Save button that can only 403. */}
         <Card title={t("inbox.send", locale)}>
-          <SendSmsForm
-            devices={sendDevices}
-            modemsUnknown={modemsUnknown}
-            confirmLabels={{
-              question: t("confirm.question", locale),
-              proceed: t("confirm.proceed", locale),
-              cancel: t("confirm.cancel", locale),
-            }}
-            labels={{
-              device: t("inbox.colDevice", locale),
-              to: t("inbox.colPeer", locale),
-              body: t("inbox.colBody", locale),
-              send: t("inbox.send", locale),
-              queued: t("inbox.queued", locale),
-              failed: t("inbox.sendFailed", locale),
-              blockedBadge: t("inbox.sendBlockedBadge", locale),
-              blockedTitle: t("inbox.sendBlockedTitle", locale),
-              blockedDevice: t("inbox.sendBlockedDevice", locale),
-              modemsUnknown: t("inbox.smsModemsUnknown", locale),
-              // Templates: the number and the device are only known once the
-              // operator has typed one and chosen the other.
-              confirmTitle: t("inbox.confirmSendTitle", locale),
-              confirmConsequence: t("inbox.confirmSend", locale),
-            }}
-          />
+          {writable ? (
+            <SendSmsForm
+              devices={sendDevices}
+              modemsUnknown={modemsUnknown}
+              confirmLabels={{
+                question: t("confirm.question", locale),
+                proceed: t("confirm.proceed", locale),
+                cancel: t("confirm.cancel", locale),
+              }}
+              labels={{
+                device: t("inbox.colDevice", locale),
+                to: t("inbox.colPeer", locale),
+                body: t("inbox.colBody", locale),
+                send: t("inbox.send", locale),
+                queued: t("inbox.queued", locale),
+                failed: t("inbox.sendFailed", locale),
+                blockedBadge: t("inbox.sendBlockedBadge", locale),
+                blockedTitle: t("inbox.sendBlockedTitle", locale),
+                blockedDevice: t("inbox.sendBlockedDevice", locale),
+                modemsUnknownTitle: t("inbox.smsModemsUnknownTitle", locale),
+                modemsUnknown: t("inbox.smsModemsUnknown", locale),
+                // Templates: the number and the device are only known once the
+                // operator has typed one and chosen the other.
+                confirmTitle: t("inbox.confirmSendTitle", locale),
+                confirmConsequence: t("inbox.confirmSend", locale),
+              }}
+            />
+          ) : (
+            <p className={INBOX.note}>{t("role.readOnlyInbox", locale)}</p>
+          )}
         </Card>
 
         {/* The phone book. Separate from the thread list because a contact
@@ -260,4 +301,37 @@ export default async function InboxPage() {
       </div>
     </>
   );
+}
+
+/**
+ * The role for this request, from the gateway.
+ *
+ * Failing closed. If the gateway cannot be asked, the page draws its read-only
+ * self: the account may lose a send form it was entitled to, which is
+ * recoverable by reloading, and the gateway is the thing that actually decides.
+ *
+ * ⚠️ Copied from `app/settings/page.tsx`, which had the only correct gate in
+ * this console when this card started, and copied rather than adapted so the
+ * two cannot drift into two different ideas of what "cannot ask" means. There
+ * are three of these now — settings, here, and `app/inbox/[peer]/page.tsx` —
+ * and it belongs in `lib/session.ts` beside `mayWrite`. No card has owned that
+ * file yet; `lib/tokens.test.ts` holds all three to the same two returns until
+ * one does.
+ */
+async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
+  try {
+    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
+      headers: {
+        accept: "application/json",
+        "x-forwarded-host": host,
+        ...bearerHeader(token),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return "readonly";
+    return roleFromSessionBody(await response.json());
+  } catch {
+    return "readonly";
+  }
 }

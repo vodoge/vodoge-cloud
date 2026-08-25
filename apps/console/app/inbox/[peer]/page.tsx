@@ -1,13 +1,38 @@
 import Link from "next/link";
 import { Conversation } from "@/components/conversation";
+import { Badge } from "@/components/ui/badge";
 import { CardPanel as Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import { fetchThread, fetchThreads, type ThreadMessage } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
+import {
+  bearerHeader,
+  mayWrite,
+  roleFromSessionBody,
+  SESSION_ENDPOINT,
+  type ConsoleRole,
+} from "@/lib/session";
+import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { INBOX, PAGE } from "@/lib/tokens";
 
+/**
+ * One conversation, and the three ways to change it.
+ *
+ * Everything a read-only account may do here is reading, so the role is
+ * resolved on the server and handed to `Conversation` as a required prop. It is
+ * not resolved in the client component: that component is rendered by this
+ * page, so a role it fetched for itself would be a second answer to a question
+ * this request has already asked, and the two could disagree on the same
+ * screen.
+ *
+ * Before this card the delete and rename controls were drawn for every account.
+ * The gateway refused each of those requests — `DELETE` and `PUT` are refused
+ * outright for a read-only session at `cmd/gateway/main.go:858` — so no account
+ * ever deleted anything it was not allowed to. What is being removed is the
+ * offer, not an ability.
+ */
 export default async function ThreadPage({
   params,
 }: {
@@ -18,6 +43,7 @@ export default async function ThreadPage({
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
+  const writable = mayWrite(await currentRole(host, token));
 
   let messages: ThreadMessage[] = [];
   let name = "";
@@ -49,6 +75,13 @@ export default async function ThreadPage({
             {messages.length} {t("inbox.messages", locale)}
           </p>
         </div>
+        {writable ? null : (
+          <div className={PAGE.actions}>
+            <Badge tone="warn" dot={false}>
+              {t("role.readOnlyBadge", locale)}
+            </Badge>
+          </div>
+        )}
       </div>
 
       {loadError ? <p className={PAGE.error}>{t("inbox.loadError", locale)}</p> : null}
@@ -58,6 +91,7 @@ export default async function ThreadPage({
           peer={peer}
           name={name}
           messages={messages}
+          writable={writable}
           confirmLabels={{
             question: t("confirm.question", locale),
             proceed: t("confirm.proceed", locale),
@@ -83,9 +117,36 @@ export default async function ThreadPage({
             "status.failed": t("inbox.statusFailed", locale),
             "status.received": t("inbox.statusReceived", locale),
             "encoding.8bit": t("inbox.encoding8bit", locale),
+            readOnly: t("role.readOnlyInbox", locale),
           }}
         />
       </Card>
     </>
   );
+}
+
+/**
+ * The role for this request, from the gateway.
+ *
+ * Failing closed, and the same eighteen lines as `app/settings/page.tsx` and
+ * `app/inbox/page.tsx`. See the note on the copy in `app/inbox/page.tsx`: three
+ * copies is one too many and the home for it is `lib/session.ts`, which no card
+ * has owned yet. `lib/tokens.test.ts` holds all three to the same two returns.
+ */
+async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
+  try {
+    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
+      headers: {
+        accept: "application/json",
+        "x-forwarded-host": host,
+        ...bearerHeader(token),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return "readonly";
+    return roleFromSessionBody(await response.json());
+  } catch {
+    return "readonly";
+  }
 }

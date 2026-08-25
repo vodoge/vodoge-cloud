@@ -1010,6 +1010,18 @@ export const INBOX = {
   blocked: "m-0 flex flex-col gap-s2 rounded border border-bad bg-bad-wash p-s3 text-sm text-bad",
   blockedTitle: "font-semibold",
   blockedBody: "m-0",
+  /**
+   * Sending is held because the module list could not be read.
+   *
+   * The warning colour rather than the bad one, and the difference is the
+   * message: `blocked` above is "this device must not send", which is settled;
+   * this is "nobody could find out", which is not. Same box, so it is plainly a
+   * refusal and not a footnote — a hint under the field is what this used to be,
+   * and it sat under a button that still worked.
+   */
+  hold: "m-0 flex flex-col gap-s2 rounded border border-warn bg-warn-wash p-s3 text-sm text-warn",
+  /** A plain note where a control would have been. */
+  note: "m-0 text-sm text-fg-muted",
 } as const;
 
 /**
@@ -1283,99 +1295,18 @@ export const CONFIRM_LABEL_KEYS = [
   "confirm.cancel",
 ] as const;
 
-/**
- * Writes that may only happen after somebody answered the question.
+/* ── What the inbox refuses to do ────────────────────────────────────────
  *
- * Keyed by file, valued by the function that performs the request. The check in
- * `tokens.test.ts` is deliberately about **where the call site is**, not about
- * whether a dialog exists somewhere in the file: each name here has to perform
- * a mutating `fetch`, has to be reachable from a `ConfirmDialog`'s `onConfirm`,
- * and must **not** be named in any `onClick` or `onSubmit`.
+ * The ledger of confirmed writes, the module that must not send, and the
+ * fail-closed answer to "may this form send" all moved to `lib/sms-safety.ts`.
+ * T014 left them here under protest and said so twice; T032 moved them.
  *
- * That last clause is the whole point. A file can keep its dialog, keep its
- * confirmation copy, and have somebody wire the button straight back to the
- * function during a later change; every other guard in this repository stays
- * green through that, because the dialog is still *defined*. This board has
- * already been bitten once by an assertion that matched a definition rather
- * than a use (T004), so the rule here is the use.
- *
- * Only the inbox is listed. The other dangerous actions T030 found live in
- * files this card could not edit, and a name added here for a function that
- * does not exist yet is a failing test rather than a reminder — which is the
- * right way round: the card that writes the confirmation adds the line.
+ * Two reasons, and the second is specific to this file. They are not part of
+ * the design system. And this file is Tailwind content — the scanner reads its
+ * text — so an IMEI, a long argument about wording, and a list of message keys
+ * were all being fed to a stylesheet build. Prose is cheaper somewhere that is
+ * not scanned.
  */
-export const CONFIRMED_WRITES = {
-  "components/send-sms.tsx": ["sendMessage"],
-  "components/conversation.tsx": ["removeThread", "removeMessage", "forgetContact"],
-} as const;
-
-/* ── Modules this console will not send a message from ───────────────────
- *
- * Not a policy invented here, and — this is the part that keeps being got
- * wrong — **not "SMS is broken on that stick"**.
- *
- * `867018069509705` stalls its own QMI interrupt endpoint on every MO submit:
- * the USB/IP session is torn down and the module leaves the bus for tens of
- * seconds. Both transports trigger it, and a full `AT+CFUN=1,1` does not clear
- * it. `edge-bin/src/main.rs:537-560` is the primary record, and it says the
- * opposite of what this board believed until T006 checked:
- *
- * > The submit itself is not undone by that -- the SIM's own MO reference
- * > counter in `EF_SMSS` advanced by 34 over a day of sends the console
- * > recorded as failures, and 10086 kept replying to them. Told "failed", an
- * > operator resends and the recipient gets it twice.
- *
- * So the cost is not a lost message. It is a lost module, and the copy in
- * `messages/*.json` has to say that: telling an operator the message cannot be
- * sent is the exact lie that daemon comment exists to stop, and it produces
- * duplicate messages at the far end.
- *
- * ⚠️ **Keyed by IMEI, and matched against a whole device.** The console's send
- * takes a `device_id` and no module, so which module carries the message is
- * decided at the edge — and with nothing to aim it, the edge takes the first
- * entry out of its modem map. A device holding one of these is therefore a
- * device this console cannot promise anything about, which is why the whole
- * device is refused rather than one option in a picker this form does not have.
- *
- * ⚠️ **This does not belong in the design system**, and it is here because the
- * card that had to write it could edit exactly one file under `lib/`. A `.tsx`
- * cannot be tested in this app, so the alternative was not a better home; it
- * was no test at all. Move it to its own module the moment a card owns one.
- */
-
-/** IMEI → the message keys that say why, and what the cost really is. */
-export const SMS_BLOCKED_MODULES = {
-  "867018069509705": {
-    why: "inbox.smsBlockedWhy",
-    /** The correction: the message usually goes out. Never say it failed. */
-    cost: "inbox.smsBlockedCost",
-  },
-} as const;
-
-export type SmsBlockedModule = { readonly imei: string; readonly why: string; readonly cost: string };
-
-/**
- * The modules on `deviceId` that this console will not send from.
- *
- * Empty means "nothing known against it", which is not the same as "checked".
- * A caller that could not read the module list has to say so itself — see
- * `inbox.smsModemsUnknown` — because an empty array here and an empty array
- * from a failed read are the same value, and this console has already shipped
- * that bug once on `/audit`.
- */
-export function blockedSendModules(
-  modems: readonly { readonly deviceId: string; readonly imei: string }[],
-  deviceId: string,
-): SmsBlockedModule[] {
-  const table = SMS_BLOCKED_MODULES as Record<string, { why: string; cost: string }>;
-  const out: SmsBlockedModule[] = [];
-  for (const modem of modems) {
-    if (modem.deviceId !== deviceId) continue;
-    const entry = table[modem.imei];
-    if (entry) out.push({ imei: modem.imei, why: entry.why, cost: entry.cost });
-  }
-  return out;
-}
 
 /* ── Secrets that are already stored ─────────────────────────────────────── */
 

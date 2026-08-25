@@ -8,6 +8,7 @@ import defaultTheme from "tailwindcss/defaultTheme.js";
 import tailwindcss from "tailwindcss";
 import tailwindConfig from "../tailwind.config.ts";
 import { cn } from "./cn.ts";
+import { CONFIRMED_WRITES } from "./sms-safety.ts";
 import * as TOKENS from "./tokens.ts";
 import {
   BUTTON,
@@ -15,7 +16,6 @@ import {
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
-  CONFIRMED_WRITES,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
@@ -24,7 +24,6 @@ import {
   NON_UTILITY_CLASSES,
   REDACTED_SECRET,
   SAFE_AREA,
-  SMS_BLOCKED_MODULES,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
@@ -51,7 +50,6 @@ import {
   UNMIGRATED_SOURCES,
   assertConsequence,
   badgeClass,
-  blockedSendModules,
   buttonClass,
   consequenceProblem,
   navState,
@@ -456,12 +454,11 @@ const NOT_A_RECIPE = new Set([
   "CONFIRM_CONSEQUENCE_KEYS",
   "CONFIRM_LABEL_KEYS",
   "CONFIRM_MIN_CONSEQUENCE",
-  "CONFIRMED_WRITES",
   "REDACTED_SECRET",
-  // IMEIs and message keys, not classes. See the note above it in tokens.ts:
-  // it is in that file because the card that wrote it could edit one file
-  // under lib/, and it should move out the moment a card owns another.
-  "SMS_BLOCKED_MODULES",
+  // `CONFIRMED_WRITES` and `SMS_BLOCKED_MODULES` used to be here. They are in
+  // `lib/sms-safety.ts` now: neither is part of the design system, and this
+  // file is Tailwind content, so an IMEI and a page of prose about wording
+  // were being handed to a stylesheet build.
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -1523,18 +1520,97 @@ test("the confirmation dialog cannot be given a consequence it does not have", (
  * function in a comment satisfies nothing.
  */
 
-/** Every `attribute={…}` expression in a file, comments already gone. */
-function attributeExpressions(source: string, attribute: string): string[] {
+/** Every `attribute={…}` expression in a file, with where it starts. */
+function attributeSites(source: string, attribute: string): { at: number; text: string }[] {
   const { masked, code } = scan(source);
-  const out: string[] = [];
+  const out: { at: number; text: string }[] = [];
   for (const match of masked.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*`, "g"))) {
     const at = match.index + match[0].length;
     if (masked[at] !== "{") continue;
     const close = closingBracket(masked, at);
     if (close === -1) continue;
-    out.push(code.slice(at, close + 1));
+    out.push({ at, text: code.slice(at, close + 1) });
   }
   return out;
+}
+
+/** Every `attribute={…}` expression in a file, comments already gone. */
+function attributeExpressions(source: string, attribute: string): string[] {
+  return attributeSites(source, attribute).map((site) => site.text);
+}
+
+/**
+ * The `?` (or `&&`) and the `:` of the conditional a `{` opens, at its own
+ * depth. `null` when the braces hold something that is not a conditional — an
+ * object literal, a handler, an interpolation.
+ */
+function conditionalArms(
+  masked: string,
+  open: number,
+  close: number,
+): { split: number; end: number } | null {
+  let depth = 0;
+  let split = -1;
+  let end = -1;
+  for (let i = open + 1; i < close; i++) {
+    const ch = masked[i];
+    if ("([{".includes(ch)) {
+      depth += 1;
+      continue;
+    }
+    if (")]}".includes(ch)) {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) continue;
+    // `?.` and `??` are not conditionals, and both appear in this codebase.
+    if (split === -1 && ch === "?" && masked[i + 1] !== "." && masked[i + 1] !== "?") split = i;
+    else if (split === -1 && ch === "&" && masked[i + 1] === "&") split = i;
+    else if (split !== -1 && end === -1 && ch === ":") end = i;
+  }
+  return split === -1 ? null : { split, end: end === -1 ? close : end };
+}
+
+/**
+ * Whether whatever is at `at` is rendered **only** when `gate` is true.
+ *
+ * Walks outwards through every JSX expression container that encloses the
+ * position and asks whether one of them is `{gate ? … : …}` or `{gate && …}`
+ * with the position in the true arm. Written this way rather than as "does the
+ * file mention `writable` near this element", because that question is answered
+ * yes by a file where the gate was moved, inverted or widened — and this board
+ * has already shipped one assertion that matched a definition rather than a use
+ * (T004), plus one that stayed green when the footer it checked was put behind
+ * a role gate (T027's review).
+ *
+ * The condition has to be the gate and nothing else. `{writable || preview ? …}`
+ * is not a gate, and the day someone needs one it should be a visible edit
+ * here rather than a silent widening there.
+ */
+function drawnOnlyWhen(masked: string, at: number, gate: string): boolean {
+  const braces = braceMap(masked);
+  for (const [open, close] of braces) {
+    if (open >= at || close <= at) continue;
+    const arms = conditionalArms(masked, open, close);
+    if (!arms) continue;
+    if (masked.slice(open + 1, arms.split).trim() !== gate) continue;
+    if (at > arms.split && at < arms.end) return true;
+  }
+  return false;
+}
+
+/** Every `{` in a file matched to its own `}`. Literals are already blanked. */
+function braceMap(masked: string): Map<number, number> {
+  const stack: number[] = [];
+  const pairs = new Map<number, number>();
+  for (let i = 0; i < masked.length; i++) {
+    if (masked[i] === "{") stack.push(i);
+    else if (masked[i] === "}") {
+      const open = stack.pop();
+      if (open !== undefined) pairs.set(open, i);
+    }
+  }
+  return pairs;
 }
 
 /** The body of `function name(…) { … }`, comments already gone. */
@@ -1601,76 +1677,143 @@ test("the inbox's dangerous writes are reachable only from a confirmation", () =
   );
 });
 
-/* ── The module this console will not send from ──────────────────────────
+/* ── And the write controls are not drawn for an account that may not write ──
  *
- * `867018069509705` leaves the USB bus on every MO submit. What makes this a
- * test rather than a comment is the *wording*: the board believed for two days
- * that its MO path was dead, and `edge-bin/src/main.rs:537-560` records the
- * opposite — the SIM's own `EF_SMSS` counter advanced by 34 over a day of sends
- * the console called failures, and 10086 kept replying. Told the message
- * failed, an operator sends it again and the recipient gets it twice.
+ * ⚠️ **This is courtesy, not a permission model, and the two must not be
+ * confused.** `lib/session.ts` says so already and it is worth repeating here:
+ * the gateway refuses every state-changing request from a read-only session at
+ * one chokepoint around its whole route table (`cmd/gateway/main.go:858`), and
+ * `/v1` is reachable with curl and a token whatever these pages draw. Nothing
+ * below closes a hole. Before T032 the inbox offered `viewer@vodoge.com` a send
+ * form, three delete controls and a rename box, every one of which the gateway
+ * answered 403 — what is being removed is the offer.
  *
- * So "cannot send" is the wrong refusal and "costs you the module" is the right
- * one, and the difference lives entirely in `messages/*.json` where no type can
- * reach it.
+ * `app/settings/page.tsx` is in the list because it is where the pattern comes
+ * from. Holding all three to the same two returns is what stops a fourth page
+ * from inventing a third idea of what "the gateway did not answer" means.
  */
 
-test("a device carrying the module that leaves the bus cannot be sent from", () => {
-  const fleet = [
-    { deviceId: "edge-a", imei: "867018069509705" },
-    // On the same device, and healthy. Without it this fixture would only show
-    // that a device with one bad module is refused, which is the easy half:
-    // the console sends to a *device* and cannot aim at a module, so a device
-    // with a good module and a bad one has to be refused as well.
-    { deviceId: "edge-a", imei: "867018069514820" },
-    { deviceId: "edge-b", imei: "862547055142811" },
-  ];
+/** Pages that decide what to draw from `GET /v1/auth/session`. */
+const ROLE_GATED_PAGES = [
+  "app/settings/page.tsx",
+  "app/inbox/page.tsx",
+  "app/inbox/[peer]/page.tsx",
+];
 
-  const blocked = blockedSendModules(fleet, "edge-a");
-  assert.equal(blocked.length, 1, "the refusal has to name which module it is about");
-  assert.equal(blocked[0].imei, "867018069509705");
-  assert.deepEqual(blockedSendModules(fleet, "edge-b"), [], "no other device is refused");
+test("every page that gates a write reads the role from the gateway and fails closed", () => {
+  for (const relative of ROLE_GATED_PAGES) {
+    const source = readSource(relative);
+    assert.match(codeOnly(source), /\bmayWrite\(/, `${relative} never asks what the account may do`);
 
-  // A module list that could not be read is an empty one, and it must not read
-  // as "checked and clean" anywhere but here — see `inbox.smsModemsUnknown`.
-  assert.deepEqual(blockedSendModules([], "edge-a"), []);
-});
+    const body = functionBody(source, "currentRole");
+    assert.ok(body, `${relative} has no currentRole to read the session with`);
+    assert.match(body, /SESSION_ENDPOINT/, `${relative} asks something other than the session`);
+    assert.match(body, /roleFromSessionBody\(/, `${relative} reads the role its own way`);
 
-test("the blocked module says what it costs, and never that the message failed", () => {
-  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
-  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
-
-  const entries = Object.entries(SMS_BLOCKED_MODULES);
-  assert.ok(entries.length > 0, "an empty block list checks nothing");
-
-  for (const [imei, keys] of entries) {
-    assert.match(imei, /^\d{15}$/, "keyed by IMEI, because the card in it can be moved");
-
-    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
-      const why = catalogue[keys.why];
-      const cost = catalogue[keys.cost];
-      assert.equal(typeof why, "string", `${language} ${keys.why} is missing`);
-      assert.equal(typeof cost, "string", `${language} ${keys.cost} is missing`);
-
-      // Which module, not "a module": there are three on this bench.
-      assert.ok(why.includes("{imei}"), `${language} ${keys.why} does not name the module`);
-      // What actually happens, in both transports' shared terms.
-      for (const term of ["QMI", "USB"]) {
-        assert.ok(why.includes(term), `${language} ${keys.why} stopped saying what happens: ${term}`);
-      }
-      // And the correction, which is the reason this key exists at all. These
-      // two are the evidence, not decoration: without them the sentence is an
-      // opinion, and the opinion it replaces is the one that gets a recipient
-      // the same message twice.
-      for (const term of ["EF_SMSS", "34"]) {
-        assert.ok(
-          cost.includes(term),
-          `${language} ${keys.cost} dropped the evidence that the message goes out: ${term}`,
-        );
-      }
-    }
+    // The two ways of not getting an answer, and both of them are read-only.
+    // Either one returning anything else would draw the write controls for an
+    // account whose role nobody established.
+    assert.match(
+      body,
+      /if \(!response\.ok\) return "readonly";/,
+      `${relative} treats a refused session lookup as permission to write`,
+    );
+    assert.match(
+      body,
+      /catch \{\s*return "readonly";\s*\}/,
+      `${relative} fails open when the gateway cannot be reached`,
+    );
   }
 });
+
+test("the inbox draws no write control for an account that may not write", () => {
+  const inbox = scan(readSource("app/inbox/page.tsx")).masked;
+  const sendAt = inbox.indexOf("<SendSmsForm");
+  assert.notEqual(sendAt, -1, "the inbox has no send form any more");
+  assert.ok(
+    drawnOnlyWhen(inbox, sendAt, "writable"),
+    "the send form is drawn for every account, read-only included",
+  );
+
+  // The conversation gets the answer rather than working one out: it is a
+  // client component rendered by a server page that has already asked.
+  const thread = readSource("app/inbox/[peer]/page.tsx");
+  const tag = openingTags(thread).find((each) => each.name === "Conversation");
+  assert.ok(tag, "the thread page no longer renders a conversation");
+  assert.match(
+    tag.text,
+    /writable=\{writable\}/,
+    "the conversation is not told what the account may do, so it will draw everything",
+  );
+
+  const source = readSource("components/conversation.tsx");
+  const masked = scan(source).masked;
+
+  // The two deletions. Each one starts at a control, and the control is the
+  // thing that has to disappear — `setPending` is what opens the dialog.
+  const deletions = attributeSites(source, "onClick").filter((site) =>
+    /setPending\(/.test(site.text),
+  );
+  assert.equal(deletions.length, 2, "expected exactly the thread and the single message");
+  for (const site of deletions) {
+    assert.ok(
+      drawnOnlyWhen(masked, site.at, "writable"),
+      `a deletion is offered to every account: ${site.text}`,
+    );
+  }
+
+  // The rename box, gated twice: by the caller, and by the component itself so
+  // that the guard survives it being rendered from somewhere else.
+  const contactAt = masked.indexOf("<ContactName");
+  assert.notEqual(contactAt, -1, "the contact name control is gone");
+  assert.ok(drawnOnlyWhen(masked, contactAt, "writable"), "the rename box is drawn for everyone");
+  assert.match(
+    codeOnly(source),
+    /if \(!writable\) return null;/,
+    "the rename box renders itself for any account it is handed to",
+  );
+});
+
+test("every request the conversation makes refuses without the role, not only without the button", () => {
+  const source = readSource("components/conversation.tsx");
+
+  // `rename` is here and not in CONFIRMED_WRITES on purpose: a rename is not
+  // destructive enough to ask about, and it is still a PUT the gateway refuses.
+  for (const name of ["removeThread", "removeMessage", "forgetContact", "rename"]) {
+    const body = functionBody(source, name);
+    assert.ok(body, `${name} no longer exists`);
+    assert.ok(/fetch\s*\(/.test(body), `${name} does not perform the request it is guarded for`);
+    assert.match(body, /if \(!writable\) return;/, `${name} runs for an account that may not write`);
+    assert.ok(
+      body.indexOf("!writable") < body.indexOf("fetch("),
+      `${name} checks the role after it has already sent the request`,
+    );
+  }
+
+  // Opening a conversation marks it read, which is a POST. A read-only session
+  // is refused it, so the account that could not clear the badge was producing
+  // a 403 and a router refresh on every conversation it opened.
+  const masked = scan(source).masked;
+  const effect = masked.indexOf("useEffect(");
+  assert.notEqual(effect, -1, "the read receipt is gone");
+  const close = closingBracket(masked, masked.indexOf("(", effect));
+  assert.ok(
+    masked.slice(effect, close).includes("!writable"),
+    "opening a conversation still posts a read receipt for an account that cannot mark it read",
+  );
+});
+
+/* ── The two reasons the send form refuses ───────────────────────────────
+ *
+ * What the refusals *say* is tested in `lib/sms-safety.test.ts`, next to the
+ * table they are about. What is tested here is that they are wired to the
+ * control, which needs the scanner above.
+ *
+ * Both refusals go through `sendHold`, which is the point: a device carrying
+ * `867018069509705` and a module list that could not be read are different
+ * sentences on screen and the same answer to "may this send". Before T032 the
+ * second one was a hint under a live button.
+ */
 
 test("the refusal reaches the button and the handler, not just one of them", () => {
   const source = readSource("components/send-sms.tsx");
@@ -1679,8 +1822,8 @@ test("the refusal reaches the button and the handler, not just one of them", () 
   assert.ok(submit, "the send form has no submit button any more");
   assert.match(
     submit.text,
-    /disabled=\{[^}]*blocked\.length/,
-    "the send button is enabled on a device that must not send",
+    /disabled=\{[^}]*hold !== null/,
+    "the send button is live while something is holding the send",
   );
 
   // And again in the handler. Return submits a form without the button being
@@ -1689,10 +1832,21 @@ test("the refusal reaches the button and the handler, not just one of them", () 
   // edge panel carries over the same module.
   const body = functionBody(source, "onSubmit");
   assert.ok(body, "the send form has no submit handler");
-  assert.match(body, /blocked\.length[^;]*\)\s*return;/, "the submit handler does not refuse");
+  assert.match(body, /hold !== null\)\s*return;/, "the submit handler does not refuse");
   assert.ok(
-    body.indexOf("blocked.length") < body.indexOf("setPending"),
+    body.indexOf("hold !== null") < body.indexOf("setPending"),
     "the handler refuses after it has already started asking",
+  );
+
+  // And it is the shared answer, not a second opinion computed here. A form
+  // that re-derived "may I send" from `blocked.length` would be green on the
+  // two assertions above and fail open again the moment the module list did
+  // not load — which is the exact defect this card was opened for.
+  const code = codeOnly(source);
+  assert.match(code, /sendHold\(\{[^}]*modemsKnown: !modemsUnknown/, "the hold no longer asks sendHold");
+  assert.ok(
+    !/\bmodemsUnknown\??:\s*boolean\s*\|\s*undefined|\bmodemsUnknown\?:/.test(code),
+    "modemsUnknown became optional: an omitted prop then reads as a module list that was checked",
   );
 });
 
