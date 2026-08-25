@@ -486,6 +486,32 @@ export const PAGE = {
    * rhythm is what says "this is a different question".
    */
   stack: "flex flex-col gap-s5",
+  /**
+   * One question inside a card that holds several.
+   *
+   * `/proxy` is the reason this exists: a single card carries upstreams,
+   * listeners and country rules, each a heading over a list over a form. The
+   * old stylesheet said this with `.stack`, and the tighter gap is what keeps
+   * a heading reading as the roof of the list under it rather than as another
+   * item in the outer sequence.
+   */
+  section: "flex flex-col gap-s4",
+  /** The heading of one of those. `.section-title` in the old stylesheet. */
+  sectionTitle: "m-0 text-sm font-semibold uppercase tracking-wider text-fg-muted",
+  /**
+   * A line of context under a control, or standing in for a list with nothing
+   * in it yet. Quieter than `FORM.hint`, which is a note about what a control
+   * will do.
+   */
+  note: "m-0 text-sm text-fg-faint",
+  /** Context *inside* a line — a reason after a status word, a timestamp. */
+  faint: "text-fg-faint",
+  /**
+   * A reading compared character by character outside a table cell: an
+   * address, a country code. Same three declarations as `TABLE.cellMono`,
+   * which is where the in-cell version lives.
+   */
+  mono: "font-mono text-xs tabular-nums",
 } as const;
 
 export const CARD = {
@@ -1332,6 +1358,13 @@ export function assertConsequence(consequence: string): string {
  * rather than a question: `device.usbnetWarning`, the paragraph the USB-net
  * control shows above its own button. T011 attaches it to that control's
  * confirmation and adds the seven it has to write.
+ *
+ * The five `proxy.*` entries came next, with the proxy page. Four of them
+ * replace `proxy.confirmRemove` — one sentence, "Remove this permanently?",
+ * which was the whole of the guard on two different kinds of object and named
+ * neither — and the fifth is a confirmation where there was none at all. Each
+ * takes `{…}` placeholders that `interpolate` fills at the point of use, so
+ * the object is named in the sentence rather than left to the reader.
  */
 export const CONFIRM_CONSEQUENCE_KEYS = [
   "device.usbnetWarning",
@@ -1345,6 +1378,11 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "cards.confirmVertical",
   "cards.confirmAdd",
   "cards.confirmRemove",
+  "proxy.confirmRemoveUpstream",
+  "proxy.confirmRemoveInstance",
+  "proxy.confirmRemoveRule",
+  "proxy.confirmStop",
+  "proxy.confirmRestart",
 ] as const;
 
 /** The dialog's own chrome, so every confirmation asks in the same words. */
@@ -1578,9 +1616,11 @@ export const MIGRATED_SOURCES = [
   "components/card-policies.tsx",
   "components/connection-status.tsx",
   "components/device-admin.tsx",
+  "app/proxy/page.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
+  "components/proxy-manager.tsx",
   "components/pwa.tsx",
   "components/shell.tsx",
   "components/sign-out.tsx",
@@ -1720,14 +1760,18 @@ export const UI_PRIMITIVES = {
  * card that invents a new dead class fails immediately rather than shipping
  * markup that reviews perfectly and renders as nothing.
  *
- * - **`card-grid`** — `app/proxy/page.tsx:63` and `app/settings/page.tsx:129`.
- *   The stylesheet has `.grid` and `.grid-wide`; it has never had
- *   `.card-grid`. Both of those pages are stacking their cards in ordinary
- *   block flow while their markup says they are laying them out in a grid.
+ * - **`card-grid`** — now only `app/settings/page.tsx:129`.
+ *   The stylesheet has `.grid` and `.grid-wide`; it has never had `.card-grid`.
+ *   That page is stacking its cards in ordinary block flow while its markup
+ *   says it is laying them out in a grid.
  *   **This one was not on any survey** — it was found by running the check
  *   rather than by reading, which is the only way any of these have ever been
- *   found. The device detail page was the third site and is now migrated; it
- *   stacks with `PAGE.stack`, which is a real gap rather than a name.
+ *   found.
+ *
+ *   PM merge note: the device detail page (T010) and the proxy page (T012)
+ *   were the other two sites and are both migrated; each stacks with
+ *   `PAGE.stack`, which is a real rule rather than a name. The entry comes off
+ *   this list entirely when `/settings` (T013) lands.
  * - **`panel`, `primary`** — `components/send-sms.tsx:34` and `:53`. The one
  *   form in this console that sends a text message has been an unstyled block
  *   with an unstyled button since it was written.
@@ -1773,7 +1817,6 @@ export const UNMIGRATED_SOURCES = [
   "app/inbox/[peer]/page.tsx",
   "app/inbox/page.tsx",
   "app/journal/page.tsx",
-  "app/proxy/page.tsx",
   "app/rules/page.tsx",
   "app/schedule/page.tsx",
   "app/sessions/page.tsx",
@@ -1783,7 +1826,6 @@ export const UNMIGRATED_SOURCES = [
   "components/device-console.tsx",
   "components/esim-panel.tsx",
   "components/journal.tsx",
-  "components/proxy-manager.tsx",
   "components/send-sms.tsx",
   "components/settings-form.tsx",
 ] as const;

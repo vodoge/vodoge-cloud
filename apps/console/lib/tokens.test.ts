@@ -1464,14 +1464,25 @@ test("the consequence rule accepts the two that work and refuses the two that do
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
 
-  // Refused: a question with nothing behind it. These are the live strings.
-  for (const key of ["device.confirmDisruptive", "proxy.confirmRemove"]) {
+  // Refused: a question with nothing behind it. This one is still live —
+  // `device.confirmDisruptive` is one sentence shared by seven commands, and
+  // T011 is the card that splits it.
+  for (const key of ["device.confirmDisruptive"]) {
     for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
       assert.ok(
         consequenceProblem(catalogue[key]),
         `${language} ${key} would pass as a consequence, and it states none`,
       );
     }
+  }
+
+  // And the other one that used to be live, kept verbatim as a counter-example
+  // now that it is not. `proxy.confirmRemove` was the whole of the guard on
+  // both "remove an upstream" and "remove a listener"; the proxy page replaced
+  // it with five consequences that name the object, so the key is gone from
+  // the catalogues and the string stays here as the shape being rejected.
+  for (const gone of ["确定永久删除？", "Remove this permanently?"]) {
+    assert.ok(consequenceProblem(gone), `${gone} would pass as a consequence, and it states none`);
   }
 
   // Accepted: the two that do the job, with the question they had to smuggle
@@ -1720,6 +1731,342 @@ test("the secret input knows about one value and not about how many there are", 
   assert.ok(!/\b\d+\b/.test(code), "a number in the secret input is a count of something");
   assert.match(code, /secretInputProps\(value\)/, "the behaviour is no longer read from lib/");
   assert.ok(!/REDACTED|••/.test(code), "the marker is defined in lib/tokens.ts, not copied here");
+});
+
+/* ── The proxy page ──────────────────────────────────────────────────────
+ *
+ * `/proxy` is two reads and eight writes, and until this card four of the
+ * writes could not be undone with nothing but a shared "Remove this
+ * permanently?" — or, for a country rule and for stop/restart, with nothing at
+ * all. The checks below are about *where the request is written*, because that
+ * is the one thing a test in this app can read: `.tsx` cannot be rendered here,
+ * so "did a dialog appear" is unanswerable and "is the call reachable without
+ * one" is not.
+ *
+ * The component is arranged to make that question decidable. A destructive
+ * click builds a `Pending` and hands it to `ask`; the only place the request is
+ * written is inside that call, and the only place it runs is the dialog's
+ * confirm button. Moving one back into an `onClick` fails the first test below.
+ */
+
+/** `call("…", { method: "…" })` sites, and whether each is inside `ask(…)`. */
+function proxyCallSites(source: string): { label: string; guarded: boolean }[] {
+  const { masked, literals } = scan(source);
+  const byStart = new Map(literals.map((literal) => [literal.start, literal.text]));
+
+  const askSpans: [number, number][] = [];
+  for (const match of masked.matchAll(/\bask\s*\(/g)) {
+    const open = match.index + match[0].length - 1;
+    askSpans.push([open, closingBracket(masked, open)]);
+  }
+
+  const sites: { label: string; guarded: boolean }[] = [];
+  for (const match of masked.matchAll(/\bcall\s*\(/g)) {
+    const open = match.index + match[0].length - 1;
+    const close = closingBracket(masked, open);
+    const first = literals.find((literal) => literal.start > open && literal.start < close);
+    // `${…}` is blanked to a single space by the scanner, so a path reads back
+    // as its shape rather than as one row's id.
+    const path = (first?.text ?? "").replace(/\s+/g, "{}");
+    const method = /\bmethod:\s*["'`]/.exec(masked.slice(open, close));
+    const verb = method
+      ? (byStart.get(open + method.index + method[0].length - 1) ?? "")
+      : "";
+    sites.push({
+      label: `${verb} ${path}`,
+      guarded: askSpans.some(([from, to]) => open > from && open < to),
+    });
+  }
+  return sites.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Every proxy write that cannot simply be undone, and the ones that can.
+ *
+ * Both halves are frozen. The guarded list may only grow and the unguarded list
+ * may only shrink, and a call that moves between them has to be moved here
+ * too — which is the point: "remove a listener is confirmed" is a claim about
+ * code that can be checked, where "somebody added a dialog" is not.
+ *
+ * `POST …/start` is deliberately on the unguarded side and is the control for
+ * this test. It is the one instance command that interrupts nothing: starting
+ * a listener that is already up does nothing, and starting one that is down is
+ * what an operator came here to do. `stop` and `restart` drop every connection
+ * running through the listener, which is why they are on the other list — and
+ * why the two of them looked identical to `start` before this card, three
+ * unlabelled buttons in a row rendered from `["start", "stop", "restart"]`.
+ */
+const PROXY_GUARDED_CALLS = [
+  "DELETE /v1/proxy/country-rules/{}",
+  "DELETE /v1/proxy/instances/{}",
+  "DELETE /v1/proxy/upstreams/{}",
+  "POST /v1/proxy/instances/{}/restart",
+  "POST /v1/proxy/instances/{}/stop",
+];
+
+const PROXY_UNGUARDED_CALLS = [
+  // Creating something, which is undone by removing it.
+  "POST /v1/proxy/instances",
+  "POST /v1/proxy/upstreams",
+  "PUT /v1/proxy/country-rules/{}",
+  // Bringing a listener up, and asking a device whether it can reach a proxy.
+  "POST /v1/proxy/instances/{}/start",
+  "POST /v1/proxy/upstreams/{}/probe",
+];
+
+test("every proxy write that cannot be undone is behind the dialog, and start is not", () => {
+  const source = readSource("components/proxy-manager.tsx");
+  const sites = proxyCallSites(source);
+  assert.ok(sites.length > 5, `only ${sites.length} call sites found — the extractor is broken`);
+
+  assert.deepEqual(
+    sites.filter((site) => site.guarded).map((site) => site.label).sort(),
+    [...PROXY_GUARDED_CALLS].sort(),
+    "a destructive proxy request is written somewhere other than inside ask(…), which means it runs on the click",
+  );
+  assert.deepEqual(
+    sites.filter((site) => !site.guarded).map((site) => site.label).sort(),
+    [...PROXY_UNGUARDED_CALLS].sort(),
+    "a proxy request runs with no confirmation and is not on the list of ones that may",
+  );
+
+  // The mechanism, not just the copy. `window.confirm` can only show one
+  // string, which is the whole reason `proxy.confirmRemove` said nothing.
+  assert.ok(
+    !/window\.confirm/.test(codeOnly(source)),
+    "back to the native dialog, which has nowhere to put a consequence",
+  );
+});
+
+/**
+ * A consequence names the row the operator clicked, and every name is filled.
+ *
+ * The catalogue strings carry `{name}`, `{address}`, `{count}`, `{listen}`,
+ * `{code}` and `{upstream}`, and a placeholder nobody supplies is not a silent
+ * failure — it renders as a literal `{count}` inside the sentence an operator
+ * is being asked to act on. So the arguments at each call site are compared
+ * against the placeholders in *both* catalogues, which also catches a
+ * translation that quietly drops one.
+ */
+test("every proxy confirmation is wired up and fills every name it uses", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+  const source = readSource("components/proxy-manager.tsx");
+  const { masked } = scan(source);
+
+  // Every `proxy.confirm*` consequence in the catalogue is on the ledger the
+  // both-languages check reads. A title is chrome; a consequence is the claim.
+  const catalogued = Object.keys(zh)
+    .filter((key) => key.startsWith("proxy.confirm") && !key.endsWith("Title"))
+    .sort();
+  assert.ok(catalogued.length > 0, "the proxy confirmations went missing from the catalogue");
+  assert.deepEqual(
+    catalogued.filter((key) => !(CONFIRM_CONSEQUENCE_KEYS as readonly string[]).includes(key)),
+    [],
+    "a proxy consequence nothing checks in both languages",
+  );
+
+  const placeholders = (text: string): string[] =>
+    [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
+
+  const problems: string[] = [];
+  for (const key of [...catalogued, ...catalogued.map((key) => `${key}Title`)]) {
+    const label = key.slice("proxy.".length);
+    const marker = `interpolate(labels.${label},`;
+    const at = masked.indexOf(marker);
+    if (at === -1) {
+      problems.push(`${key} is in the catalogue and nothing draws it`);
+      continue;
+    }
+    const open = masked.indexOf("{", at + marker.length);
+    const close = closingBracket(masked, open);
+    const supplied: string[] = [];
+    let depth = 0;
+    for (let i = open + 1; i < close; i++) {
+      if ("({[".includes(masked[i])) depth += 1;
+      else if (")}]".includes(masked[i])) depth -= 1;
+      else if (depth === 0) {
+        const rest = /^([A-Za-z_]\w*)\s*:/.exec(masked.slice(i, close));
+        if (rest && !/[\w$]/.test(masked[i - 1])) supplied.push(rest[1]);
+      }
+    }
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      const wanted = placeholders(String(catalogue[key]));
+      const got = [...supplied].sort();
+      if (wanted.join(",") !== got.join(",")) {
+        problems.push(`${language} ${key} wants [${wanted}] and the call supplies [${got}]`);
+      }
+    }
+  }
+  assert.deepEqual(problems, [], "a confirmation would show a literal {placeholder} to an operator");
+});
+
+/**
+ * Start and restart cannot look the same, because they are opposites.
+ *
+ * They were rendered from `["start", "stop", "restart"].map(…)` as three
+ * buttons with no class between them: identical shape, identical colour,
+ * adjacent, and the only difference between "bring this listener up" and "drop
+ * every connection through it" was three letters. Colour is not the safeguard —
+ * the confirmation is — but a control that is indistinguishable from its
+ * opposite is how the wrong one gets clicked in the first place.
+ */
+test("start and restart are not the same button", () => {
+  const source = readSource("components/proxy-manager.tsx");
+  const variants = new Map<string, string>();
+  for (const tag of openingTags(source)) {
+    if (tag.name !== "Button") continue;
+    for (const verb of ["start", "stop", "restart"]) {
+      if (!tag.text.includes(`/${verb}\``)) continue;
+      variants.set(verb, /variant="(\w+)"/.exec(tag.text)?.[1] ?? "none");
+    }
+  }
+
+  assert.deepEqual(
+    [...variants.keys()].sort(),
+    ["restart", "start", "stop"],
+    "the three instance commands are not three separate buttons any more",
+  );
+  assert.notEqual(
+    variants.get("start"),
+    variants.get("restart"),
+    "start and restart render identically again",
+  );
+  for (const verb of ["stop", "restart"]) {
+    assert.equal(
+      variants.get(verb),
+      "risk",
+      `${verb} drops every connection through the listener and does not read as one that does`,
+    );
+  }
+});
+
+/**
+ * The export panel's rule, unchanged: the password never reaches the screen.
+ *
+ * It comes out of the gateway in a response body, lives in React state for as
+ * long as the tab does, and goes to the clipboard when asked. What is drawn is
+ * the same string with the password taken out, parsed rather than rebuilt.
+ * This is a regression check on somebody else's work — the panel was delivered
+ * whole and this card only restyled it — so it asserts the shape rather than
+ * the styling.
+ */
+test("the export panel still keeps the password off the screen", () => {
+  const code = codeOnly(readSource("components/proxy-manager.tsx"));
+
+  assert.match(code, /parsed\.password = ""/, "the drawn string is no longer redacted");
+  assert.match(code, /\{withoutPassword\(endpoint\)\}/, "the row is drawing something else now");
+  assert.ok(
+    !/\{\s*endpoint\.url\s*\}/.test(code),
+    "the connection string with the password in it is being rendered",
+  );
+  assert.match(code, /copy\(endpoint\.url\)/, "the clipboard is the only place it may go");
+  assert.ok(
+    !/localStorage|sessionStorage|document\.cookie/.test(code),
+    "a secret that survives the tab",
+  );
+
+  // The host is an address to dial, not a secret, and is the only thing that
+  // may travel in the query string.
+  assert.match(code, /URLSearchParams\(\{ format: "json" \}\)/);
+  assert.match(code, /query\.set\("host", dial\)/);
+  // And the gateway's own refusal is shown verbatim, because it is the one
+  // that says to repeat the request with ?host=.
+  assert.match(code, /labels\.exportHostHint/, "the ?host= hint stopped being drawn");
+  assert.match(code, /labels\.exportUnexportable/, "listeners that could not be exported vanished");
+  assert.match(code, /\{item\.reason\}/, "the gateway's reason is no longer shown");
+});
+
+/**
+ * A read-only account is not offered the export control.
+ *
+ * Courtesy rather than enforcement — the gateway refuses the request itself,
+ * because an export is a GET and the read-only guard decides by method — but
+ * the refactor must not be what makes a write control appear for `readonly`.
+ */
+test("the proxy page still asks who is looking before drawing the export control", () => {
+  const page = codeOnly(readSource("app/proxy/page.tsx"));
+  assert.match(page, /mayWrite\(await fetchConsoleRole\(host, token\)\)/);
+  assert.match(page, /canExport=\{canExport\}/, "the answer stopped reaching the component");
+
+  const manager = codeOnly(readSource("components/proxy-manager.tsx"));
+  assert.match(
+    manager,
+    /\{canExport \? <ExportPanel/,
+    "the export panel is drawn without asking, or asks something else",
+  );
+});
+
+/**
+ * Every label the proxy page lists resolves, in both languages.
+ *
+ * This page's own history: the label list was a bare `string[]` with no
+ * relation to what the component read, a control reached for a key nobody had
+ * listed, `t()` handed back `undefined`, and React drew undefined as nothing —
+ * an empty button, in both locales, with no error anywhere. The list is a total
+ * `Record<ProxyLabelKey, true>` now, so *that* half is a compile error.
+ *
+ * The other half is not, and was still open: a key added to the union and to
+ * the list but never added to `messages/` type-checks, and passes `check-i18n`
+ * because both catalogues are equally missing it. It renders as `⟦proxy.foo⟧`
+ * on the page. Ten of this page's fifty labels are new, so the gap was worth
+ * closing rather than noting.
+ */
+test("every label the proxy page lists resolves in both catalogues", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const component = codeOnly(readSource("components/proxy-manager.tsx"));
+  const union = component.slice(
+    component.indexOf("export type ProxyLabelKey ="),
+    component.indexOf(";", component.indexOf("export type ProxyLabelKey =")),
+  );
+  const declared = [...union.matchAll(/\|\s*"([A-Za-z]+)"/g)].map((match) => match[1]).sort();
+
+  const page = codeOnly(readSource("app/proxy/page.tsx"));
+  const listStart = page.indexOf("const PROXY_LABEL_KEYS");
+  const list = page.slice(listStart, page.indexOf("};", listStart));
+  const listed = [...list.matchAll(/^\s*([A-Za-z]+): true,$/gm)].map((match) => match[1]).sort();
+
+  assert.ok(declared.length > 40, `only ${declared.length} label keys found — the reader is broken`);
+  assert.deepEqual(listed, declared, "the page's list and the component's union have drifted apart");
+
+  const unresolved: string[] = [];
+  for (const key of declared) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      if (typeof catalogue[`proxy.${key}`] !== "string") unresolved.push(`${language} proxy.${key}`);
+    }
+  }
+  assert.deepEqual(
+    unresolved,
+    [],
+    "this label has no catalogue entry: it draws as ⟦proxy.…⟧, or as nothing at all",
+  );
+});
+
+/**
+ * A `secondary` column is secondary in its header *and* in its cells.
+ *
+ * `TABLE.cellSecondary` is `hidden sm:table-cell`, and it has to be on both or
+ * the column half-disappears: a header with no cells under it, or a stack of
+ * cells under nothing. Counting is enough because both are written once per
+ * column in the source, and it is the cheapest way to catch the half that gets
+ * forgotten — which is always the header, because the body cell is the one the
+ * author is looking at.
+ */
+test("a secondary column is secondary in both its header and its cells", () => {
+  const mismatched: string[] = [];
+  for (const relative of MIGRATED_SOURCES) {
+    const code = codeOnly(readSource(relative));
+    const headers = (code.match(/<TableHeaderCell\s[^>]*secondary/g) ?? []).length;
+    const cells = (code.match(/<TableCell\s[^>]*secondary/g) ?? []).length;
+    if (headers !== cells) mismatched.push(`${relative}: ${headers} headers, ${cells} cells`);
+  }
+  assert.deepEqual(
+    mismatched,
+    [],
+    "a column drops off the phone at one end only, which leaves a header over nothing",
+  );
 });
 
 /**
