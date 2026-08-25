@@ -513,6 +513,16 @@ export const CARD = {
   disclosureSummary:
     "flex cursor-pointer list-none items-center gap-s2 border-b border-line px-s4 py-s3 text-sm font-semibold text-fg",
   disclosureMarker: "ml-auto text-xs font-normal text-fg-faint",
+  /**
+   * A column of folding panels inside a card body.
+   *
+   * `CardContent` pads; it does not space what is stacked in it, and the
+   * settings page puts seven `CardDisclosure`s in one card body. The rhythm is
+   * the same as the one between a form's own fields — these *are* fields, with
+   * a lid on — which is why the value matches `FORM.root` rather than
+   * `PAGE.stack`, the wider gap that separates one question from another.
+   */
+  stack: "flex flex-col gap-s3",
 } as const;
 
 /**
@@ -932,9 +942,18 @@ export const SEGMENTED = {
  * nav written as markup is a nav nothing can check. `tokens.test.ts` asserts
  * every key here resolves in both catalogues and every href is unique.
  *
- * `/sessions` is deliberately absent — see the note in
- * `docs/goals/vodoge-ui-refactor/notes/T007-shell-and-nav.md`. The page still
- * exists and still renders; it has no nav entry under the confirmed grouping.
+ * `/sessions` had no entry at all between T007 and now: the confirmed grouping
+ * was given without it, and T007 reported that the page had become reachable
+ * only by typing its URL. The operator's answer on 2026-08-25 was to put it in
+ * the settings group, which is what it does here, and which is why that group
+ * now carries a label — a two-item group with no label is a divider.
+ *
+ * ⚠️ `/sessions` is **not** the login-session page. `GET /v1/sessions` returns
+ * SMS threads grouped by peer number (`sessions.desc`: "SMS threads grouped by
+ * peer number"), so by content it is a sibling of `/inbox` rather than of
+ * `settings.securityNote` ("session policy", which is the login TTL). Moving it
+ * to the comms group is a one-line change here plus the href list in
+ * `tokens.test.ts`; see `notes/T013-settings.md`.
  */
 
 export type NavItem = { readonly href: string; readonly key: string };
@@ -967,9 +986,11 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [{ href: "/proxy", key: "nav.proxy" }],
   },
   {
-    // "Settings / Settings" would be the label repeating its only link.
-    label: null,
-    items: [{ href: "/settings", key: "nav.settings" }],
+    label: "nav.group.settings",
+    items: [
+      { href: "/sessions", key: "nav.sessions" },
+      { href: "/settings", key: "nav.settings" },
+    ],
   },
 ];
 
@@ -1119,8 +1140,21 @@ export function assertConsequence(consequence: string): string {
  * rather than a question: `device.usbnetWarning`, the paragraph the USB-net
  * control shows above its own button. T011 attaches it to that control's
  * confirmation and adds the seven it has to write.
+ *
+ * The settings page adds three. Two of them belong to "send a test
+ * notification", which was the only unguarded action in this console that
+ * reaches a *person* — it dials out through a channel using the credential the
+ * gateway is holding, and nothing about the button said so. The third is the
+ * save, which writes every field of a section at once, credentials included.
+ * `settingsSaveConsequence` joins the last two, so a section with no credential
+ * in it does not claim to be writing one.
  */
-export const CONFIRM_CONSEQUENCE_KEYS = ["device.usbnetWarning"] as const;
+export const CONFIRM_CONSEQUENCE_KEYS = [
+  "device.usbnetWarning",
+  "settings.confirmTest",
+  "settings.confirmSave",
+  "settings.confirmSaveSecrets",
+] as const;
 
 /** The dialog's own chrome, so every confirmation asks in the same words. */
 export const CONFIRM_LABEL_KEYS = [
@@ -1212,10 +1246,12 @@ export const MIGRATED_SOURCES = [
   "app/not-found.tsx",
   "app/not-a-tenant/page.tsx",
   "app/page.tsx",
+  "app/settings/page.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
   "components/pwa.tsx",
+  "components/settings-form.tsx",
   "components/shell.tsx",
   "components/sign-out.tsx",
   "components/theme-toggle.tsx",
@@ -1354,19 +1390,21 @@ export const UI_PRIMITIVES = {
  * card that invents a new dead class fails immediately rather than shipping
  * markup that reviews perfectly and renders as nothing.
  *
- * - **`card-grid`** — `app/devices/[deviceId]/page.tsx:69`,
- *   `app/proxy/page.tsx:63`, `app/settings/page.tsx:129`. The stylesheet has
- *   `.grid` and `.grid-wide`; it has never had `.card-grid`. All three of
- *   those pages are stacking their cards in ordinary block flow while their
- *   markup says they are laying them out in a grid. **This one was not on any
- *   survey** — it was found by running the check rather than by reading, which
- *   is the only way any of these have ever been found.
+ * - **`card-grid`** — `app/devices/[deviceId]/page.tsx:69` and
+ *   `app/proxy/page.tsx:63`. The stylesheet has `.grid` and `.grid-wide`; it
+ *   has never had `.card-grid`. Both of those pages are stacking their cards in
+ *   ordinary block flow while their markup says they are laying them out in a
+ *   grid. **This one was not on any survey** — it was found by running the
+ *   check rather than by reading, which is the only way any of these have ever
+ *   been found. `app/settings/page.tsx:129` was the third site and is fixed:
+ *   it lays its cards out with `PAGE.stack`, measured at 390px as a real gap
+ *   between cards where the class it replaced produced none.
  * - **`panel`, `primary`** — `components/send-sms.tsx:34` and `:53`. The one
  *   form in this console that sends a text message has been an unstyled block
  *   with an unstyled button since it was written.
  *
- * All five sites are outside this card's file list: `card-grid` belongs to
- * T010, T012 and T013, and `send-sms.tsx` to T014.
+ * The two remaining `card-grid` sites belong to T010 and T012, and
+ * `send-sms.tsx` to T014.
  */
 export const CLASSES_WITH_NO_STYLESHEET = ["card-grid", "panel", "primary"] as const;
 
@@ -1411,7 +1449,6 @@ export const UNMIGRATED_SOURCES = [
   "app/rules/page.tsx",
   "app/schedule/page.tsx",
   "app/sessions/page.tsx",
-  "app/settings/page.tsx",
   "app/unknown-tenant/page.tsx",
   "components/card-policies.tsx",
   "components/conversation.tsx",
@@ -1421,7 +1458,6 @@ export const UNMIGRATED_SOURCES = [
   "components/journal.tsx",
   "components/proxy-manager.tsx",
   "components/send-sms.tsx",
-  "components/settings-form.tsx",
 ] as const;
 
 /**
@@ -1472,3 +1508,289 @@ export const FORBIDDEN_IN_MIGRATED_SOURCES = ["grid", "grow"] as const;
  * `group` and `peer` are markers Tailwind reads on other elements' variants.
  */
 export const NON_UTILITY_CLASSES = ["group", "peer"] as const;
+
+/* ── The settings form, as data ──────────────────────────────────────────
+ *
+ * ## Why any of this is in `lib/` rather than in the page
+ *
+ * `apps/console` cannot run a `.tsx` in a test, and the settings page is the
+ * densest form in this console: one PUT per section, a body assembled from a
+ * runtime field list, and a credential rule where getting it wrong saves eight
+ * bullet characters as somebody's SMTP password. All of that used to live
+ * inside `components/settings-form.tsx` and `app/settings/page.tsx`, where
+ * nothing could reach it. Here a test can put the *actual* request body beside
+ * the one the page sent before it was touched, which is the only way "the
+ * behaviour did not change" is a claim rather than an assurance.
+ *
+ * ## ⚠️ No count lives here, and none may
+ *
+ * The "seven notification channels" this page is described by is not written
+ * down anywhere, and must not be: the channels are derived from the field paths
+ * below by `notificationChannels`, the gateway's sender registry is held equal
+ * to its own settings list on that side, and a channel added there needs a row
+ * in `NOTIFICATION_FIELDS` and two message keys and nothing else. The last
+ * drift on this page started exactly the other way round — a hand-written list
+ * of testable channels that had fallen behind the fields.
+ *
+ * ## Note for whoever splits this file
+ *
+ * This belongs in a `lib/settings.ts` of its own. It is here because
+ * `package.json`'s test script is a hand-written list of files and the card
+ * that wrote this was not allowed to edit it, so a new module would have been a
+ * module whose tests never run — which is the failure mode the file header
+ * warns about. Moving it out is safe as long as the move adds the new test file
+ * to that list in the same commit.
+ */
+
+export const SETTINGS_FIELD_KINDS = ["text", "secret", "number", "boolean", "list"] as const;
+
+export type SettingsFieldKind = (typeof SETTINGS_FIELD_KINDS)[number];
+
+/** One editable setting, addressed by the dotted path the gateway stores it at. */
+export type SettingsField = {
+  readonly path: string;
+  readonly kind: SettingsFieldKind;
+};
+
+/**
+ * The notification section's fields.
+ *
+ * Two of the old product's sections are deliberately absent. HTTPS and its
+ * certificate are terminated at the gateway for every tenant at once, so they
+ * are not a tenant's to configure; device defaults have no fields yet, and a
+ * card with nothing in it only raises a question the page cannot answer.
+ */
+export const NOTIFICATION_FIELDS: readonly SettingsField[] = [
+  { path: "webhook.enabled", kind: "boolean" },
+  { path: "webhook.urls", kind: "list" },
+  { path: "webhook.secret", kind: "secret" },
+  { path: "email.enabled", kind: "boolean" },
+  { path: "email.smtp_host", kind: "text" },
+  { path: "email.smtp_port", kind: "number" },
+  { path: "email.username", kind: "text" },
+  { path: "email.password", kind: "secret" },
+  { path: "email.from_address", kind: "text" },
+  { path: "email.to_addresses", kind: "list" },
+  { path: "bark.enabled", kind: "boolean" },
+  { path: "bark.urls", kind: "list" },
+  { path: "telegram.enabled", kind: "boolean" },
+  { path: "telegram.chat_id", kind: "text" },
+  { path: "telegram.bot_token", kind: "secret" },
+  // The bot half. It shares the token above -- one bot, one credential -- and
+  // is otherwise independent: a deployment may want alerts without a bot, or a
+  // bot without alerts. Each operator line is "<telegram id>=<account email>",
+  // and the account named there is the one the bot acts as, with that account's
+  // role. Mapping a chat here grants exactly what that account can already do
+  // and nothing more. It groups under `telegram` because it is the same bot.
+  { path: "telegram.bot.enabled", kind: "boolean" },
+  { path: "telegram.bot.operators", kind: "list" },
+  { path: "feishu.enabled", kind: "boolean" },
+  { path: "feishu.webhook_url", kind: "text" },
+  { path: "feishu.secret", kind: "secret" },
+  { path: "wecom.enabled", kind: "boolean" },
+  { path: "wecom.webhook_url", kind: "text" },
+  { path: "pushplus.enabled", kind: "boolean" },
+  { path: "pushplus.token", kind: "secret" },
+  { path: "pushplus.topic", kind: "text" },
+];
+
+export const SMS_FIELDS: readonly SettingsField[] = [{ path: "hourly_limit", kind: "number" }];
+
+export const SECURITY_FIELDS: readonly SettingsField[] = [
+  { path: "session_ttl_hours", kind: "number" },
+];
+
+/**
+ * The channels a section can send a live test through, derived rather than
+ * listed a second time.
+ *
+ * Every one of them can be tested, because the gateway has a sender for every
+ * one — `settings.NotificationChannels()` and `notify.Registry()` are held
+ * equal by a test on that side. Writing the set out by hand is how the last
+ * drift started: telegram had fields here and no sender there, so configuring
+ * it did nothing at all and said nothing about it.
+ */
+export function notificationChannels(fields: readonly SettingsField[]): string[] {
+  return [...new Set(fields.map((field) => field.path.split(".")[0] as string))];
+}
+
+/**
+ * A section's fields, gathered by the channel they configure.
+ *
+ * `name` is the path prefix — `email`, `telegram` — or `null` for a section
+ * whose fields are not under one, which is what `hourly_limit` and
+ * `session_ttl_hours` are. A `null` group is rendered flat; a named one folds.
+ *
+ * Folding is the point. Twenty-six inputs in a single column, each channel's
+ * host and port and credential and recipients running straight into the next
+ * one's, is the single biggest reason this page is hard to read, and it is the
+ * one thing its card asks for by name.
+ */
+export type SettingsGroup = {
+  readonly name: string | null;
+  readonly fields: readonly SettingsField[];
+  /** The `<name>.enabled` switch, when the group has one. */
+  readonly enabledPath: string | null;
+};
+
+export function groupSettingsFields(fields: readonly SettingsField[]): SettingsGroup[] {
+  const order: (string | null)[] = [];
+  const byName = new Map<string | null, SettingsField[]>();
+
+  for (const field of fields) {
+    const parts = field.path.split(".");
+    const name = parts.length > 1 ? (parts[0] as string) : null;
+    if (!byName.has(name)) {
+      byName.set(name, []);
+      order.push(name);
+    }
+    (byName.get(name) as SettingsField[]).push(field);
+  }
+
+  return order.map((name) => {
+    const own = byName.get(name) as SettingsField[];
+    const enabledPath = name === null ? null : `${name}.enabled`;
+    return {
+      name,
+      fields: own,
+      enabledPath:
+        enabledPath !== null &&
+        own.some((field) => field.path === enabledPath && field.kind === "boolean")
+          ? enabledPath
+          : null,
+    };
+  });
+}
+
+/** Whether a group's own switch is on, for a folded summary that has to say so. */
+export function settingsGroupIsOn(
+  group: SettingsGroup,
+  values: Record<string, unknown>,
+): boolean {
+  return group.enabledPath !== null && values[group.enabledPath] === true;
+}
+
+/** A stored value at a dotted path. `undefined` for anything that is not there. */
+export function readSettingValue(source: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = source;
+  for (const key of path.split(".")) {
+    if (!cursor || typeof cursor !== "object") return undefined;
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return cursor;
+}
+
+/**
+ * What the form starts holding, from what the gateway sent.
+ *
+ * A stored list arrives as an array and is edited as one entry per line, which
+ * is far easier to paste into than a comma-separated box.
+ */
+export function settingsFormValues(
+  initial: Record<string, unknown>,
+  fields: readonly SettingsField[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    fields.map((field) => {
+      const stored = readSettingValue(initial, field.path);
+      return [field.path, Array.isArray(stored) ? stored.join("\n") : stored];
+    }),
+  );
+}
+
+/**
+ * A box's value, as the type the gateway stores.
+ *
+ * 🔴 A list splits on newlines **and** commas, and both have to stay. The box
+ * was a single line with "one per line" as its placeholder, so the only way to
+ * enter two entries was a comma; it is a textarea now, so the natural way is a
+ * newline. Accepting one and not the other would turn a change of control into
+ * a change of what the operator's existing input means.
+ */
+export function coerceSettingValue(field: SettingsField, value: unknown): unknown {
+  switch (field.kind) {
+    case "number": {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    case "boolean":
+      return value === true;
+    case "list":
+      return String(value ?? "")
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    default:
+      return value ?? "";
+  }
+}
+
+/**
+ * The body of `PUT /v1/settings/{section}`.
+ *
+ * An untouched secret is left out entirely, which is what tells the gateway to
+ * keep the one it is holding. That rule is here rather than in `SecretInput`
+ * because it is a request shape, not a control: the box knows how to show a
+ * stored credential, and the form knows what an empty box means.
+ */
+export function settingsDocument(
+  fields: readonly SettingsField[],
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const document: Record<string, unknown> = {};
+  for (const field of fields) {
+    const value = values[field.path];
+    if (field.kind === "secret" && (value === "" || value === undefined)) continue;
+    writeSettingValue(document, field.path, coerceSettingValue(field, value));
+  }
+  return document;
+}
+
+function writeSettingValue(
+  document: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
+  const keys = path.split(".");
+  let cursor = document;
+  for (const key of keys.slice(0, -1)) {
+    if (typeof cursor[key] !== "object" || cursor[key] === null) cursor[key] = {};
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+  cursor[keys[keys.length - 1] as string] = value;
+}
+
+/**
+ * A stored value as a read-only account sees it.
+ *
+ * A read-only account is not a lesser reader — the gateway refuses its PUT, so
+ * the page draws the values instead of the boxes rather than offering a Save
+ * button whose only possible outcome is a 403. The on/off words are passed in
+ * because they are user-visible text and this console ships in two languages;
+ * they were hard-coded English until the page was migrated.
+ */
+export function displaySettingValue(
+  value: unknown,
+  words: { readonly on: string; readonly off: string },
+): string {
+  if (value === undefined || value === null || value === "") return "—";
+  if (Array.isArray(value)) return value.length === 0 ? "—" : value.join(", ");
+  if (typeof value === "boolean") return value ? words.on : words.off;
+  return String(value);
+}
+
+/**
+ * What a save is about to do, assembled from what the section actually holds.
+ *
+ * The credential sentence is appended only when the section has a credential in
+ * it, so the SMS section's one number does not warn about passwords. Both
+ * halves are complete statements on their own, which is what lets
+ * `tokens.test.ts` run each through `consequenceProblem` in both languages.
+ */
+export function settingsSaveConsequence(
+  fields: readonly SettingsField[],
+  text: { readonly save: string; readonly secrets: string },
+): string {
+  const holdsSecret = fields.some((field) => field.kind === "secret");
+  return holdsSecret ? `${text.save} ${text.secrets}` : text.save;
+}
