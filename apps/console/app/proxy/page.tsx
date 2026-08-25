@@ -1,5 +1,14 @@
 import { ProxyManager, type ProxyLabelKey } from "@/components/proxy-manager";
-import { Card, EmptyState } from "@/components/ui";
+import { CardPanel as Card, CardEmpty } from "@/components/ui/card";
+import type { ConfirmLabels } from "@/components/ui/confirm-dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import {
   fetchConsoleRole,
   fetchCountryRules,
@@ -17,6 +26,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import { PAGE } from "@/lib/tokens";
 
 export default async function ProxyPage() {
   const locale = await getRequestLocale();
@@ -51,66 +61,69 @@ export default async function ProxyPage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("proxy.title", locale)}</h1>
-          <p className="page-desc">{t("proxy.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("proxy.title", locale)}</h1>
+          <p className={PAGE.description}>{t("proxy.desc", locale)}</p>
         </div>
       </div>
 
-      {loadError ? <p className="danger">{t("proxy.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("proxy.loadError", locale)}</p> : null}
 
-      <div className="card-grid">
-        <Card
-          className="card-span-all"
-          title={t("proxy.config", locale)}
-          note={t("proxy.configNote", locale)}
-        >
+      {/*
+        This container said `card-grid` for as long as the page has existed and
+        the stylesheet has never had a rule by that name, so the two cards below
+        were stacked by ordinary block flow with nothing between them —
+        markup claiming a layout it was not getting. `PAGE.stack` is a real
+        rule: `flex flex-col gap-s5`, checked against the Tailwind build like
+        every other class in this file.
+      */}
+      <div className={PAGE.stack}>
+        <Card title={t("proxy.config", locale)} note={t("proxy.configNote", locale)}>
           <ProxyManager
             upstreams={upstreams}
             instances={instances}
             countryRules={countryRules}
             devices={devices.map((device) => ({ id: device.id, name: device.name }))}
             labels={labels(locale)}
+            confirmLabels={confirmLabels(locale)}
             canExport={canExport}
           />
         </Card>
 
-        <Card
-          className="card-span-all"
-          title={t("proxy.traffic", locale)}
-          note={t("proxy.trafficNote", locale)}
-          bodyless
-        >
+        <Card title={t("proxy.traffic", locale)} note={t("proxy.trafficNote", locale)} bodyless>
           {traffic.length === 0 ? (
-            <EmptyState title={t("proxy.noTraffic", locale)} />
+            <CardEmpty title={t("proxy.noTraffic", locale)} />
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("proxy.colHour", locale)}</th>
-                    <th>{t("proxy.colName", locale)}</th>
-                    <th>{t("proxy.colUp", locale)}</th>
-                    <th>{t("proxy.colDown", locale)}</th>
-                    <th>{t("proxy.colConns", locale)}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {traffic.map((point) => (
-                    <tr key={`${point.instanceId}-${point.hour}`}>
-                      <td className="mono faint">
-                        {new Date(point.hour).toISOString().replace("T", " ").slice(0, 13)}:00
-                      </td>
-                      <td>{byInstance.get(point.instanceId) ?? point.instanceId}</td>
-                      <td className="mono">{bytes(point.bytesUp)}</td>
-                      <td className="mono">{bytes(point.bytesDown)}</td>
-                      <td className="mono">{point.connections}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table>
+              <TableHead>
+                <TableRow head>
+                  <TableHeaderCell>{t("proxy.colHour", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("proxy.colName", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("proxy.colUp", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("proxy.colDown", locale)}</TableHeaderCell>
+                  {/* The count is the least of the five: an operator reading
+                      this on a phone is asking how much went out, not how
+                      many times. */}
+                  <TableHeaderCell secondary>{t("proxy.colConns", locale)}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {traffic.map((point) => (
+                  <TableRow key={`${point.instanceId}-${point.hour}`}>
+                    <TableCell mono faint>
+                      {new Date(point.hour).toISOString().replace("T", " ").slice(0, 13)}:00
+                    </TableCell>
+                    <TableCell>{byInstance.get(point.instanceId) ?? point.instanceId}</TableCell>
+                    <TableCell mono>{bytes(point.bytesUp)}</TableCell>
+                    <TableCell mono>{bytes(point.bytesDown)}</TableCell>
+                    <TableCell mono secondary>
+                      {point.connections}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </Card>
       </div>
@@ -169,7 +182,20 @@ const PROXY_LABEL_KEYS: Record<ProxyLabelKey, true> = {
   probeFrom: true,
   neverProbed: true,
   failed: true,
-  confirmRemove: true,
+  // Five confirmations, each a title and a consequence. They replace a single
+  // `proxy.confirmRemove` — "Remove this permanently?" — which was the whole
+  // of the guard on two different objects and named neither, and they add one
+  // where a country rule was deleted with no confirmation at all.
+  confirmRemoveUpstreamTitle: true,
+  confirmRemoveUpstream: true,
+  confirmRemoveInstanceTitle: true,
+  confirmRemoveInstance: true,
+  confirmRemoveRuleTitle: true,
+  confirmRemoveRule: true,
+  confirmStopTitle: true,
+  confirmStop: true,
+  confirmRestartTitle: true,
+  confirmRestart: true,
   countryRules: true,
   noCountryRules: true,
   colCountry: true,
@@ -200,4 +226,24 @@ function labels(locale: Locale): Record<ProxyLabelKey, string> {
   return Object.fromEntries(
     names.map((key) => [key, t(`proxy.${key}`, locale)]),
   ) as Record<ProxyLabelKey, string>;
+}
+
+/**
+ * The confirmation dialog's own chrome, resolved here rather than in the
+ * component.
+ *
+ * Separate from the labels above because these three are shared with every
+ * other confirmation in the console: the dialog asks the question itself, in
+ * the same words everywhere, which is what lets the consequence check reject a
+ * "consequence" that turns out to be another question. Resolved on the server
+ * for the same reason every other string on this page is — a client component
+ * that read the locale in an effect would render the server's HTML in the
+ * default language every time.
+ */
+function confirmLabels(locale: Locale): ConfirmLabels {
+  return {
+    question: t("confirm.question", locale),
+    proceed: t("confirm.proceed", locale),
+    cancel: t("confirm.cancel", locale),
+  };
 }
