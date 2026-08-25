@@ -1826,6 +1826,53 @@ test("the proxy page still asks who is looking before drawing the export control
 });
 
 /**
+ * Every label the proxy page lists resolves, in both languages.
+ *
+ * This page's own history: the label list was a bare `string[]` with no
+ * relation to what the component read, a control reached for a key nobody had
+ * listed, `t()` handed back `undefined`, and React drew undefined as nothing —
+ * an empty button, in both locales, with no error anywhere. The list is a total
+ * `Record<ProxyLabelKey, true>` now, so *that* half is a compile error.
+ *
+ * The other half is not, and was still open: a key added to the union and to
+ * the list but never added to `messages/` type-checks, and passes `check-i18n`
+ * because both catalogues are equally missing it. It renders as `⟦proxy.foo⟧`
+ * on the page. Ten of this page's fifty labels are new, so the gap was worth
+ * closing rather than noting.
+ */
+test("every label the proxy page lists resolves in both catalogues", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const component = codeOnly(readSource("components/proxy-manager.tsx"));
+  const union = component.slice(
+    component.indexOf("export type ProxyLabelKey ="),
+    component.indexOf(";", component.indexOf("export type ProxyLabelKey =")),
+  );
+  const declared = [...union.matchAll(/\|\s*"([A-Za-z]+)"/g)].map((match) => match[1]).sort();
+
+  const page = codeOnly(readSource("app/proxy/page.tsx"));
+  const listStart = page.indexOf("const PROXY_LABEL_KEYS");
+  const list = page.slice(listStart, page.indexOf("};", listStart));
+  const listed = [...list.matchAll(/^\s*([A-Za-z]+): true,$/gm)].map((match) => match[1]).sort();
+
+  assert.ok(declared.length > 40, `only ${declared.length} label keys found — the reader is broken`);
+  assert.deepEqual(listed, declared, "the page's list and the component's union have drifted apart");
+
+  const unresolved: string[] = [];
+  for (const key of declared) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      if (typeof catalogue[`proxy.${key}`] !== "string") unresolved.push(`${language} proxy.${key}`);
+    }
+  }
+  assert.deepEqual(
+    unresolved,
+    [],
+    "this label has no catalogue entry: it draws as ⟦proxy.…⟧, or as nothing at all",
+  );
+});
+
+/**
  * A `secondary` column is secondary in its header *and* in its cells.
  *
  * `TABLE.cellSecondary` is `hidden sm:table-cell`, and it has to be on both or
