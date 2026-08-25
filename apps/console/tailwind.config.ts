@@ -1,15 +1,22 @@
 import type { Config } from "tailwindcss";
 import {
   TAILWIND_BORDER_RADIUS,
+  TAILWIND_BORDER_WIDTH,
   TAILWIND_BOX_SHADOW,
   TAILWIND_COLORS,
+  TAILWIND_FLEX,
   TAILWIND_FONT_FAMILY,
   TAILWIND_FONT_SIZE,
   TAILWIND_GRID_TEMPLATE_COLUMNS,
+  TAILWIND_INSET,
   TAILWIND_LETTER_SPACING,
   TAILWIND_LINE_HEIGHT,
+  TAILWIND_MAX_HEIGHT,
   TAILWIND_MAX_WIDTH,
+  TAILWIND_MIN_HEIGHT,
   TAILWIND_OPACITY,
+  TAILWIND_RING_OFFSET_WIDTH,
+  TAILWIND_RING_WIDTH,
   TAILWIND_SPACING,
   TAILWIND_WIDTH,
   TAILWIND_Z_INDEX,
@@ -85,6 +92,18 @@ export default {
     zIndex: TAILWIND_Z_INDEX,
     width: TAILWIND_WIDTH,
     gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
+    // The six the operator asked for on 2026-08-25. `flex` and `inset` are the
+    // two with a trap in them: `flex` is `flex-1` and not the `flex` display
+    // utility, and `inset` is read by `top-*` as well as by `inset-*`. Both are
+    // in use — `STAT.root`, `SHELL.main`, `TABLE.headerCell`, `SHELL.header` —
+    // so both tables keep the entry the recipes need. See lib/tokens.ts.
+    minHeight: TAILWIND_MIN_HEIGHT,
+    maxHeight: TAILWIND_MAX_HEIGHT,
+    borderWidth: TAILWIND_BORDER_WIDTH,
+    ringWidth: TAILWIND_RING_WIDTH,
+    ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
+    inset: TAILWIND_INSET,
+    flex: TAILWIND_FLEX,
     extend: {
       // Tailwind's defaults for these point at palette entries that no longer
       // exist (`gray.200`, `blue.500`). They fall back to `currentColor`

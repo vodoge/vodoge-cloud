@@ -14,9 +14,15 @@ import { buttonClass, type ButtonSize, type ButtonVariant } from "@/lib/tokens";
  *
  * `type` defaults to `button`. The HTML default is `submit`, which turns any
  * button placed inside a form into an accidental submit.
+ *
+ * `ComponentPropsWithRef` rather than `ButtonHTMLAttributes`, so a caller can
+ * take the ref: the confirmation dialog moves focus to its cancel button on
+ * open, and a dialog that opens with the destructive button focused turns a
+ * stray Return into the command. React 19 passes `ref` to a function component
+ * as an ordinary prop, so no `forwardRef` is needed.
  */
 
-export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+export type ButtonProps = React.ComponentPropsWithRef<"button"> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
 };

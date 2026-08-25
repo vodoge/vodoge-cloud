@@ -40,12 +40,97 @@ export function CardContent({ className, ...props }: DivProps) {
 }
 
 /**
- * Says what would be here, not just that nothing is.
+ * The old card's prop shape, drawn with the new parts.
  *
- * "No rows" leaves the reader unsure whether the page is empty or broken,
- * which on a fleet console is the difference between "nothing happened" and
- * "we are not seeing what happened".
+ * ## Why this exists, when the parts above are the better API
+ *
+ * `components/ui.tsx` exports a `Card` that takes `title`, `note`, `actions`
+ * and `bodyless`, and **ten pages import it** — every page in the seven
+ * remaining migration cards. The composed `Card` here is a different API, so
+ * each of those seven cards would have had to decide for itself how to turn
+ * `<Card title=… note=… actions=… bodyless>` into header parts. Seven cards
+ * running in parallel, each translating the same four props, is seven answers,
+ * and the four that disagree are found afterwards by eye.
+ *
+ * So the translation is written once, here, and a page migrating a card is a
+ * change of import rather than a rewrite of every card on the page:
+ *
+ * ```tsx
+ * import { CardPanel as Card } from "@/components/ui/card";
+ * ```
+ *
+ * The composed parts stay the primary API — a card whose content is a
+ * full-bleed table is `<Card>` with a `<Table>` in it, not a boolean — and a
+ * page is free to use them where it wants a header this shape cannot express.
+ * `CardPanel` is for the other ninety per cent, where the header is a title, a
+ * qualifier and maybe two buttons.
  */
+export function CardPanel({
+  title,
+  note,
+  actions,
+  bodyless,
+  className,
+  children,
+  ...props
+}: Omit<React.HTMLAttributes<HTMLElement>, "title"> & {
+  title?: React.ReactNode;
+  /** A qualifier on the title — a count, a timestamp — not a second title. */
+  note?: React.ReactNode;
+  actions?: React.ReactNode;
+  /** Skip the padded body, for a card whose content is a full-bleed table. */
+  bodyless?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card className={className} {...props}>
+      {title ? (
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+          {note ? <CardNote>{note}</CardNote> : null}
+          {actions ? <CardActions>{actions}</CardActions> : null}
+        </CardHeader>
+      ) : null}
+      {bodyless ? children : <CardContent>{children}</CardContent>}
+    </Card>
+  );
+}
+
+/**
+ * A card that folds.
+ *
+ * `<details>` rather than a `useState`, so it works with JavaScript off, needs
+ * no client boundary, and keeps a server-rendered page a server component.
+ * The stylesheet styles neither `details` nor `summary`, so there is nothing
+ * here for the legacy layer to fight over.
+ *
+ * `hint` is the caller's own affordance in place of the disclosure triangle,
+ * which `list-none` removes: "3 configured" reads better than a marker, and a
+ * marker that cannot be styled consistently across browsers is worse than a
+ * word.
+ */
+export function CardDisclosure({
+  title,
+  hint,
+  className,
+  children,
+  ...props
+}: Omit<React.DetailsHTMLAttributes<HTMLDetailsElement>, "title"> & {
+  title: React.ReactNode;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className={cn(CARD.root, className)} {...props}>
+      <summary className={CARD.disclosureSummary}>
+        <span className={CARD.title}>{title}</span>
+        {hint ? <span className={CARD.disclosureMarker}>{hint}</span> : null}
+      </summary>
+      <CardContent>{children}</CardContent>
+    </details>
+  );
+}
+
 /**
  * A row of stat cards. `flex`, never `grid` — see LEGACY_UTILITY_COLLISIONS.
  */
