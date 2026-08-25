@@ -1889,6 +1889,139 @@ test("the overview stays a read-only server component", () => {
   );
 });
 
+/**
+ * Recipes that ask for a border width and never say what kind of border.
+ *
+ * 🔴 **Preflight is off, and the reset that stands in for it does not carry
+ * preflight's `border-style: solid`.** `app/globals.css` resets `box-sizing`
+ * and nothing else. So a Tailwind border-*width* utility computes to **0px**
+ * unless something else has set a style: `border-style` defaults to `none`, and
+ * a `none` border has no width whatever the width utility says.
+ *
+ * Measured at 390x844 against the real build, not read:
+ *
+ * | recipe | element | asked for | computed |
+ * |---|---|---|---|
+ * | `TABS.list` | `div` | `border-b border-line` | `none 0px` — **fixed here** |
+ * | `TABS.tab` | `a` | `border-b-2` | `none 0px` — **fixed here** |
+ * | `CARD.root` | `section` | `border border-line` | `none 0px` |
+ * | `TABLE.row` | `tr` | `border-b border-line` | `none 0px` |
+ * | `BUTTON.base` | `button` | `border` | `solid 1px` — the legacy layer |
+ * | `FORM.input` | `input` | `border` | `solid 1px` — the legacy layer |
+ * | `TABLE.headerCell` | `th` | `border-b` | `solid 1px` — the legacy layer |
+ *
+ * The ones that work are the ones the legacy layer hands a `border:` shorthand
+ * to by element name. **That is the trap**: the tab that renders as a
+ * `<button>` drew correctly and the one that renders as an `<a>` did not, from
+ * one recipe — and it means the whole class of defect disappears on the day
+ * `@layer legacy` is deleted for the recipes that look fine today, and stays
+ * for the ones that do not.
+ *
+ * 🔴 **`CARD.root` and `TABLE.row` are not fixed here and this list is how that
+ * is reported rather than forgotten.** They are drawn on `/`, `/login`,
+ * `/audit`, the shell, and the ten pages that still import the compatibility
+ * layer. Giving them a border style makes a border appear on fifteen pages that
+ * do not have one today — a visible change to already-migrated pages, which is
+ * a call for the operator and the PM, not for a card migrating one page. The
+ * complete fix is one declaration in the reset in `app/globals.css`, which no
+ * page card may edit.
+ *
+ * The list may only shrink: a new recipe that asks for a width without a style
+ * fails immediately.
+ */
+const BORDER_WIDTH_WITHOUT_A_STYLE = [
+  "BUTTON.base",
+  "CARD.disclosureSummary",
+  "CARD.header",
+  "CARD.root",
+  "CENTERED.card",
+  "CONFIRM.panel",
+  "FORM.input",
+  "FORM.select",
+  "FORM.textarea",
+  "SEGMENTED.root",
+  "SHELL.header",
+  "SHELL.navGroup",
+  "SHELL.tenant",
+  "STAT.root",
+  "TABLE.headerCell",
+  "TABLE.row",
+  "TABLE.specRow",
+];
+
+test("a recipe that asks for a border width says what kind of border it is", () => {
+  const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
+  const found: string[] = [];
+  const table = TOKENS as unknown as Record<string, unknown>;
+
+  const walk = (value: unknown, path: string) => {
+    if (typeof value === "string") {
+      const words = value.split(/\s+/).filter(Boolean);
+      // `border-b-0` and friends switch a side off; asking for a style there
+      // would be asking for a style on a border that is not being drawn.
+      const asks = words.some((word) => width.test(word) && !/-0$/.test(word));
+      if (asks && !words.includes("border-solid")) found.push(path);
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) walk(inner, `${path}.${key}`);
+    }
+  };
+  for (const name of recipeNames()) walk(table[name], name);
+
+  // Derived, not remembered: if the width matcher stops matching, everything
+  // below it is vacuously true.
+  assert.ok(
+    found.length > 0,
+    "the border-width matcher found nothing at all; this check is measuring nothing",
+  );
+  const unlisted = found.filter((path) => !BORDER_WIDTH_WITHOUT_A_STYLE.includes(path)).sort();
+  assert.deepEqual(
+    unlisted,
+    [],
+    "this recipe's border computes to 0px: preflight is off and nothing sets border-style",
+  );
+  const fixed = BORDER_WIDTH_WITHOUT_A_STYLE.filter((path) => !found.includes(path));
+  assert.deepEqual(fixed, [], "one of these was fixed; take it off the list so it cannot come back");
+
+  // 🔴 The other half, and the reason preflight is two declarations rather than
+  // one. Switching `border-style` on switches it on for all four sides, and the
+  // initial `border-*-width` is `medium` — 3px. A recipe that says
+  // `border-solid` and states a width for one side gets a 3px rule on the other
+  // three. Measured: the first `border-solid` on the tab strip put a 3px line
+  // along its top. So every side has to be given a width.
+  const SIDES = ["top", "right", "bottom", "left"];
+  const covers: Record<string, string[]> = {
+    "": SIDES,
+    x: ["right", "left"],
+    y: ["top", "bottom"],
+    t: ["top"],
+    r: ["right"],
+    b: ["bottom"],
+    l: ["left"],
+  };
+  const partial: string[] = [];
+  const walkStyles = (value: unknown, path: string) => {
+    if (typeof value === "string") {
+      const words = value.split(/\s+/).filter(Boolean);
+      if (!words.includes("border-solid")) return;
+      const given = new Set<string>();
+      for (const word of words) {
+        const match = width.exec(word);
+        if (match) for (const side of covers[(match[2] ?? "").replace("-", "")]) given.add(side);
+      }
+      const uncovered = SIDES.filter((side) => !given.has(side));
+      if (uncovered.length) partial.push(`${path}: no width on ${uncovered.join(", ")}`);
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) walkStyles(inner, `${path}.${key}`);
+    }
+  };
+  for (const name of recipeNames()) walkStyles(table[name], name);
+  assert.deepEqual(
+    partial,
+    [],
+    "a side with no width stated renders at the initial `medium`, which is 3px",
+  );
+});
+
 /* ── The device detail page ──────────────────────────────────────────── */
 
 const DEVICE_PAGE = "app/devices/[deviceId]/page.tsx";

@@ -904,10 +904,36 @@ export const OUTPUT = {
  * is a `<button>`. `border-x-0 border-t-0` is not decoration: preflight is off
  * and the legacy layer gives every bare `button` a 1px border on all four
  * sides.
+ *
+ * 🔴 `border-solid` on both, and it is not redundant. Measured, not read.
+ *
+ * Preflight is off, and the reset that stands in for it (`app/globals.css`)
+ * is `* { box-sizing: border-box }` — it does **not** carry preflight's
+ * `border-style: solid`. So a Tailwind border-*width* utility on an element
+ * the legacy layer gives no `border:` shorthand to computes to **0px**:
+ * `border-style` defaults to `none`, and a `none` border has no width whatever
+ * the width utility says.
+ *
+ * At 390px, before this line, `getComputedStyle` on the strip and on a tab
+ * both reported `none 0px`: **the rule under the tab strip and the accent
+ * underline that says which tab is selected were not being drawn at all.** The
+ * tab that renders as a `<button>` was fine and the one that renders as an
+ * `<a>` was not, because `@layer legacy` gives every bare `button` a
+ * `border: 1px solid transparent` and gives `a` nothing — so the defect was
+ * invisible in exactly the half of the component that was tried first.
+ *
+ * 🔴 And `border-0` beside it, which is the other half preflight does. The
+ * first version of this fix said only `border-solid`, and the measurement came
+ * back with a **3px** rule along the top of the strip: the initial value of
+ * `border-top-width` is `medium`, which is 3px, and it had been invisible only
+ * because the style was `none`. Turning the style on turns all four sides on.
+ * Preflight is `border-width: 0` *and* `border-style: solid` for that reason.
+ *
+ * Other recipes are in the same position; see `BORDER_WIDTH_WITHOUT_A_STYLE`.
  */
 export const TABS = {
-  list: "flex flex-wrap items-center gap-x-s4 border-b border-line",
-  tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
+  list: "flex flex-wrap items-center gap-x-s4 border-0 border-b border-solid border-line",
+  tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
   /** The underline, not a fill: a filled tab competes with the primary button. */
   tabCurrent: "border-accent text-fg",
   panel: "pt-s4",
