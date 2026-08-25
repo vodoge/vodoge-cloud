@@ -5,7 +5,14 @@ import {
   TAILWIND_COLORS,
   TAILWIND_FONT_FAMILY,
   TAILWIND_FONT_SIZE,
+  TAILWIND_GRID_TEMPLATE_COLUMNS,
+  TAILWIND_LETTER_SPACING,
+  TAILWIND_LINE_HEIGHT,
+  TAILWIND_MAX_WIDTH,
+  TAILWIND_OPACITY,
   TAILWIND_SPACING,
+  TAILWIND_WIDTH,
+  TAILWIND_Z_INDEX,
 } from "./lib/tokens.ts";
 
 /**
@@ -25,6 +32,16 @@ import {
  * thing, and `lib/tokens.test.ts` asks the real build about every class the
  * migrated files use, so the silence becomes a failing test.
  *
+ * **Replacing five scales was not enough.** Every axis Tailwind ships a default
+ * for stays live until it is replaced, and the ones that were left alone were
+ * exactly the ones seven page migrations would each have picked their own value
+ * from: `max-w-md leading-7 opacity-75 z-50` used to generate real CSS from
+ * numbers nobody here had chosen. They are replaced below too, with closed
+ * scales in `lib/tokens.ts` holding the values the recipes already used —
+ * nothing rendered changed, and the next off-scale class now generates nothing.
+ * `lib/tokens.test.ts` asserts these arrive as replacements rather than under
+ * `extend`, because putting one under `extend` restores the whole default.
+ *
  * **Preflight is off.** Fourteen pages still render from the legacy stylesheet
  * in `@layer legacy`, and that stylesheet is styling bare `button`, `input`,
  * `table` and `label` elements. Preflight is unlayered, so switching it on
@@ -42,8 +59,14 @@ export default {
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
-    // The class recipes live here, so this file is content, not config.
-    "./lib/**/*.{ts,tsx}",
+    // The class recipes live here, so this file is content, not config. Named
+    // exactly rather than as `./lib/**`, because that glob also swept up
+    // `lib/tokens.test.ts` — and a test about arbitrary values has to write
+    // `p-[13px]` and `dark:bg-bad` down to reject them, whereupon Tailwind
+    // found them and emitted them into the stylesheet the console ships. Dead
+    // rules, but dead rules that look exactly like the thing being guarded
+    // against, in the artefact an audit would read.
+    "./lib/tokens.ts",
   ],
   corePlugins: {
     preflight: false,
@@ -55,6 +78,13 @@ export default {
     borderRadius: TAILWIND_BORDER_RADIUS,
     boxShadow: TAILWIND_BOX_SHADOW,
     fontFamily: TAILWIND_FONT_FAMILY,
+    maxWidth: TAILWIND_MAX_WIDTH,
+    lineHeight: TAILWIND_LINE_HEIGHT,
+    letterSpacing: TAILWIND_LETTER_SPACING,
+    opacity: TAILWIND_OPACITY,
+    zIndex: TAILWIND_Z_INDEX,
+    width: TAILWIND_WIDTH,
+    gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
     extend: {
       // Tailwind's defaults for these point at palette entries that no longer
       // exist (`gray.200`, `blue.500`). They fall back to `currentColor`

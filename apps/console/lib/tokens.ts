@@ -220,6 +220,100 @@ export const TAILWIND_FONT_FAMILY = {
   mono: "var(--font-mono)",
 } as const;
 
+/* ── The scales that were nearly forgotten ───────────────────────────────
+ *
+ * Replacing colour, spacing, type, radius and shadow is not enough. Tailwind
+ * ships a default scale for every other axis too, and those defaults stay live
+ * unless they are replaced: before this table existed,
+ * `max-w-md leading-7 opacity-75 z-50` produced perfectly good CSS out of
+ * numbers nobody in this repository had ever chosen, and no test could see it.
+ * That is the drift this design system was built to stop, arriving through the
+ * back door — seven pages of migration each picking its own `max-w-*` is
+ * exactly the failure mode.
+ *
+ * Each scale below is closed and small: the entries are the ones the recipes
+ * actually use, at the values Tailwind's defaults gave them, so nothing that is
+ * rendered changed when they were replaced. Needing another step is fine —
+ * add it here, with a reason, where `tokens.test.ts` and a reviewer can see it.
+ */
+
+/** Line lengths. Two: a readable measure, and the content column. */
+export const TAILWIND_MAX_WIDTH = {
+  none: "none",
+  full: "100%",
+  /** The measure a sentence stays readable at: the centred card, empty states. */
+  measure: "24rem",
+  /** The content column the shell and every page share. */
+  page: "80rem",
+} as const;
+
+/**
+ * Only `leading-none`, for a 2rem number that carries its own space.
+ *
+ * Body line-height is set once on `body` in `app/globals.css`; a utility per
+ * paragraph is how a page ends up with four of them.
+ */
+export const TAILWIND_LINE_HEIGHT = {
+  none: "1",
+} as const;
+
+/** Tight for large type, wider for small caps. Nothing else earns a step. */
+export const TAILWIND_LETTER_SPACING = {
+  normal: "0em",
+  tight: "-0.025em",
+  wider: "0.05em",
+} as const;
+
+/**
+ * Disabled, and the one hover state that dims instead of recolouring.
+ *
+ * Opacity is not a colour: fading text to 75% produces a grey that is in no
+ * theme and passes no contrast check. `text-fg-muted` exists for that.
+ */
+export const TAILWIND_OPACITY = {
+  "0": "0",
+  "50": "0.5",
+  "90": "0.9",
+  "100": "1",
+} as const;
+
+/**
+ * Three layers, because a console with a `z-50` in it has already lost.
+ *
+ * 20 is the sticky header, and it matches `.shell-header` in the legacy
+ * stylesheet so the two chromes cannot fight during the migration.
+ */
+export const TAILWIND_Z_INDEX = {
+  auto: "auto",
+  "0": "0",
+  "10": "10",
+  "20": "20",
+} as const;
+
+/** Spacing plus the two keywords. No fractions: a `w-7/12` is a magic number. */
+export const TAILWIND_WIDTH = {
+  auto: "auto",
+  full: "100%",
+  ...TAILWIND_SPACING,
+} as const;
+
+/**
+ * Fixed column counts only.
+ *
+ * Tailwind's default goes to twelve; six is past the point where a table is the
+ * right control. `auto-fill`/`minmax` layouts need an arbitrary value, which
+ * this system rejects — that is what `LEGACY_UTILITY_COLLISIONS` is about.
+ */
+export const TAILWIND_GRID_TEMPLATE_COLUMNS = {
+  none: "none",
+  "1": "repeat(1, minmax(0, 1fr))",
+  "2": "repeat(2, minmax(0, 1fr))",
+  "3": "repeat(3, minmax(0, 1fr))",
+  "4": "repeat(4, minmax(0, 1fr))",
+  "5": "repeat(5, minmax(0, 1fr))",
+  "6": "repeat(6, minmax(0, 1fr))",
+} as const;
+
 /* ── Class recipes ───────────────────────────────────────────────────────
  *
  * Read by `components/ui/*.tsx`, and by `tokens.test.ts`, which asks the real
@@ -262,7 +356,7 @@ export const CARD = {
   empty: "flex flex-col items-center gap-s2 px-s5 py-s7 text-center text-fg-muted",
   emptyTitle: "font-semibold text-fg",
   /** Says what would be here. "No rows" leaves the reader unsure it is not broken. */
-  emptyDescription: "max-w-sm text-sm",
+  emptyDescription: "max-w-measure text-sm",
 } as const;
 
 /**
@@ -366,7 +460,7 @@ export const SHELL = {
    * — is the arrangement this card was written to replace.
    */
   header: "z-20 border-b border-line bg-surface sm:sticky sm:top-0",
-  bar: "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-s3 px-s3 py-s2 sm:px-s5",
+  bar: "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s2 sm:px-s5",
   brand: "flex items-center gap-s2 text-base font-semibold tracking-tight text-fg",
   brandMark:
     "flex size-s5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink",
@@ -382,7 +476,7 @@ export const SHELL = {
    * matching vertical gap only makes a wrapped nav taller. On a 390px phone in
    * English this is the difference between a 304px and a 320px header.
    */
-  nav: "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-x-s3 gap-y-s2 px-s3 pb-s2 sm:gap-x-s4 sm:px-s5",
+  nav: "mx-auto flex w-full max-w-page flex-wrap items-center gap-x-s3 gap-y-s2 px-s3 pb-s2 sm:gap-x-s4 sm:px-s5",
   /**
    * A rule between groups, not only a caption.
    *
@@ -402,9 +496,9 @@ export const SHELL = {
   navLink:
     "inline-flex min-h-touch items-center rounded px-s2 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg sm:px-s3 sm:text-sm",
   navLinkCurrent: "bg-accent-wash font-semibold text-accent",
-  main: "mx-auto w-full max-w-7xl flex-1 px-s3 py-s4 sm:px-s5 sm:py-s5",
+  main: "mx-auto w-full max-w-page flex-1 px-s3 py-s4 sm:px-s5 sm:py-s5",
   footer:
-    "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-s3 px-s3 py-s4 text-sm text-fg-muted sm:px-s5",
+    "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s4 text-sm text-fg-muted sm:px-s5",
   footerLabel: "text-fg-faint",
   /** Anchors are `text-decoration: none` globally, so a bare link has to say so. */
   footerLink: "underline transition-colors hover:text-fg",
@@ -433,7 +527,7 @@ export const SAFE_AREA = {
 
 export const CENTERED = {
   root: "flex min-h-dvh flex-col items-center justify-center p-s5",
-  card: "flex w-full max-w-sm flex-col gap-s4 rounded-lg border border-line bg-surface p-s6 shadow-lg",
+  card: "flex w-full max-w-measure flex-col gap-s4 rounded-lg border border-line bg-surface p-s6 shadow-lg",
   brand: "flex items-center gap-s2 text-lg font-semibold text-fg",
   hint: "m-0 text-sm text-fg-muted",
 } as const;
@@ -441,17 +535,39 @@ export const CENTERED = {
 /**
  * Form parts.
  *
- * Preflight is off and the legacy stylesheet still styles bare `form`, `label`
- * and `input` elements, so every property that has to differ is spelled out
- * rather than left to inherit. `focus` deliberately says nothing about
- * `outline`: the global `:focus-visible` ring comes back on its own when the
- * legacy layer goes.
+ * Preflight is off and the legacy stylesheet still styles bare `form`, `label`,
+ * `input`, `select` and `textarea` elements, so every property that has to
+ * differ is spelled out rather than left to inherit. `focus` deliberately says
+ * nothing about `outline`: the global `:focus-visible` ring comes back on its
+ * own when the legacy layer goes.
+ *
+ * There is a recipe here for **every** element the legacy layer styles bare,
+ * and `tokens.test.ts` checks that from the stylesheet rather than from memory.
+ * A `select` or a `textarea` with no recipe is not a gap that shows up now — it
+ * looks perfectly fine today, because `@layer legacy` is painting it. It shows
+ * up on the day that layer is deleted, on whichever pages happened to use one.
  */
 export const FORM = {
   root: "flex flex-col gap-s3",
   label: "flex flex-col gap-s1 text-sm font-medium text-fg-muted",
   input:
     "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
+  /**
+   * The same box as `input`, minus the placeholder a `select` cannot have.
+   * The native arrow is left alone: removing it means drawing and positioning
+   * a replacement, and a picker that does not look like the platform's picker
+   * is the kind of polish that costs an operator a tap.
+   */
+  select:
+    "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-accent disabled:opacity-50",
+  /**
+   * Padded on all four sides rather than only the sides, because the text
+   * starts at the top rather than being centred on one line. Height comes from
+   * the caller's `rows`, which is a count of lines and therefore survives a
+   * change of type scale; a `min-h-*` here would not.
+   */
+  textarea:
+    "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
   error: "m-0 text-sm text-bad",
 } as const;
 
@@ -594,6 +710,12 @@ export function toneForState(state: string): BadgeTone {
  * of migrating it. Two of the entries below — `pwa.tsx` and `live-reload.tsx`
  * — render `null` and never carried a class; they are listed so that the
  * guard, not a reader's memory, is what keeps them that way.
+ *
+ * This list *is* criterion ①, so it cannot be opt-in. `tokens.test.ts` asserts
+ * that it and `UNMIGRATED_SOURCES` together account for every `.tsx` under
+ * `app/` and `components/`, and that every file still on the unmigrated list
+ * really does still carry a legacy class. A page migrated without being moved
+ * across is therefore a failing test rather than a page nothing checks.
  */
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
@@ -616,21 +738,82 @@ export const MIGRATED_SOURCES = [
 ] as const;
 
 /**
+ * The other side of the same ledger: files still rendered by the old stylesheet.
+ *
+ * Every `.tsx` under `app/` and `components/` is on exactly one of these two
+ * lists — `tokens.test.ts` walks the directories and checks it, so a new file
+ * has to be classified rather than quietly escaping both. Migrating a page
+ * means moving its name up, and the test that every file down here still uses a
+ * legacy class is what makes forgetting to move it fail.
+ *
+ * `app/unknown-tenant/page.tsx` calls `notFound()` and renders nothing at all.
+ * It is left here rather than promoted, because promoting a file that has no
+ * markup would count as migration progress without any having happened.
+ */
+export const UNMIGRATED_SOURCES = [
+  "app/devices/[deviceId]/page.tsx",
+  "app/devices/page.tsx",
+  "app/inbox/[peer]/page.tsx",
+  "app/inbox/page.tsx",
+  "app/journal/page.tsx",
+  "app/proxy/page.tsx",
+  "app/rules/page.tsx",
+  "app/schedule/page.tsx",
+  "app/sessions/page.tsx",
+  "app/settings/page.tsx",
+  "app/unknown-tenant/page.tsx",
+  "components/card-policies.tsx",
+  "components/conversation.tsx",
+  "components/device-admin.tsx",
+  "components/device-console.tsx",
+  "components/esim-panel.tsx",
+  "components/journal.tsx",
+  "components/proxy-manager.tsx",
+  "components/send-sms.tsx",
+  "components/settings-form.tsx",
+  "components/ui.tsx",
+] as const;
+
+/**
  * Class names that exist in *both* the legacy stylesheet and Tailwind.
  *
  * These are the dangerous ones. A cascade layer decides who wins when both
  * declare the same property; it does nothing about the properties only the
  * legacy rule declares. `.grid` sets `gap` and `grid-template-columns` that
  * Tailwind's `grid` utility says nothing about, so those leak into any
- * migrated element carrying the utility. Use `flex`, or spell out
- * `grid-cols-*` and `gap-*` — and delete this list with the stylesheet.
+ * migrated element carrying the utility.
+ *
+ * **How to lay something out in a grid before the legacy layer is deleted.**
+ * The collision is between *class names*, not between display modes, so the
+ * escape hatch is any name the legacy selector does not match:
+ *
+ * - `flex` / `flex-col`, which is what almost every case here wants; or
+ * - a variant-prefixed grid — `sm:grid`, `max-sm:grid` — because the class
+ *   attribute then reads `sm:grid` and `.grid` does not match it. Pair it with
+ *   `grid-cols-*` and `gap-*` from the token scales as usual.
+ *
+ * Earlier advice in this comment said a bare `grid` was fine as long as
+ * `grid-cols-*` and `gap-*` were spelled out. That is true of the two
+ * declarations `.grid` happens to set *today*, and `FORBIDDEN_IN_MIGRATED_SOURCES`
+ * rejected it anyway, so the file argued with itself and the tests won. It is
+ * gone for a better reason than the argument: "override every property the
+ * legacy rule sets" is an audit that has to be redone every time the legacy
+ * rule changes, and nothing can check it. "Do not use the colliding name" is
+ * one line of test.
  *
  * `tokens.test.ts` derives the real collision set from the stylesheet and the
- * Tailwind build, so a new one cannot appear unnoticed.
+ * Tailwind build, so a new one cannot appear unnoticed. Delete this list with
+ * the stylesheet.
  */
 export const LEGACY_UTILITY_COLLISIONS = ["grid", "grow", "sr-only"] as const;
 
-/** Of those, the ones a migrated file may not use at all. */
+/**
+ * Of those, the ones a migrated file may not use at all.
+ *
+ * Matched as whole class names, which is what makes `sm:grid` a way out and
+ * `grid` not one. `sr-only` is absent because the legacy rule and the utility
+ * say the same thing.
+ */
 export const FORBIDDEN_IN_MIGRATED_SOURCES = ["grid", "grow"] as const;
 
 /**
