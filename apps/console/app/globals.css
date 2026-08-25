@@ -1,3 +1,6 @@
+@tailwind base;
+@tailwind components;
+
 /*
  * VoDoge design tokens and primitives.
  *
@@ -5,9 +8,43 @@
  * stretches, often beside a terminal. The light theme is a real theme, not an
  * inversion — its greys are warmer so text does not glare.
  *
- * Everything below is either a token or a primitive used on more than one page.
- * Page-specific styling belongs with the page.
+ * ── How this file is arranged, and why ───────────────────────────────────
+ *
+ * Two cascade layers, then one unlayered block, in this order:
+ *
+ *   @layer tokens    the custom properties below, plus the reset that stands
+ *                    in for Tailwind's preflight
+ *   @layer legacy    the hand-written stylesheet the not-yet-migrated pages
+ *                    render with
+ *   (unlayered)      @tailwind utilities, at the end of the file
+ *
+ * Unlayered CSS beats layered CSS whatever the specificity, so every Tailwind
+ * utility outranks every legacy rule — including rules whose selectors are
+ * more specific than a single class, like `tbody tr:hover td` and
+ * `button:hover:not(:disabled)`. Those two beat `hover:bg-*` on specificity
+ * alone, and moving `@tailwind utilities` to the end does not change that:
+ * order only settles ties. Without the layer a migrated page would look
+ * migrated while still being painted by the old stylesheet in exactly the
+ * states nobody screenshots.
+ *
+ * Inside `@layer legacy` the old rules keep their original order and relative
+ * specificity, which is why the pages that read them are unaffected. They are
+ * also left at their original indentation: the wrapper is meant to be two
+ * lines in a diff, not a thousand.
+ *
+ * `@layer legacy` is what gets deleted when the last page is migrated. The
+ * token block moves out of `@layer tokens` then, and Tailwind's preflight goes
+ * on at the same time — not before, because preflight is unlayered and would
+ * outrank every legacy rule the moment it is switched on.
+ *
+ * The values below are generated from `lib/tokens.ts` and checked against it
+ * by `lib/tokens.test.ts`, so this block and the Tailwind theme cannot drift.
+ *
+ * Everything in the legacy layer is either a token or a primitive used on more
+ * than one page. Page-specific styling belongs with the page.
  */
+
+@layer tokens {
 
 :root {
   color-scheme: dark;
@@ -143,6 +180,15 @@ a {
     transition-duration: 0.01ms !important;
   }
 }
+
+}
+
+/* ── The stylesheet being replaced ────────────────────────────────────────
+   Everything below here is what the pages this refactor has not reached yet
+   render from. It is unchanged apart from the wrapper; the wrapper is what
+   stops it reaching the pages that have been migrated. */
+
+@layer legacy {
 
 /* ---------- Layout ---------- */
 
@@ -1003,3 +1049,8 @@ form {
   color: var(--fg-faint);
   font-style: italic;
 }
+
+}
+
+/* Unlayered, and last: see the note at the top of the file. */
+@tailwind utilities;
