@@ -517,6 +517,33 @@ export const SHELL = {
  */
 export const SAFE_AREA = {
   headerTop: { paddingTop: "calc(var(--s2) + env(safe-area-inset-top))" },
+  /**
+   * The left and right halves, which were missing.
+   *
+   * Top and bottom were covered — the header by `headerTop`, the content by
+   * `padding-bottom` on `body` in `app/globals.css` — and the sides were not.
+   * They are not a hypothetical: an iPhone held in landscape puts the notch on
+   * one edge and the rounded corners on both, and Safari renders edge to edge
+   * horizontally even in a browser tab, so this is clipped text on a device
+   * that is *not* installed. Applied to `<body>` in `app/layout.tsx`.
+   */
+  sides: {
+    paddingLeft: "env(safe-area-inset-left)",
+    paddingRight: "env(safe-area-inset-right)",
+  },
+  /**
+   * All three again, for a bar fixed to the viewport.
+   *
+   * `position: fixed` takes the element out of `<body>`'s padding box, so it
+   * inherits none of the above: the connection banner would otherwise sit
+   * under the home indicator and behind the landscape notch, which is where
+   * the one element whose entire job is being read would be least readable.
+   */
+  fixedBottom: {
+    paddingLeft: "env(safe-area-inset-left)",
+    paddingRight: "env(safe-area-inset-right)",
+    paddingBottom: "env(safe-area-inset-bottom)",
+  },
 } as const;
 
 /* ── Auth, 404 and the apex page ─────────────────────────────────────────
@@ -569,6 +596,57 @@ export const FORM = {
   textarea:
     "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
   error: "m-0 text-sm text-bad",
+} as const;
+
+/* ── The two PWA affordances ─────────────────────────────────────────────
+ *
+ * An install offer and a connection banner. They are deliberately at opposite
+ * ends of the page and never share an edge, because they can be on screen at
+ * the same time — a console being read offline is exactly a console somebody
+ * would rather have installed — and two overlapping fixed bars is how one of
+ * them becomes invisible.
+ */
+
+export const PWA = {
+  /**
+   * The install offer: in the normal flow, above the header, not floating.
+   *
+   * A fixed chip would cover content on the one screen size where content is
+   * scarcest, and it would have to fight the banner below for the same corner.
+   * In the flow it pushes the page down by one row and can never obscure
+   * anything.
+   *
+   * It needs no top safe-area inset, and that is not an oversight: it renders
+   * only when the console is *not* installed, and an uninstalled console is
+   * being read inside browser chrome, where `env(safe-area-inset-top)` is zero
+   * because the browser's own toolbar already occupies that strip.
+   */
+  install: {
+    bar: "flex flex-wrap items-center gap-x-s3 gap-y-s2 border-b border-line bg-surface-raised px-s3 py-s2 text-sm sm:px-s5",
+    text: "flex flex-wrap items-baseline gap-x-s2 gap-y-s1",
+    title: "font-semibold text-fg",
+    hint: "text-fg-muted",
+    actions: "ml-auto flex items-center gap-s2",
+  },
+  /**
+   * The connection banner: fixed to the bottom, in the status red.
+   *
+   * Bottom rather than top because the header is already sticky up there and
+   * an alert that has to fight for the same strip loses. Red rather than amber
+   * because it is not a warning about something that might happen — every
+   * number above it is already out of date.
+   */
+  connection: {
+    bar: "fixed inset-x-0 bottom-0 z-20 border-t border-bad bg-bad-wash shadow-lg",
+    inner:
+      "mx-auto flex w-full max-w-page flex-wrap items-center gap-x-s3 gap-y-s1 px-s3 py-s3 text-sm sm:px-s5",
+    mark: "size-s2 shrink-0 rounded-pill bg-bad",
+    title: "font-semibold text-bad",
+    detail: "text-fg-muted",
+    /** Monospace so the clock does not reflow while the rest of the row does. */
+    time: "font-mono font-semibold text-fg",
+    actions: "ml-auto flex items-center gap-s2",
+  },
 } as const;
 
 /**
@@ -724,6 +802,7 @@ export const MIGRATED_SOURCES = [
   "app/not-found.tsx",
   "app/not-a-tenant/page.tsx",
   "app/page.tsx",
+  "components/connection-status.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",

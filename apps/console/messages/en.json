@@ -522,5 +522,14 @@
   "nav.group.fleet": "Fleet",
   "nav.group.comms": "Comms",
   "nav.group.network": "Network",
-  "nav.schedule": "Schedule"
+  "nav.schedule": "Schedule",
+  "pwa.install.title": "Install the console",
+  "pwa.install.hint": "It opens full screen, without the browser's address bar.",
+  "pwa.install.action": "Install",
+  "pwa.install.dismiss": "Not now",
+  "pwa.install.iosTitle": "Add to Home Screen",
+  "pwa.install.iosHint": "In Safari, tap Share at the bottom, then Add to Home Screen.",
+  "connection.lost": "Connection lost",
+  "connection.stale": "the data on screen is from",
+  "connection.retry": "Reload"
 }

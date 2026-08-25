@@ -522,5 +522,14 @@
   "nav.group.fleet": "机队",
   "nav.group.comms": "通信",
   "nav.group.network": "网络",
-  "nav.schedule": "计划"
+  "nav.schedule": "计划",
+  "pwa.install.title": "把控制台装到桌面",
+  "pwa.install.hint": "装成应用后全屏打开，不占浏览器地址栏那一条。",
+  "pwa.install.action": "安装",
+  "pwa.install.dismiss": "以后再说",
+  "pwa.install.iosTitle": "添加到主屏幕",
+  "pwa.install.iosHint": "在 Safari 里点底部的「分享」，再选「添加到主屏幕」。",
+  "connection.lost": "连接丢失",
+  "connection.stale": "屏幕上的数据停在",
+  "connection.retry": "重新载入"
 }
