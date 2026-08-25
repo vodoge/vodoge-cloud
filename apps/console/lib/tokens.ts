@@ -1191,6 +1191,18 @@ export const INBOX = {
   blocked: "m-0 flex flex-col gap-s2 rounded border border-solid border-bad bg-bad-wash p-s3 text-sm text-bad",
   blockedTitle: "font-semibold",
   blockedBody: "m-0",
+  /**
+   * Sending is held because the module list could not be read.
+   *
+   * The warning colour rather than the bad one, and the difference is the
+   * message: `blocked` above is "this device must not send", which is settled;
+   * this is "nobody could find out", which is not. Same box, so it is plainly a
+   * refusal and not a footnote — a hint under the field is what this used to be,
+   * and it sat under a button that still worked.
+   */
+  hold: "m-0 flex flex-col gap-s2 rounded border border-solid border-warn bg-warn-wash p-s3 text-sm text-warn",
+  /** A plain note where a control would have been. */
+  note: "m-0 text-sm text-fg-muted",
 } as const;
 
 /**
@@ -1691,11 +1703,9 @@ export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }
 /**
  * Writes that may only happen after somebody answered the question.
  *
- * Keyed by file, valued by the function that performs the request. The check in
- * `tokens.test.ts` is deliberately about **where the call site is**, not about
- * whether a dialog exists somewhere in the file: each name here has to perform
- * a mutating `fetch`, has to be reachable from a `ConfirmDialog`'s `onConfirm`,
- * and must **not** be named in any `onClick` or `onSubmit`.
+ * The ledger of confirmed writes, the module that must not send, and the
+ * fail-closed answer to "may this form send" all moved to `lib/sms-safety.ts`.
+ * T014 left them here under protest and said so twice; T032 moved them.
  *
  * That last clause is the whole point. A file can keep its dialog, keep its
  * confirmation copy, and have somebody wire the button straight back to the
@@ -1709,17 +1719,6 @@ export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }
  * that does not exist yet is a failing test rather than a reminder — which is
  * the right way round: the card that writes the confirmation adds the line.
  */
-/**
- * Only the inbox is listed. The other dangerous actions T030 found live in
- * files this card could not edit, and a name added here for a function that
- * does not exist yet is a failing test rather than a reminder — which is the
- * right way round: the card that writes the confirmation adds the line.
- */
-export const CONFIRMED_WRITES = {
-  "components/card-policies.tsx": ["save", "removePolicy"],
-  "components/send-sms.tsx": ["sendMessage"],
-  "components/conversation.tsx": ["removeThread", "removeMessage", "forgetContact"],
-} as const;
 
 /* ── Modules this console will not send a message from ───────────────────
  *
@@ -1756,38 +1755,7 @@ export const CONFIRMED_WRITES = {
  */
 
 /** IMEI → the message keys that say why, and what the cost really is. */
-export const SMS_BLOCKED_MODULES = {
-  "867018069509705": {
-    why: "inbox.smsBlockedWhy",
-    /** The correction: the message usually goes out. Never say it failed. */
-    cost: "inbox.smsBlockedCost",
-  },
-} as const;
 
-export type SmsBlockedModule = { readonly imei: string; readonly why: string; readonly cost: string };
-
-/**
- * The modules on `deviceId` that this console will not send from.
- *
- * Empty means "nothing known against it", which is not the same as "checked".
- * A caller that could not read the module list has to say so itself — see
- * `inbox.smsModemsUnknown` — because an empty array here and an empty array
- * from a failed read are the same value, and this console has already shipped
- * that bug once on `/audit`.
- */
-export function blockedSendModules(
-  modems: readonly { readonly deviceId: string; readonly imei: string }[],
-  deviceId: string,
-): SmsBlockedModule[] {
-  const table = SMS_BLOCKED_MODULES as Record<string, { why: string; cost: string }>;
-  const out: SmsBlockedModule[] = [];
-  for (const modem of modems) {
-    if (modem.deviceId !== deviceId) continue;
-    const entry = table[modem.imei];
-    if (entry) out.push({ imei: modem.imei, why: entry.why, cost: entry.cost });
-  }
-  return out;
-}
 
 /* ── Secrets that are already stored ─────────────────────────────────────── */
 
@@ -2047,7 +2015,7 @@ export const UI_PRIMITIVES = {
  * page. The remaining `card-grid` site belongs to T013 (/settings), and
  * `send-sms.tsx` to T014, and the entry stays until the last of them is fixed.
  */
-export const CLASSES_WITH_NO_STYLESHEET = ["panel", "primary"] as const;
+export const CLASSES_WITH_NO_STYLESHEET = [] as const;
 
 /**
  * Legacy class names that only ever appear under an ancestor.

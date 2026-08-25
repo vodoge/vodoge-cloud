@@ -9,6 +9,7 @@ import tailwindcss from "tailwindcss";
 import tailwindConfig from "../tailwind.config.ts";
 import { cn } from "./cn.ts";
 import * as TOKENS from "./tokens.ts";
+import { CONFIRMED_WRITES, SMS_BLOCKED_MODULES, blockedSendModules , WRITES_WITHOUT_A_DIALOG } from "./sms-safety.ts";
 import {
   BUTTON,
   CARD_POLICY_CONFIRMATIONS,
@@ -16,7 +17,6 @@ import {
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
-  CONFIRMED_WRITES,
   DEVICE_TABS,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
@@ -30,7 +30,6 @@ import {
   SECURITY_FIELDS,
   SETTINGS_FIELD_KINDS,
   SMS_FIELDS,
-  SMS_BLOCKED_MODULES,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
@@ -57,7 +56,6 @@ import {
   UNMIGRATED_SOURCES,
   assertConsequence,
   badgeClass,
-  blockedSendModules,
   buttonClass,
   cardPolicyGuardFor,
   cardPolicyPatch,
@@ -483,12 +481,10 @@ const NOT_A_RECIPE = new Set([
   "CONFIRM_CONSEQUENCE_KEYS",
   "CONFIRM_LABEL_KEYS",
   "CONFIRM_MIN_CONSEQUENCE",
-  "CONFIRMED_WRITES",
   "REDACTED_SECRET",
   // Message keys and function names: which dialog an edit needs, and which
   // writes are only allowed to happen after somebody answered one.
   "CARD_POLICY_CONFIRMATIONS",
-  "CONFIRMED_WRITES",
   // The settings form's field tables: dotted paths and the type of each, which
   // the page used to hold where no test could read them.
   "SETTINGS_FIELD_KINDS",
@@ -498,7 +494,6 @@ const NOT_A_RECIPE = new Set([
   // IMEIs and message keys, not classes. See the note above it in tokens.ts:
   // it is in that file because the card that wrote it could edit one file
   // under lib/, and it should move out the moment a card owns another.
-  "SMS_BLOCKED_MODULES",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -1402,7 +1397,12 @@ test("a class in any .tsx is defined by the build or by the old stylesheet", asy
   // Low, and correctly so: the migrated files hold no class literals at all —
   // a guard above enforces that — so everything counted here comes from the
   // pages still on the old stylesheet.
-  assert.ok(asked.size > 30, `only ${asked.size} classes found — the extractor is broken`);
+  // PM merge note: this floor shrinks as pages migrate — six page cards landing
+  // took it from 30-plus to 25, because only eight files still hold class
+  // literals. It is a "did the regex break" check, not a coverage claim, and it
+  // goes to zero the day T018 deletes the legacy layer; whoever lands that card
+  // deletes this assertion rather than lowering it again.
+  assert.ok(asked.size > 20, `only ${asked.size} classes found — the extractor is broken`);
 
   const generated = await generatedClasses([...asked, "p-s4"]);
   const legacy = legacyClassNames();
@@ -1681,14 +1681,16 @@ test("a dangerous write is reachable only from a confirmation", () => {
     // `fetch` written straight into a handler passes every line above.
     const mutations = /method:\s*"(POST|PUT|DELETE)"/g;
     const inFile = (scan(source).code.match(mutations) ?? []).length;
+    const allowed = WRITES_WITHOUT_A_DIALOG[relative]?.count ?? 0;
     const inConfirmed = actions.reduce(
       (total, name) => total + ((functionBody(source, name) ?? "").match(mutations) ?? []).length,
       0,
     );
     assert.equal(
-      inConfirmed,
+      inConfirmed + allowed,
       inFile,
-      `${relative} sends ${inFile} mutating requests and ${inConfirmed} are behind the dialog`,
+      `${relative} sends ${inFile} mutating requests; ${inConfirmed} are behind the dialog and ` +
+        `${allowed} are written down in WRITES_WITHOUT_A_DIALOG`,
     );
   }
 
@@ -1780,8 +1782,8 @@ test("the refusal reaches the button and the handler, not just one of them", () 
   assert.ok(submit, "the send form has no submit button any more");
   assert.match(
     submit.text,
-    /disabled=\{[^}]*blocked\.length/,
-    "the send button is enabled on a device that must not send",
+    /disabled=\{[^}]*hold !== null/,
+    "the send button is live while something is holding the send",
   );
 
   // And again in the handler. Return submits a form without the button being
@@ -1790,10 +1792,21 @@ test("the refusal reaches the button and the handler, not just one of them", () 
   // edge panel carries over the same module.
   const body = functionBody(source, "onSubmit");
   assert.ok(body, "the send form has no submit handler");
-  assert.match(body, /blocked\.length[^;]*\)\s*return;/, "the submit handler does not refuse");
+  assert.match(body, /hold !== null\)\s*return;/, "the submit handler does not refuse");
   assert.ok(
-    body.indexOf("blocked.length") < body.indexOf("setPending"),
+    body.indexOf("hold !== null") < body.indexOf("setPending"),
     "the handler refuses after it has already started asking",
+  );
+
+  // And it is the shared answer, not a second opinion computed here. A form
+  // that re-derived "may I send" from `blocked.length` would be green on the
+  // two assertions above and fail open again the moment the module list did
+  // not load — which is the exact defect this card was opened for.
+  const code = codeOnly(source);
+  assert.match(code, /sendHold\(\{[^}]*modemsKnown: !modemsUnknown/, "the hold no longer asks sendHold");
+  assert.ok(
+    !/\bmodemsUnknown\??:\s*boolean\s*\|\s*undefined|\bmodemsUnknown\?:/.test(code),
+    "modemsUnknown became optional: an omitted prop then reads as a module list that was checked",
   );
 });
 

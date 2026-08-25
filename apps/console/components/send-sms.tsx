@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialog";
 import { Field, Form, FormError, FormHint, Input, Select } from "@/components/ui/form";
 import { interpolate } from "@/lib/i18n";
+import { sendHold } from "@/lib/sms-safety";
 import { INBOX } from "@/lib/tokens";
 
 /**
@@ -23,15 +24,31 @@ import { INBOX } from "@/lib/tokens";
  *    an unstyled box with an unstyled button since it was written. Nobody sees
  *    that in review; it took asking the build.
  * 3. It would happily send from a module that must not send. See
- *    `SMS_BLOCKED_MODULES` in `lib/tokens.ts` for what that costs and — more
- *    importantly — for what it does *not* cost, because the obvious wording is
- *    a lie that produces duplicate messages at the far end.
+ *    `SMS_BLOCKED_MODULES` in `lib/sms-safety.ts` for what that costs and —
+ *    more importantly — for what it does *not* cost, because the obvious
+ *    wording is a lie that produces duplicate messages at the far end.
+ *
+ * ## What T032 changed, and it is a change of behaviour
+ *
+ * A module list that failed to load used to leave this form live with a note
+ * under the field saying it had not been checked. It now holds the send. The
+ * argument is in `sendHold`: the list is read in order to stop one send from
+ * costing a module on hardware nobody can reach, so "could not find out" must
+ * not be the answer that lets that send through.
+ *
+ * The copy for it says the list could not be read. It must never say the send
+ * failed — a failure is the thing operators respond to by sending again.
+ *
+ * The read-only gate is not here. Whether the account may write at all is
+ * decided on the server in `app/inbox/page.tsx`, which renders a note instead
+ * of this form; a client component cannot be the place that decision is made,
+ * because the props it would read arrive from the same page.
  *
  * ## What did not change
  *
  * The request. Same endpoint, same method, same three fields in the same order.
- * The confirmation sits in front of it and the refusal sits in front of that;
- * neither touches what is sent.
+ * The confirmation sits in front of it and the refusals sit in front of that;
+ * none of them touches what is sent.
  */
 
 /** A module on the chosen device that this console will not send from. */
@@ -61,7 +78,11 @@ export type SendLabels = {
   blockedBadge: string;
   blockedTitle: string;
   blockedDevice: string;
-  /** The module list could not be read, so nothing here was checked. */
+  /**
+   * The module list could not be read, so sending is held. Two strings and
+   * neither of them is "the send failed": see `sendHold`.
+   */
+  modemsUnknownTitle: string;
   modemsUnknown: string;
   /**
    * Templates, not sentences: `{to}` and `{device}` are filled in on the
@@ -84,8 +105,15 @@ export function SendSmsForm({
   devices: SendDevice[];
   labels: SendLabels;
   confirmLabels: ConfirmLabels;
-  /** `true` when the module list failed to load: nothing below was checked. */
-  modemsUnknown?: boolean;
+  /**
+   * `true` when the module list failed to load: nothing below was checked.
+   *
+   * Required, and deliberately not optional. An omitted boolean is `undefined`,
+   * `!undefined` is "known", and a caller that forgot this prop would get the
+   * permissive branch silently — which is the exact shape of the fail-open this
+   * card was opened to remove.
+   */
+  modemsUnknown: boolean;
 }) {
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, setPending] = useState<Draft | null>(null);
@@ -94,6 +122,7 @@ export function SendSmsForm({
 
   const chosen = devices.find((device) => device.id === deviceId) ?? devices[0];
   const blocked = chosen?.blocked ?? [];
+  const hold = sendHold({ modemsKnown: !modemsUnknown, blocked });
 
   // Read here, sent on confirm. `currentTarget` is only the form during the
   // handler, so the draft is taken now rather than after the question.
@@ -102,7 +131,7 @@ export function SendSmsForm({
     // Checked here as well as on the button. A guard that lives only in a
     // disabled attribute is one Return key and one stale render away from not
     // existing, and the edge panel learned that on this same module.
-    if (blocked.length > 0) return;
+    if (hold !== null) return;
     const form = new FormData(event.currentTarget);
     setPending({
       device_id: String(form.get("device_id") ?? ""),
@@ -152,7 +181,7 @@ export function SendSmsForm({
 
         {/* The refusal, in the place the choice was made, with the reason and
             the correction on screen rather than behind the button. */}
-        {blocked.length > 0 ? (
+        {hold === "blocked-module" ? (
           <div className={INBOX.blocked}>
             <span className={INBOX.blockedTitle}>
               <Badge tone="bad">{labels.blockedBadge}</Badge> {labels.blockedTitle}
@@ -166,7 +195,16 @@ export function SendSmsForm({
           </div>
         ) : null}
 
-        {modemsUnknown ? <FormHint>{labels.modemsUnknown}</FormHint> : null}
+        {/* The other refusal, and it used to be a hint under a live button.
+            Same box as the one above so it reads as a refusal, a different
+            colour because it is a different claim: that one is settled, this
+            one is "nobody could find out". */}
+        {hold === "modules-unknown" ? (
+          <div className={INBOX.hold}>
+            <span className={INBOX.blockedTitle}>{labels.modemsUnknownTitle}</span>
+            <p className={INBOX.blockedBody}>{labels.modemsUnknown}</p>
+          </div>
+        ) : null}
 
         <Field label={labels.to}>
           <Input name="to" required placeholder="+86138..." />
@@ -174,7 +212,7 @@ export function SendSmsForm({
         <Field label={labels.body}>
           <Input name="body" required />
         </Field>
-        <Button type="submit" disabled={busy || blocked.length > 0}>
+        <Button type="submit" disabled={busy || hold !== null}>
           {labels.send}
         </Button>
         {status ? (
