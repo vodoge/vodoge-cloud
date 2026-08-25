@@ -234,6 +234,15 @@ export const PAGE = {
   actions: "ml-auto flex flex-wrap gap-s2",
   /** A load failure above the content it failed to load. */
   error: "m-0 mb-s4 text-sm text-bad",
+  /**
+   * The blocks of a page below its heading, one under the other.
+   *
+   * A gap rather than a margin on each block, so that a block which is
+   * sometimes absent — an error line, a section with nothing in it — cannot
+   * leave its spacing behind. Wider than the gap *inside* a row of cards: the
+   * rhythm is what says "this is a different question".
+   */
+  stack: "flex flex-col gap-s5",
 } as const;
 
 export const CARD = {
@@ -254,6 +263,37 @@ export const CARD = {
   emptyTitle: "font-semibold text-fg",
   /** Says what would be here. "No rows" leaves the reader unsure it is not broken. */
   emptyDescription: "max-w-sm text-sm",
+} as const;
+
+/**
+ * One number per card, in a row that becomes a column on a phone.
+ *
+ * `flex`, never `grid` — see LEGACY_UTILITY_COLLISIONS. The old stylesheet
+ * asked for `repeat(auto-fill, minmax(min(100%, 260px), 1fr))`, which cannot be
+ * written with the token spacing scale and would need an arbitrary value. Three
+ * equal columns above `sm` and a stack below it says the same thing for the
+ * counts this console actually shows, and it says it without a magic number.
+ */
+export const STAT = {
+  row: "flex flex-col gap-s4 sm:flex-row",
+  root: "flex flex-1 flex-col gap-s1 rounded-lg border border-line bg-surface p-s4 shadow",
+  label: "text-xs font-semibold uppercase tracking-wider text-fg-muted",
+  /**
+   * `tabular-nums` so a count that changes on refresh does not shift the label
+   * under it, and `leading-none` because a 2rem number carries its own space.
+   */
+  value: "text-2xl font-semibold leading-none tracking-tight tabular-nums text-fg",
+  hint: "text-xs text-fg-faint",
+  /**
+   * Only for a number that carries a judgement. Colouring a neutral count
+   * spends the reader's attention on something that does not need it, and on a
+   * fleet dashboard green is read as "fine".
+   */
+  tone: {
+    ok: "text-ok",
+    warn: "text-warn",
+    bad: "text-bad",
+  },
 } as const;
 
 export const TABLE = {
@@ -496,6 +536,7 @@ export function navState(pathname: string, href: string): NavState {
 export type ButtonVariant = keyof typeof BUTTON.variant;
 export type ButtonSize = keyof typeof BUTTON.size;
 export type BadgeTone = keyof typeof BADGE.tone;
+export type StatTone = keyof typeof STAT.tone;
 
 export function buttonClass(options?: {
   variant?: ButtonVariant;
@@ -560,6 +601,7 @@ export const MIGRATED_SOURCES = [
   "app/login/page.tsx",
   "app/not-found.tsx",
   "app/not-a-tenant/page.tsx",
+  "app/page.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",

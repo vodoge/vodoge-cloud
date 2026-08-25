@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { CARD } from "@/lib/tokens";
+import { CARD, STAT, type StatTone } from "@/lib/tokens";
 
 /**
  * A card, in parts.
@@ -46,6 +46,46 @@ export function CardContent({ className, ...props }: DivProps) {
  * which on a fleet console is the difference between "nothing happened" and
  * "we are not seeing what happened".
  */
+/**
+ * A row of stat cards. `flex`, never `grid` — see LEGACY_UTILITY_COLLISIONS.
+ */
+export function StatRow({ className, ...props }: DivProps) {
+  return <div className={cn(STAT.row, className)} {...props} />;
+}
+
+/**
+ * One number, with what it counts above it and its qualifier below.
+ *
+ * The label comes first because the number is meaningless without it, and the
+ * hint last because it is the answer to "out of how many", which is only asked
+ * after the number has been read.
+ *
+ * `tone` is only for a value that carries a judgement. An unfinished thought
+ * about that: colouring a plain count spends attention that the one number
+ * which does mean something then cannot get.
+ */
+export function StatCard({
+  label,
+  value,
+  hint,
+  tone,
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLElement> & {
+  label: string;
+  value: number | string;
+  hint?: string;
+  tone?: StatTone;
+}) {
+  return (
+    <section className={cn(STAT.root, className)} {...props}>
+      <span className={STAT.label}>{label}</span>
+      <span className={cn(STAT.value, tone ? STAT.tone[tone] : undefined)}>{value}</span>
+      {hint ? <span className={STAT.hint}>{hint}</span> : null}
+    </section>
+  );
+}
+
 export function CardEmpty({
   title,
   description,

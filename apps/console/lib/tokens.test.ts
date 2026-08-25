@@ -22,6 +22,7 @@ import {
   SAFE_AREA,
   SEGMENTED,
   SHELL,
+  STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
   TAILWIND_BOX_SHADOW,
@@ -219,6 +220,12 @@ function allUsedClasses(): string[] {
     BADGE.base,
     BADGE.dot,
     ...Object.values(BADGE.tone),
+    STAT.row,
+    STAT.root,
+    STAT.label,
+    STAT.value,
+    STAT.hint,
+    ...Object.values(STAT.tone),
   ];
   for (const relative of MIGRATED_SOURCES) lists.push(...classListsIn(readSource(relative)));
   return classesIn(lists);
@@ -481,6 +488,41 @@ test("the password field is a password field and cannot be revealed", () => {
   assert.ok(!/type="text"/.test(source));
 });
 
+/* ── The overview ────────────────────────────────────────────────────── */
+
+/**
+ * The badge on the landing page, which used to be hand-written.
+ *
+ * `class="badge badge-info"` next to a `StateBadge` component that four pages
+ * already import is how two badge implementations end up disagreeing about
+ * what "warn" looks like. The survey found twelve of these across six pages;
+ * this is the one on the first page an operator sees. The check is on the
+ * class lists rather than on the word "badge", because the file legitimately
+ * names the module it imports the component from.
+ */
+test("the overview's bearer pill is the shared badge, not a hand-written one", () => {
+  const source = readSource("app/page.tsx");
+  const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
+  assert.deepEqual(handWritten, [], "a badge is still being drawn from the old stylesheet");
+  assert.match(source, /from "@\/components\/ui\/badge"/, "the shared badge is not imported");
+  assert.match(source, /<Badge\b/, "nothing renders the shared badge");
+});
+
+/**
+ * It is the page every signed-in operator lands on, and it is read-only.
+ *
+ * Nothing here fetches on the client, submits, or dispatches a command — the
+ * survey measured zero controls and zero writes — and that is what makes it
+ * safe to render on the server, which is in turn what keeps its language
+ * correct in the HTML rather than only after hydration.
+ */
+test("the overview stays a read-only server component", () => {
+  const code = codeOnly(readSource("app/page.tsx"));
+  for (const forbidden of [/"use client"/, /<form\b/, /<button\b/, /<Button\b/, /\bonClick\b/]) {
+    assert.ok(!forbidden.test(code), `the overview gained ${forbidden} — it writes nothing`);
+  }
+});
+
 /* ── The helpers ─────────────────────────────────────────────────────── */
 
 test("cn lets the caller's class win over the component's", () => {
@@ -515,6 +557,25 @@ test("tableCellClass adds only what it is asked for", () => {
   assert.ok(tableCellClass({ mono: true }).includes("font-mono"));
   assert.ok(!tableCellClass({ mono: true }).includes(TABLE.cellFaint));
   assert.ok(tableCellClass({ mono: true, faint: true }).includes(TABLE.cellFaint));
+});
+
+/**
+ * A tone on a stat has to replace the colour and leave the size alone.
+ *
+ * `cn` resolves conflicts by property, and it only knows which classes set a
+ * colour because it was handed the token scales. Misconfigure that and
+ * `text-fg text-ok` both survive, the stylesheet's order decides, and the one
+ * number on this page that carries a judgement quietly stops being green —
+ * which looks exactly like working code.
+ */
+test("a stat's tone recolours the number without resizing it", () => {
+  const warned = cn(STAT.value, STAT.tone.warn);
+  assert.ok(warned.includes("text-warn"), "the tone lost to the base colour");
+  assert.ok(!warned.includes("text-fg"), "both colours survived; the stylesheet decides");
+  assert.ok(warned.includes("text-2xl"), "the tone ate the type scale");
+  assert.ok(warned.includes("tabular-nums"), "a changing count would shift its own label");
+  // No tone at all is the common case, and it must not be styled as one.
+  assert.equal(cn(STAT.value, undefined), STAT.value);
 });
 
 test("an unknown state gets no colour rather than a guessed one", () => {
