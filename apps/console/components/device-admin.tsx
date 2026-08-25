@@ -2,6 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ButtonRow } from "@/components/ui/button-row";
+import { Button } from "@/components/ui/button";
+import { Field, FormError, FormHint, InlineForm, Input } from "@/components/ui/form";
+import { PAGE } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -61,30 +65,42 @@ export function DeviceAdmin({
   }
 
   return (
-    <div className="stack">
-      <form className="inline-form" onSubmit={rename}>
-        <label className="field grow">
-          <span>{labels.name}</span>
-          <input
+    <div className={PAGE.stack}>
+      <InlineForm onSubmit={rename}>
+        <Field inline label={labels.name}>
+          <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             maxLength={128}
             required
           />
-        </label>
-        <button type="submit" disabled={busy || draft === name || draft.trim() === ""}>
+        </Field>
+        <Button type="submit" disabled={busy || draft === name || draft.trim() === ""}>
           {labels.rename}
-        </button>
-      </form>
+        </Button>
+      </InlineForm>
 
-      {error ? <p className="error">{error}</p> : null}
+      {error ? <FormError>{error}</FormError> : null}
 
-      <div className="button-row">
-        <button type="button" className="risk" disabled={busy} onClick={remove}>
+      {/*
+        `variant="risk"` rather than `className="risk"`, and the difference is
+        not a rename. `.risk` is declared only as `.button-row button.risk` and
+        `.row-actions button.risk`, so it drew here — inside a `.button-row` —
+        and does not draw in the four places this console puts one somewhere
+        else. The variant needs no ancestor, so the same control looks the same
+        wherever it is moved to.
+
+        The confirmation is unchanged and deliberately so: typing the device's
+        name is the strongest guard in this console, and a device's journal is
+        every reading it ever reported. A dialog dismissed by reflex is not the
+        same thing.
+      */}
+      <ButtonRow>
+        <Button variant="risk" disabled={busy} onClick={remove}>
           {labels.delete}
-        </button>
-      </div>
-      <p className="faint">{labels.deleteNote}</p>
+        </Button>
+      </ButtonRow>
+      <FormHint>{labels.deleteNote}</FormHint>
     </div>
   );
 }

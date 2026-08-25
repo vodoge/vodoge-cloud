@@ -17,6 +17,7 @@ import {
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
   CONFIRMED_WRITES,
+  DEVICE_TABS,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
@@ -55,6 +56,8 @@ import {
   cardPolicyGuardFor,
   cardPolicyPatch,
   consequenceProblem,
+  deviceTab,
+  deviceTabHref,
   navState,
   rootTokenValues,
   secretInputProps,
@@ -453,6 +456,7 @@ const NOT_A_RECIPE = new Set([
   // Not classes: an inline style, nav data, and the migration ledger.
   "SAFE_AREA",
   "NAV_GROUPS",
+  "DEVICE_TABS",
   "MIGRATED_SOURCES",
   "UNMIGRATED_SOURCES",
   "LEGACY_UTILITY_COLLISIONS",
@@ -1032,16 +1036,26 @@ test("every primitive still exports what it says, drawn by the recipes it names"
 });
 
 /**
- * The ten pages that import the old barrel keep compiling untouched.
+ * The pages that still import the old barrel keep compiling untouched.
  *
- * `components/ui.tsx` is now a compatibility layer over `components/ui/*`, and
- * the thing that must not change is its surface: ten pages, spread across six
- * of the seven remaining migration cards, import from it, and only one of those
- * cards is allowed to edit it. `tsc --noEmit` is the real proof that the prop
- * signatures still fit — this is the cheaper one that says the *names* are
- * still there, and it fails with the name of the page that would break.
+ * `components/ui.tsx` is a compatibility layer over `components/ui/*`, and the
+ * thing that must not change is its surface: it was ten pages, spread across
+ * six of the seven remaining migration cards, and only one of those cards is
+ * allowed to edit it. `tsc --noEmit` is the real proof that the prop signatures
+ * still fit — this is the cheaper one that says the *names* are still there,
+ * and it fails with the name of the page that would break.
+ *
+ * 🔴 **The count is a bound, not a number, and that is deliberate.** Every one
+ * of the seven page migrations removes an importer, so a hard `10` is a
+ * guaranteed merge conflict between cards that are running at the same time and
+ * a line each of them has to edit for a reason that has nothing to do with what
+ * it is checking. `BARREL_IMPORTERS` may only come down: a page that starts
+ * importing the barrel again fails, and the day it reaches zero the barrel and
+ * this test go together.
  */
-test("the old ui barrel still exports every name its ten importers ask for", () => {
+const BARREL_IMPORTERS = 10;
+
+test("the old ui barrel still exports every name the pages left on it ask for", () => {
   const barrel = codeOnly(readSource("components/ui.tsx"));
   const importers: string[] = [];
   const missing: string[] = [];
@@ -2154,6 +2168,225 @@ test("a column with a control in it never drops off the phone", () => {
     }
   }
   assert.deepEqual(hidden, [], "a control is being hidden on a phone, not a reading");
+/**
+ * Recipes that ask for a border width and never say what kind of border.
+ *
+ * 🔴 **Preflight is off, and the reset that stands in for it does not carry
+ * preflight's `border-style: solid`.** `app/globals.css` resets `box-sizing`
+ * and nothing else. So a Tailwind border-*width* utility computes to **0px**
+ * unless something else has set a style: `border-style` defaults to `none`, and
+ * a `none` border has no width whatever the width utility says.
+ *
+ * Measured at 390x844 against the real build, not read:
+ *
+ * | recipe | element | asked for | computed |
+ * |---|---|---|---|
+ * | `TABS.list` | `div` | `border-b border-line` | `none 0px` — **fixed here** |
+ * | `TABS.tab` | `a` | `border-b-2` | `none 0px` — **fixed here** |
+ * | `CARD.root` | `section` | `border border-line` | `none 0px` |
+ * | `TABLE.row` | `tr` | `border-b border-line` | `none 0px` |
+ * | `BUTTON.base` | `button` | `border` | `solid 1px` — the legacy layer |
+ * | `FORM.input` | `input` | `border` | `solid 1px` — the legacy layer |
+ * | `TABLE.headerCell` | `th` | `border-b` | `solid 1px` — the legacy layer |
+ *
+ * The ones that work are the ones the legacy layer hands a `border:` shorthand
+ * to by element name. **That is the trap**: the tab that renders as a
+ * `<button>` drew correctly and the one that renders as an `<a>` did not, from
+ * one recipe — and it means the whole class of defect disappears on the day
+ * `@layer legacy` is deleted for the recipes that look fine today, and stays
+ * for the ones that do not.
+ *
+ * 🔴 **`CARD.root` and `TABLE.row` are not fixed here and this list is how that
+ * is reported rather than forgotten.** They are drawn on `/`, `/login`,
+ * `/audit`, the shell, and the ten pages that still import the compatibility
+ * layer. Giving them a border style makes a border appear on fifteen pages that
+ * do not have one today — a visible change to already-migrated pages, which is
+ * a call for the operator and the PM, not for a card migrating one page. The
+ * complete fix is one declaration in the reset in `app/globals.css`, which no
+ * page card may edit.
+ *
+ * The list may only shrink: a new recipe that asks for a width without a style
+ * fails immediately.
+ */
+const BORDER_WIDTH_WITHOUT_A_STYLE = [
+  "BUTTON.base",
+  "CARD.disclosureSummary",
+  "CARD.header",
+  "CARD.root",
+  "CENTERED.card",
+  "CONFIRM.panel",
+  "FORM.input",
+  "FORM.select",
+  "FORM.textarea",
+  "SEGMENTED.root",
+  "SHELL.header",
+  "SHELL.navGroup",
+  "SHELL.tenant",
+  "STAT.root",
+  "TABLE.headerCell",
+  "TABLE.row",
+  "TABLE.specRow",
+];
+
+test("a recipe that asks for a border width says what kind of border it is", () => {
+  const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
+  const found: string[] = [];
+  const table = TOKENS as unknown as Record<string, unknown>;
+
+  const walk = (value: unknown, path: string) => {
+    if (typeof value === "string") {
+      const words = value.split(/\s+/).filter(Boolean);
+      // `border-b-0` and friends switch a side off; asking for a style there
+      // would be asking for a style on a border that is not being drawn.
+      const asks = words.some((word) => width.test(word) && !/-0$/.test(word));
+      if (asks && !words.includes("border-solid")) found.push(path);
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) walk(inner, `${path}.${key}`);
+    }
+  };
+  for (const name of recipeNames()) walk(table[name], name);
+
+  // Derived, not remembered: if the width matcher stops matching, everything
+  // below it is vacuously true.
+  assert.ok(
+    found.length > 0,
+    "the border-width matcher found nothing at all; this check is measuring nothing",
+  );
+  const unlisted = found.filter((path) => !BORDER_WIDTH_WITHOUT_A_STYLE.includes(path)).sort();
+  assert.deepEqual(
+    unlisted,
+    [],
+    "this recipe's border computes to 0px: preflight is off and nothing sets border-style",
+  );
+  const fixed = BORDER_WIDTH_WITHOUT_A_STYLE.filter((path) => !found.includes(path));
+  assert.deepEqual(fixed, [], "one of these was fixed; take it off the list so it cannot come back");
+
+  // 🔴 The other half, and the reason preflight is two declarations rather than
+  // one. Switching `border-style` on switches it on for all four sides, and the
+  // initial `border-*-width` is `medium` — 3px. A recipe that says
+  // `border-solid` and states a width for one side gets a 3px rule on the other
+  // three. Measured: the first `border-solid` on the tab strip put a 3px line
+  // along its top. So every side has to be given a width.
+  const SIDES = ["top", "right", "bottom", "left"];
+  const covers: Record<string, string[]> = {
+    "": SIDES,
+    x: ["right", "left"],
+    y: ["top", "bottom"],
+    t: ["top"],
+    r: ["right"],
+    b: ["bottom"],
+    l: ["left"],
+  };
+  const partial: string[] = [];
+  const walkStyles = (value: unknown, path: string) => {
+    if (typeof value === "string") {
+      const words = value.split(/\s+/).filter(Boolean);
+      if (!words.includes("border-solid")) return;
+      const given = new Set<string>();
+      for (const word of words) {
+        const match = width.exec(word);
+        if (match) for (const side of covers[(match[2] ?? "").replace("-", "")]) given.add(side);
+      }
+      const uncovered = SIDES.filter((side) => !given.has(side));
+      if (uncovered.length) partial.push(`${path}: no width on ${uncovered.join(", ")}`);
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) walkStyles(inner, `${path}.${key}`);
+    }
+  };
+  for (const name of recipeNames()) walkStyles(table[name], name);
+  assert.deepEqual(
+    partial,
+    [],
+    "a side with no width stated renders at the initial `medium`, which is 3px",
+  );
+});
+
+/* ── The device detail page ──────────────────────────────────────────── */
+
+const DEVICE_PAGE = "app/devices/[deviceId]/page.tsx";
+
+/**
+ * The four tabs are one list, and every one of them has a panel.
+ *
+ * This page was split across two cards: one built the strip and filled the two
+ * read-only panels, the next fills the console and the eSIM panels. The list is
+ * data so that both cards are reading the same four ids — a strip written as
+ * markup would let the second card arrive with a fifth tab, a renamed id or a
+ * second spelling of "console", and nothing here could see it.
+ *
+ * The `case` check is the half that matters: a tab whose id has no branch in
+ * `panelFor` renders an empty panel, which looks like a page that failed to
+ * load rather than like a mistake.
+ */
+test("the device page's four tabs are one list, and every one of them has a panel", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  assert.equal(DEVICE_TABS.length, 4, "the operator agreed to four tabs on this page");
+  assert.deepEqual(
+    [...new Set(DEVICE_TABS.map((tab) => tab.id))].length,
+    DEVICE_TABS.length,
+    "two tabs share an id, so one of them can never be selected",
+  );
+  assert.equal(
+    DEVICE_TABS.filter((tab) => tab.readOnly).length,
+    2,
+    "two panels read and two write; that split is why this page took two cards",
+  );
+
+  // A missing key renders as ⟦key⟧ in the tab strip itself.
+  const missing = DEVICE_TABS.map((tab) => tab.key).filter(
+    (key) => typeof zh[key] !== "string" || typeof en[key] !== "string",
+  );
+  assert.deepEqual(missing, [], "a tab label is not in both catalogues");
+
+  const code = codeOnly(readSource(DEVICE_PAGE));
+  const branches = (code.match(/case "([a-z]+)":/g) ?? []).map((line) =>
+    line.slice(6, -2),
+  );
+  assert.deepEqual(
+    branches.slice().sort(),
+    DEVICE_TABS.map((tab) => tab.id).sort(),
+    "a tab has no panel, or a panel answers to an id no tab asks for",
+  );
+});
+
+/**
+ * The strip is rendered from that list, and it is links.
+ *
+ * Two claims, and both have been wrong in this console before. Rendering from
+ * the list rather than writing four elements is what makes the assertion above
+ * mean anything — four hand-written tabs satisfy every count and share nothing
+ * with the data. And links rather than client state is what keeps this page a
+ * server component: the moment it takes `"use client"` to remember which tab is
+ * open, every string on it is resolved against the default locale in the
+ * server's HTML and corrected only by hydration. This console has shipped that
+ * exact defect twice.
+ */
+test("the device page's tabs are links rendered from the shared list", () => {
+  const code = codeOnly(readSource(DEVICE_PAGE));
+
+  assert.match(code, /DEVICE_TABS\.map\(/, "the strip is not rendered from the shared list");
+  assert.equal((code.match(/<Tab\b/g) ?? []).length, 1, "a tab was written by hand beside the map");
+  assert.equal((code.match(/<TabList\b/g) ?? []).length, 1);
+  assert.equal((code.match(/<TabPanel\b/g) ?? []).length, 1, "exactly one panel is drawn at a time");
+  assert.match(code, /<Tab\b[^>]*href=\{deviceTabHref\(/, "a tab that does not change the URL");
+
+  for (const forbidden of [/"use client"/, /\buseState\b/, /\bonClick\b/]) {
+    assert.ok(
+      !forbidden.test(code),
+      `the device page gained ${forbidden}: its tabs are URLs, and its language depends on that`,
+    );
+  }
+  // And every string is resolved against the locale this request read on the
+  // server. A `t(key)` with the locale left off renders the default language
+  // into the HTML and looks right in a browser only after hydration.
+  assert.match(code, /await getRequestLocale\(\)/);
+  assert.equal(
+    (code.match(/\bt\(/g) ?? []).length,
+    (code.match(/\bt\([^)]*,\s*locale\b/g) ?? []).length,
+    "a t() call on the device page is missing its locale argument",
+  );
 });
 
 /**
@@ -2340,6 +2573,169 @@ test("the card policy requests are the ones this component always sent", () => {
 
   // The native dialog is gone, and with it the one string it could show.
   assert.ok(!/window\.confirm/.test(codeOnly(source)), "window.confirm is back");
+ * Counting call sites, not imports, for the reason the overview's version of
+ * this gives: an import survives the deletion of the thing it was wired to.
+ *
+ * The two table shapes are both here and that is the point of there being two.
+ * The module list is a data grid; the host block is four pairs of a name and a
+ * reading with **no `<th>` at all**, which is why any narrow-screen treatment
+ * built on header text does nothing to it.
+ */
+test("the device page is drawn by the shared components, at the point of use", () => {
+  const source = readSource(DEVICE_PAGE);
+  const code = codeOnly(source);
+  const uses = (pattern: RegExp) => (code.match(pattern) ?? []).length;
+
+  assert.equal(uses(/<Table\b/g), 2, "the module list and the radio readings");
+  assert.equal(uses(/<SpecTable\b/g), 1, "the host block, which has no header row");
+  assert.equal(uses(/<SpecRow\b/g), 4, "public IP, CPU, memory, reported-at");
+  assert.equal(uses(/<Card\b/g), 6);
+  assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
+
+  // Preflight is off, so a bare `<table>` is not merely a second
+  // implementation: the legacy stylesheet paints it, which is the mechanism by
+  // which the two drift apart.
+  assert.equal(uses(/<(table|thead|tbody|tr|th|td)\b/g), 0, "hand-written table markup is back");
+  assert.equal(uses(/<section\b/g), 0, "a card was written by hand beside the components");
+
+  // The two hand-written pills this page carried: the unmanaged module and the
+  // roaming module. Both were `class="badge badge-warn"` with the gap supplied
+  // by `style={{ marginLeft: … }}` — an inline style is the one thing none of
+  // these guards can read.
+  assert.equal(uses(/<Badge\b/g), 2, "the unmanaged pill and the roaming pill");
+  assert.equal(uses(/<StateBadge\b/g), 1, "the device's own state, in the heading");
+  const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
+  assert.deepEqual(handWritten, [], "a badge is still being drawn from the old stylesheet");
+  assert.ok(!/\bstyle=\{\{/.test(code), "an inline style is unreachable from every check here");
+});
+
+/**
+ * The widest column drops off the phone, and it drops on both of its cells.
+ *
+ * `TABLE.cellSecondary` is `hidden sm:table-cell`, which has to be on the
+ * header cell *and* the body cell of the same column or the header stays and
+ * the values vanish. The ICCID is the widest value on this page at twenty
+ * monospace characters, and it is the one that goes: every control on this page
+ * addresses a module by IMEI.
+ */
+test("the device page's widest column is marked secondary on both of its cells", () => {
+  const code = codeOnly(readSource(DEVICE_PAGE));
+  const headers = code.match(/<TableHeaderCell\b[^>]*secondary/g) ?? [];
+  const cells = code.match(/<TableCell\b[^>]*secondary/g) ?? [];
+  assert.equal(headers.length, 1, "the ICCID header is no longer marked secondary");
+  assert.equal(
+    cells.length,
+    headers.length,
+    "a column is secondary in its header and not in its body, or the other way round: " +
+      "one of them stays on the phone alone",
+  );
+  // And the recipe those two share really is a rule the build generates.
+  assert.match(TABLE.cellSecondary, /\bhidden\b/);
+  assert.match(TABLE.cellSecondary, /\bsm:table-cell\b/);
+});
+
+/**
+ * A class that only means something inside a grid, used outside one.
+ *
+ * 🔴 This is a third kind of dead class, and neither of the two ledgers above
+ * can see it. `card-grid` is a name **no stylesheet defines**. `.risk` is a
+ * name that is only ever declared **under an ancestor**. `card-span-all` is
+ * neither: `.card-span-all { grid-column: 1 / -1 }` is a real, unconditional
+ * rule — it does nothing because every container it was put in is `display:
+ * block`. The device detail page carried two of them, and the proxy page's
+ * migration found the shape and had no guard to hand it to.
+ *
+ * Derived from the stylesheet rather than listed, so the next rule of this
+ * shape is covered the day it is written. It bites on migrated files only,
+ * which makes it a ratchet: `app/proxy` and `app/settings` still carry one
+ * each, and each becomes covered by being migrated.
+ */
+test("a migrated file does not use a class that only works inside a grid", () => {
+  const names = new Set<string>();
+  for (const rule of legacyLayer().matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declarations = rule[2]
+      .split(";")
+      .map((one) => one.trim())
+      .filter(Boolean);
+    if (declarations.length === 0) continue;
+    if (!declarations.every((one) => /^grid-(column|row|area)\s*:/.test(one))) continue;
+    for (const name of rule[1].matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) names.add(name[1]);
+  }
+  // Derived, not remembered: if the extractor stops finding the one known
+  // instance, the check below is passing because it is looking at nothing.
+  assert.ok(
+    names.has("card-span-all"),
+    "the grid-only-rule extractor found nothing; every assertion under it is vacuous",
+  );
+
+  const offenders: string[] = [];
+  for (const relative of MIGRATED_SOURCES) {
+    for (const used of classesIn(classListsIn(readSource(relative)))) {
+      if (names.has(used)) offenders.push(`${relative}: ${used}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "this rule exists and does nothing: the element carrying it is not in a grid",
+  );
+});
+
+/**
+ * Which panel a URL asks for, including the ones that are not asking properly.
+ *
+ * Total by construction. `?tab=` is a URL, so a stale bookmark, a typo and a
+ * repeated parameter all have to land somewhere, and the first tab is where.
+ * The array case is not defensive decoration: `?tab=a&tab=b` really does arrive
+ * as an array, and `String(["a","b"])` is `"a,b"`, which matches nothing.
+ */
+test("the device page's tab comes from the URL and always resolves", () => {
+  for (const tab of DEVICE_TABS) assert.equal(deviceTab(tab.id), tab.id);
+
+  const first = DEVICE_TABS[0].id;
+  assert.equal(deviceTab(undefined), first, "no parameter is the first tab");
+  assert.equal(deviceTab(""), first);
+  assert.equal(deviceTab("nonsense"), first, "a stale bookmark still renders a page");
+  assert.equal(deviceTab("Overview"), first, "ids are the ones in the list, not case-folded ones");
+  assert.equal(deviceTab(["esim", "console"]), "esim", "a repeated parameter takes the first");
+  assert.equal(deviceTab([]), first);
+
+  assert.equal(deviceTabHref("dev-1", "diagnostics"), "/devices/dev-1?tab=diagnostics");
+  // The id reaches this from a path segment, so it is encoded rather than
+  // interpolated: a device id with a `?` or a `#` in it would otherwise build a
+  // link to a different page.
+  assert.equal(deviceTabHref("a/b?c", "overview"), "/devices/a%2Fb%3Fc?tab=overview");
+});
+
+/**
+ * Deleting a device still means typing its name.
+ *
+ * The strongest guard in this console, and this card's only write. A device's
+ * journal is every reading it ever reported and none of it comes back, so the
+ * confirmation is a prompt that compares what was typed against the name
+ * verbatim — not a dialog that can be dismissed by reflex. Migrating the markup
+ * is not a reason for it to become one.
+ *
+ * The red is the other half. `.risk` is declared only as
+ * `.button-row button.risk`, so this button — which *is* in a button row — was
+ * one of the few places the colour actually appeared. Keeping the appearance
+ * while moving to a variant that needs no ancestor is the whole point.
+ */
+test("deleting a device still means typing its name", () => {
+  const code = codeOnly(readSource("components/device-admin.tsx"));
+
+  assert.match(code, /window\.prompt\(/, "the prompt is gone; a device deletes on one click");
+  assert.match(
+    code,
+    /if\s*\(\s*typed\s*!==\s*name\s*\)\s*return/,
+    "what was typed is no longer compared against the name",
+  );
+  assert.ok(!/window\.confirm\(/.test(code), "a dialog dismissed by reflex is not the same guard");
+  assert.match(code, /method:\s*"DELETE"/);
+
+  assert.match(code, /<Button\b[^>]*variant="risk"/, "the destructive control lost its colour");
+  const legacy = classListsIn(readSource("components/device-admin.tsx"));
+  assert.deepEqual(legacy, [], "a class here cannot be checked against the build");
 });
 
 /* ── The helpers ─────────────────────────────────────────────────────── */

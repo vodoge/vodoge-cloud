@@ -209,7 +209,7 @@ export default async function DevicesPage() {
                 {modems.map((modem) => (
                   <TableRow key={modem.id}>
                     <TableCell mono>
-                      <span className={TABLE.cellPair}>
+                      <span className={TABLE.cellInline}>
                         {modem.imei}
                         {/* Visible but not drivable. Before the edge enumerated
                             AT ports as a second path, a module in this state
@@ -332,7 +332,7 @@ function ModemNetwork({
   const territory = territoryName(identity);
   const roaming = home !== null && serving !== null && isRoaming(home, serving);
   return (
-    <span className={TABLE.cellPair}>
+    <span className={TABLE.cellInline}>
       <span>
         {operatorName(identity)}
         {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}

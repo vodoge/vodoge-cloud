@@ -463,6 +463,17 @@ export const PAGE = {
   head: "mb-s5 flex flex-wrap items-start gap-s4",
   title: "m-0 text-xl font-semibold tracking-tight text-fg",
   description: "m-0 mt-s1 text-sm text-fg-muted",
+  /**
+   * The heading's second line when it is an identifier rather than a sentence.
+   *
+   * A device id under a device's name is read character by character against
+   * something else — a log line, a URL — and the proportional face is where a
+   * transposed pair hides. Same size and colour as `description`, so it is
+   * still the quieter of the two lines.
+   */
+  identifier: "m-0 mt-s1 font-mono text-xs tabular-nums text-fg-muted",
+  /** Up one level, above the title it belongs under. */
+  back: "text-sm text-fg-muted no-underline hover:text-fg",
   actions: "ml-auto flex flex-wrap gap-s2",
   /** A load failure above the content it failed to load. */
   error: "m-0 mb-s4 text-sm text-bad",
@@ -587,15 +598,24 @@ export const TABLE = {
    */
   cellSecondary: "hidden sm:table-cell",
   /**
-   * A reading and the qualifier on it, in one cell.
+   * A reading and its qualifier on one line inside a cell.
    *
-   * Two cells on the device list are a value with a pill after it — an IMEI
-   * with "not manageable", an operator with "roaming → …". Both used to space
-   * the pill with an inline `marginLeft`, which is a gap written twice, in the
-   * one place no test can read, and on the wrong element: a margin does not
-   * wrap, so at 390px the pill sat past the right edge of its own column.
+   * An IMEI followed by an "unmanaged" pill, an operator followed by a roaming
+   * pill: hand-written badges sit in a cell like that on both the device list
+   * and the device page, and every one of them was spaced with an inline
+   * `style={{ marginLeft: "var(--s2)" }}` — a gap written twice, in the one
+   * place no guard here can read.
+   *
+   * `flex-wrap` rather than a nowrap row, and this is the part measurement
+   * settled: a margin does not wrap, so at 390px the pill sat past the right
+   * edge of its own column, and a pill that cannot wrap under an IMEI widens
+   * the whole table instead.
+   *
+   * PM merge note (T009 + T010): both cards invented this recipe independently
+   * and byte-identically, as `cellPair` and `cellInline`. Kept under one name;
+   * `app/devices/page.tsx` was moved onto it.
    */
-  cellPair: "flex flex-wrap items-center gap-s2",
+  cellInline: "flex flex-wrap items-center gap-s2",
   /**
    * A link inside a cell.
    *
@@ -928,10 +948,36 @@ export const OUTPUT = {
  * is a `<button>`. `border-x-0 border-t-0` is not decoration: preflight is off
  * and the legacy layer gives every bare `button` a 1px border on all four
  * sides.
+ *
+ * 🔴 `border-solid` on both, and it is not redundant. Measured, not read.
+ *
+ * Preflight is off, and the reset that stands in for it (`app/globals.css`)
+ * is `* { box-sizing: border-box }` — it does **not** carry preflight's
+ * `border-style: solid`. So a Tailwind border-*width* utility on an element
+ * the legacy layer gives no `border:` shorthand to computes to **0px**:
+ * `border-style` defaults to `none`, and a `none` border has no width whatever
+ * the width utility says.
+ *
+ * At 390px, before this line, `getComputedStyle` on the strip and on a tab
+ * both reported `none 0px`: **the rule under the tab strip and the accent
+ * underline that says which tab is selected were not being drawn at all.** The
+ * tab that renders as a `<button>` was fine and the one that renders as an
+ * `<a>` was not, because `@layer legacy` gives every bare `button` a
+ * `border: 1px solid transparent` and gives `a` nothing — so the defect was
+ * invisible in exactly the half of the component that was tried first.
+ *
+ * 🔴 And `border-0` beside it, which is the other half preflight does. The
+ * first version of this fix said only `border-solid`, and the measurement came
+ * back with a **3px** rule along the top of the strip: the initial value of
+ * `border-top-width` is `medium`, which is 3px, and it had been invisible only
+ * because the style was `none`. Turning the style on turns all four sides on.
+ * Preflight is `border-width: 0` *and* `border-style: solid` for that reason.
+ *
+ * Other recipes are in the same position; see `BORDER_WIDTH_WITHOUT_A_STYLE`.
  */
 export const TABS = {
-  list: "flex flex-wrap items-center gap-x-s4 border-b border-line",
-  tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
+  list: "flex flex-wrap items-center gap-x-s4 border-0 border-b border-solid border-line",
+  tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
   /** The underline, not a fill: a filled tab competes with the primary button. */
   tabCurrent: "border-accent text-fg",
   panel: "pt-s4",
@@ -1089,6 +1135,74 @@ export function navState(pathname: string, href: string): NavState {
   // path, and it keeps `/rules` from claiming `/rules-archive`. A bare
   // `startsWith(href)` breaks both at once.
   return pathname.startsWith(`${href}/`) ? "section" : null;
+}
+
+/* ── The device page's tabs ──────────────────────────────────────────────
+ *
+ * Data for the same reason the nav is: a `.tsx` cannot be rendered by a test in
+ * this app, so a tab strip written as markup is a tab strip nothing can check.
+ *
+ * The page is split because the survey measured its interactive weight at 1679
+ * lines in two components, which is more than one card can carry — so the
+ * skeleton is built by one card and two of the four panels are filled by
+ * another. That seam is the reason the order and the ids are here rather than
+ * inline: the second card adds no tab and renames none, it fills the two whose
+ * ids are already written down, and if it disagrees the assertion below fails
+ * rather than the two cards shipping different strips.
+ *
+ * The labels of the last two are keys that already existed — the console panel
+ * and the eSIM panel have been titled on this page since it was written, and
+ * inventing `device.tabConsole` beside `device.console` is how a catalogue ends
+ * up with two spellings of one word.
+ */
+
+export type DeviceTabId = "overview" | "diagnostics" | "console" | "esim";
+
+export type DeviceTab = {
+  readonly id: DeviceTabId;
+  readonly key: string;
+  /** `false` for a panel that writes: it decides nothing, it labels the seam. */
+  readonly readOnly: boolean;
+};
+
+export const DEVICE_TABS: readonly DeviceTab[] = [
+  { id: "overview", key: "device.tabOverview", readOnly: true },
+  { id: "diagnostics", key: "device.tabDiagnostics", readOnly: true },
+  { id: "console", key: "device.console", readOnly: false },
+  { id: "esim", key: "esim.title", readOnly: false },
+];
+
+/**
+ * Which panel a request is asking for.
+ *
+ * Total, and the fallback is the first tab rather than a thrown error: `?tab=`
+ * comes from a URL, and a mistyped or stale one has to land somewhere. Returning
+ * the id rather than a boolean per panel is what keeps "exactly one panel is
+ * rendered" true by construction instead of by four conditions agreeing.
+ *
+ * `string[]` is not a defensive flourish — `?tab=a&tab=b` really does arrive as
+ * an array from Next's search params, and `String(["a","b"])` is `"a,b"`, which
+ * matches nothing and would silently fall back. Taking the first is the same
+ * answer a link with one value would have given.
+ */
+export function deviceTab(value: string | string[] | undefined): DeviceTabId {
+  const asked = Array.isArray(value) ? value[0] : value;
+  const found = DEVICE_TABS.find((tab) => tab.id === asked);
+  return found ? found.id : DEVICE_TABS[0].id;
+}
+
+/**
+ * The href of one tab on one device.
+ *
+ * A tab that changes the URL rather than client state is what keeps this page a
+ * server component — which is what keeps its language right in the HTML, the
+ * defect this console has shipped twice — and what makes a tab survive the
+ * reload an operator does when a command is slow.
+ *
+ * The device id is encoded because it reaches this from the path segment.
+ */
+export function deviceTabHref(deviceId: string, tab: DeviceTabId): string {
+  return `/devices/${encodeURIComponent(deviceId)}?tab=${tab}`;
 }
 
 export type ButtonVariant = keyof typeof BUTTON.variant;
@@ -1455,6 +1569,7 @@ export function secretInputProps(value: unknown): SecretInputProps {
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
   "app/devices/page.tsx",
+  "app/devices/[deviceId]/page.tsx",
   "app/layout.tsx",
   "app/login/page.tsx",
   "app/not-found.tsx",
@@ -1462,6 +1577,7 @@ export const MIGRATED_SOURCES = [
   "app/page.tsx",
   "components/card-policies.tsx",
   "components/connection-status.tsx",
+  "components/device-admin.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
@@ -1604,19 +1720,21 @@ export const UI_PRIMITIVES = {
  * card that invents a new dead class fails immediately rather than shipping
  * markup that reviews perfectly and renders as nothing.
  *
- * - **`card-grid`** — `app/devices/[deviceId]/page.tsx:69`,
- *   `app/proxy/page.tsx:63`, `app/settings/page.tsx:129`. The stylesheet has
- *   `.grid` and `.grid-wide`; it has never had `.card-grid`. All three of
- *   those pages are stacking their cards in ordinary block flow while their
- *   markup says they are laying them out in a grid. **This one was not on any
- *   survey** — it was found by running the check rather than by reading, which
- *   is the only way any of these have ever been found.
+ * - **`card-grid`** — `app/proxy/page.tsx:63` and `app/settings/page.tsx:129`.
+ *   The stylesheet has `.grid` and `.grid-wide`; it has never had
+ *   `.card-grid`. Both of those pages are stacking their cards in ordinary
+ *   block flow while their markup says they are laying them out in a grid.
+ *   **This one was not on any survey** — it was found by running the check
+ *   rather than by reading, which is the only way any of these have ever been
+ *   found. The device detail page was the third site and is now migrated; it
+ *   stacks with `PAGE.stack`, which is a real gap rather than a name.
  * - **`panel`, `primary`** — `components/send-sms.tsx:34` and `:53`. The one
  *   form in this console that sends a text message has been an unstyled block
  *   with an unstyled button since it was written.
  *
- * All five sites are outside this card's file list: `card-grid` belongs to
- * T010, T012 and T013, and `send-sms.tsx` to T014.
+ * Of the five sites this list was frozen with, one is gone: the device detail
+ * page. The remaining `card-grid` pair belongs to T012 and T013, and
+ * `send-sms.tsx` to T014, and the entry stays until the last of them is fixed.
  */
 export const CLASSES_WITH_NO_STYLESHEET = ["card-grid", "panel", "primary"] as const;
 
@@ -1652,7 +1770,6 @@ export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
  * markup would count as migration progress without any having happened.
  */
 export const UNMIGRATED_SOURCES = [
-  "app/devices/[deviceId]/page.tsx",
   "app/inbox/[peer]/page.tsx",
   "app/inbox/page.tsx",
   "app/journal/page.tsx",
@@ -1663,7 +1780,6 @@ export const UNMIGRATED_SOURCES = [
   "app/settings/page.tsx",
   "app/unknown-tenant/page.tsx",
   "components/conversation.tsx",
-  "components/device-admin.tsx",
   "components/device-console.tsx",
   "components/esim-panel.tsx",
   "components/journal.tsx",
