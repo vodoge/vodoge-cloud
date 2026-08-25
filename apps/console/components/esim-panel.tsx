@@ -3,29 +3,33 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
+  esimProfileRowsFromReads,
+  esimReadFailures,
+  latestEsimChipReads,
+  latestEsimProfileListings,
+  mergeEsimProfiles,
   parseEsimAuthentication,
   parseEsimDownload,
-  parseEsimInfoResult,
   parseRetrievedNotification,
   type EsimAuthentication,
+  type EsimCommandRow,
   type EsimDownload,
   type EsimInfoResult,
   type EsimProfileRow,
   type RetrievedNotification,
 } from "@/lib/catalog";
-import { DEFAULT_LOCALE, isLocale, LOCALE_COOKIE, t, type Locale } from "@/lib/i18n";
+import { t, type Locale } from "@/lib/i18n";
 
-type Labels = Record<string, string>;
-
-/** One relayed command, as `GET /v1/commands` reports it. */
-type CommandRow = {
-  id: string;
-  kind: string;
-  status: string;
-  completed_at: number | null;
-  payload: Record<string, unknown> | null;
-  result: { status?: string; reason?: string; details?: unknown } | null;
-};
+/**
+ * One relayed command, as `GET /v1/commands` reports it.
+ *
+ * The fields the eSIM helpers read are declared once in `lib/catalog.ts` and
+ * borrowed here. This component has no test of its own and cannot have one --
+ * there is no jsdom, no testing-library and no component runner in this
+ * workspace -- so anything that decides something lives in the library, and
+ * what is left here only renders.
+ */
+type CommandRow = EsimCommandRow & { id: string };
 
 const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknown"]);
 
@@ -47,21 +51,40 @@ export function EsimPanel({
   deviceId,
   profiles,
   modems,
-  labels,
+  locale,
 }: {
   deviceId: string;
   profiles: EsimProfileRow[];
   modems: { imei: string }[];
-  labels: Labels;
+  /**
+   * The locale of the request, resolved on the server.
+   *
+   * A prop rather than a cookie read in an effect, and that is a bug fix
+   * rather than a preference. This panel used to take a handful of strings as
+   * a `labels` object the page rendered for it and look every other one up
+   * itself against a `useState(DEFAULT_LOCALE)` that became the real locale
+   * only after mount. So the markup the server sent always said the default
+   * language for those: an English request shipped `<html lang="en">` holding
+   * "读取芯片信息", "发起 InitiateAuthentication" and "下载并安装" beside an
+   * English "Read the chip", and it corrected itself only once the browser
+   * hydrated. Whoever read the served HTML -- the first paint, a slow link, a
+   * client with JavaScript off, anything fetching the page -- saw the wrong
+   * language, with no error anywhere and no way to tell from the page itself.
+   *
+   * One locale, arriving before the first render, removes it. It also retires
+   * the split label set: two mechanisms for the same sentence are what let
+   * half of one panel be right and the other half be wrong at the same time.
+   * With every string going through `t()`, a key this build has no entry for
+   * renders as ⟦esim.whatever⟧ instead of the empty string an absent `labels`
+   * entry used to produce, which is the failure the label gate in front of
+   * DeviceConsole (T071) exists to catch.
+   */
+  locale: Locale;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commands, setCommands] = useState<CommandRow[]>([]);
-  // The strings the page does not pass down. This component is reached from a
-  // server page that hands it a fixed label set, so the ones added here read
-  // the locale the same way the device console does.
-  const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
   // Held only until the request goes out. An activation code is a one-time
   // credential, so it lives in this component and nowhere else -- not in the
   // URL, not in a form that survives a reload, and not in the command result
@@ -95,7 +118,6 @@ export function EsimPanel({
   }, [deviceId]);
 
   useEffect(() => {
-    setLocale(localeFromCookie(document.cookie));
     void refresh();
   }, [refresh]);
 
@@ -122,15 +144,19 @@ export function EsimPanel({
     router.refresh();
   }
 
+  // The durable inventory and the last chip reading, as one table. Today the
+  // inventory half is always empty -- nothing emits `EsimInventory` yet -- so
+  // every row on the bench comes from the reading, which is why each row says
+  // where it came from.
+  const listings = latestEsimProfileListings(commands);
+  const inventory = mergeEsimProfiles(profiles, esimProfileRowsFromReads(commands));
   const byEid = new Map<string, EsimProfileRow[]>();
-  for (const profile of profiles) {
+  for (const profile of inventory) {
     byEid.set(profile.eid, [...(byEid.get(profile.eid) ?? []), profile]);
   }
 
-  const chips = latestChipReads(commands);
-  const failedRead = commands.find(
-    (row) => row.kind === "read_esim_info" && row.status === "failed",
-  );
+  const chips = latestEsimChipReads(commands);
+  const readFailures = esimReadFailures(commands, profiles);
   const retrieved = latestRetrieval(commands);
   const authentications = latestAuthentications(commands);
   // Only if it is more recent than every success. A banner saying the last
@@ -154,29 +180,62 @@ export function EsimPanel({
             disabled={busy}
             onClick={() => void issue("list_esim_profiles", { modem_imei: modem.imei })}
           >
-            {labels.refresh} — {modem.imei}
+            {t("esim.refresh", locale)} — {modem.imei}
           </button>
         ))}
       </div>
 
       {error ? <p className="error">{error}</p> : null}
 
-      {profiles.length === 0 ? (
-        <p className="faint">{labels.none}</p>
+      {/* Not a fault and not a failed read: a plain SIM in a slot the page
+          offered an eSIM button for. Kept apart from the error banner below
+          so a module that never had a chip stops looking like a broken one. */}
+      {readFailures
+        .filter((failure) => failure.cause === "no-euicc")
+        .map((failure) => (
+          <p key={`no-euicc-${failure.modemImei}`} className="faint">
+            {t("esim.notEuicc", locale, { imei: failure.modemImei })}{" "}
+            <span className="mono">{failure.reason}</span>
+          </p>
+        ))}
+      {readFailures
+        .filter((failure) => failure.cause === "read-failed")
+        .map((failure) => (
+          <p key={`read-failed-${failure.modemImei}`} className="error">
+            {t("esim.chipReadFailed", locale, { imei: failure.modemImei })}:{" "}
+            <span className="mono">{failure.reason}</span>
+          </p>
+        ))}
+
+      {/* A card with no profiles and a card that refused to list them both
+          answer with an empty array. The edge says which; without this the
+          page would show the refusal as an empty chip. */}
+      {listings
+        .filter((listing) => listing.profilesError)
+        .map((listing) => (
+          <p key={`profiles-error-${listing.modemImei}`} className="error">
+            {t("esim.profilesError", locale, { imei: listing.modemImei })}:{" "}
+            <span className="mono">{listing.profilesError}</span>
+          </p>
+        ))}
+
+      {inventory.length === 0 ? (
+        <p className="faint">{t("esim.none", locale)}</p>
       ) : (
         [...byEid.entries()].map(([eid, rows]) => (
           <section key={eid} className="stack">
             <h4 className="section-title mono">
-              {labels.colEid} {eid}
+              {t("esim.colEid", locale)} {eid}
             </h4>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>{labels.colIccid}</th>
-                    <th>{labels.colNickname}</th>
-                    <th>{labels.colState}</th>
-                    <th>{labels.colCollected}</th>
+                    <th>{t("esim.colIccid", locale)}</th>
+                    <th>{t("esim.colNickname", locale)}</th>
+                    <th>{t("esim.colState", locale)}</th>
+                    <th>{t("esim.colCollected", locale)}</th>
+                    <th>{t("esim.colSource", locale)}</th>
                     <th />
                   </tr>
                 </thead>
@@ -194,6 +253,14 @@ export function EsimPanel({
                           .replace("T", " ")
                           .slice(0, 16)}
                       </td>
+                      <td className="faint">
+                        {t(
+                          profile.source === "inventory"
+                            ? "esim.sourceInventory"
+                            : "esim.sourceRead",
+                          locale,
+                        )}
+                      </td>
                       <td className="row-actions">
                         {/* Only a disabled profile can be switched to, and a
                             deleted one is not on the chip at all. */}
@@ -203,14 +270,14 @@ export function EsimPanel({
                             className="risk"
                             disabled={busy}
                             onClick={() => {
-                              if (!window.confirm(labels.confirmSwitch)) return;
+                              if (!window.confirm(t("esim.confirmSwitch", locale))) return;
                               void issue("switch_esim_profile", {
                                 modem_imei: profile.modemImei,
                                 target_iccid: profile.iccid,
                               });
                             }}
                           >
-                            {labels.switch}
+                            {t("esim.switch", locale)}
                           </button>
                         ) : null}
                       </td>
@@ -237,11 +304,10 @@ export function EsimPanel({
         ))}
       </div>
       {pending ? <p className="faint">{t("esim.chipBusy", locale)}</p> : null}
-      {failedRead ? (
-        <p className="error">
-          {t("esim.chipFailed", locale)}: {failedRead.result?.reason ?? ""}
-        </p>
-      ) : null}
+      {/* The failed-read banner is rendered above, next to the inventory it
+          explains, and split by cause. One banner that only knew the status
+          said the same sentence for a module that has no eUICC and for a chip
+          that stopped answering, which are not the same news. */}
 
       {chips.length === 0 ? (
         <p className="faint">{t("esim.noChip", locale)}</p>
@@ -249,7 +315,7 @@ export function EsimPanel({
         chips.map(({ info, completedAt }) => (
           <section key={info.eid} className="stack">
             <h4 className="section-title mono">
-              {labels.colEid} {info.eid}
+              {t("esim.colEid", locale)} {info.eid}
             </h4>
             <div className="table-wrap">
               <table>
@@ -292,7 +358,7 @@ export function EsimPanel({
                       <th>{t("esim.colSeq", locale)}</th>
                       <th>{t("esim.colOperation", locale)}</th>
                       <th>{t("esim.colAddress", locale)}</th>
-                      <th>{labels.colIccid}</th>
+                      <th>{t("esim.colIccid", locale)}</th>
                       <th />
                     </tr>
                   </thead>
@@ -832,27 +898,6 @@ function isEsimRead(kind: string): boolean {
   return kind === "read_esim_info" || kind === "retrieve_esim_notification";
 }
 
-/**
- * The most recent successful chip reading per EID.
- *
- * Per EID rather than per IMEI on purpose: the EID is the chip, and a module
- * that was read twice should not produce two entries that disagree.
- */
-function latestChipReads(
-  commands: CommandRow[],
-): { info: EsimInfoResult; completedAt: number | null }[] {
-  const seen = new Map<string, { info: EsimInfoResult; completedAt: number | null }>();
-  for (const row of commands) {
-    if (row.kind !== "read_esim_info" || row.status !== "succeeded") continue;
-    const info = parseEsimInfoResult(row.result?.details);
-    if (!info) continue;
-    const existing = seen.get(info.eid);
-    if (existing && (existing.completedAt ?? 0) >= (row.completed_at ?? 0)) continue;
-    seen.set(info.eid, { info, completedAt: row.completed_at });
-  }
-  return [...seen.values()].sort((left, right) => left.info.eid.localeCompare(right.info.eid));
-}
-
 function latestRetrieval(commands: CommandRow[]): RetrievedNotification | null {
   let best: { row: CommandRow; value: RetrievedNotification } | null = null;
   for (const row of commands) {
@@ -909,13 +954,3 @@ function listOrNull(values: string[]): string | null {
   return values.length === 0 ? null : values.join(", ");
 }
 
-function localeFromCookie(cookies: string): Locale {
-  for (const part of cookies.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === LOCALE_COOKIE) {
-      const value = decodeURIComponent(rest.join("="));
-      if (isLocale(value)) return value;
-    }
-  }
-  return DEFAULT_LOCALE;
-}

@@ -177,21 +177,16 @@ export default async function DevicePage({
           title={t("esim.title", locale)}
           note={t("esim.note", locale)}
         >
+          {/* The locale itself, not a nine-string subset of the catalogue.
+              The subset was the bug: the panel drew about a hundred strings
+              and this list named nine of them, so the other ninety-odd came
+              from a locale the component only learned after hydration and the
+              server sent them in the default language on every request. */}
           <EsimPanel
             deviceId={deviceId}
             profiles={esim}
             modems={own.map((modem) => ({ imei: modem.imei }))}
-            labels={{
-              none: t("esim.none", locale),
-              colEid: t("esim.colEid", locale),
-              colIccid: t("esim.colIccid", locale),
-              colState: t("esim.colState", locale),
-              colNickname: t("esim.colNickname", locale),
-              colCollected: t("esim.colCollected", locale),
-              switch: t("esim.switch", locale),
-              refresh: t("esim.refresh", locale),
-              confirmSwitch: t("esim.confirmSwitch", locale),
-            }}
+            locale={locale}
           />
         </Card>
 
