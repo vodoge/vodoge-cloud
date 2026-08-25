@@ -1,10 +1,32 @@
 import Link from "next/link";
-import { Card, EmptyState, StateBadge } from "@/components/ui";
+import { StateBadge } from "@/components/ui/badge";
+import { Card, CardEmpty } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import { fetchRules, type RuleRow } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import { PAGE } from "@/lib/tokens";
 
+/**
+ * The tenant's own extract rules, read-only.
+ *
+ * Moved onto the design system. The fetch, the failure case, the empty case
+ * and the pointer to `/schedule` are untouched — this page has no controls and
+ * writes nothing.
+ *
+ * `locale` is resolved on the server and used directly, never read from a
+ * cookie in an effect. This console has shipped that bug twice; it renders the
+ * server's HTML in the default language every time while looking correct in a
+ * browser, because hydration fixes it before anyone looks.
+ */
 export default async function RulesPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
@@ -19,59 +41,63 @@ export default async function RulesPage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("rules.title", locale)}</h1>
-          <p className="page-desc">{t("rules.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("rules.title", locale)}</h1>
+          <p className={PAGE.description}>{t("rules.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className="danger">{t("rules.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("rules.loadError", locale)}</p> : null}
 
-      {/*
-        Scheduled tasks reach the operator from here rather than from the top
-        nav. Rules and schedules are the two halves of automation -- one reacts
-        to what arrives, the other acts on a clock -- and this is the page an
-        operator is already on when they go looking for the second one.
-      */}
-      <p className="hint">
-        <Link href="/schedule">{t("rules.schedules", locale)}</Link>{" "}
-        {t("rules.schedulesHint", locale)}
-      </p>
+      <div className={PAGE.stack}>
+        {/*
+          Scheduled tasks reach the operator from here rather than from the top
+          nav. Rules and schedules are the two halves of automation -- one reacts
+          to what arrives, the other acts on a clock -- and this is the page an
+          operator is already on when they go looking for the second one.
+        */}
+        <p className={PAGE.hint}>
+          <Link className={PAGE.link} href="/schedule">
+            {t("rules.schedules", locale)}
+          </Link>{" "}
+          {t("rules.schedulesHint", locale)}
+        </p>
 
-      <Card bodyless>
-        {rules.length === 0 ? (
-          <EmptyState
-            title={t("empty.rules.title", locale)}
-            desc={t("empty.rules.desc", locale)}
-          />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("rules.colName", locale)}</th>
-                  <th>{t("rules.colId", locale)}</th>
-                  <th>{t("rules.colEnabled", locale)}</th>
-                </tr>
-              </thead>
-              <tbody>
+        <Card>
+          {rules.length === 0 ? (
+            <CardEmpty
+              title={t("empty.rules.title", locale)}
+              description={t("empty.rules.desc", locale)}
+            />
+          ) : (
+            <Table>
+              <TableHead>
+                <TableRow head>
+                  <TableHeaderCell>{t("rules.colName", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>{t("rules.colId", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("rules.colEnabled", locale)}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {rules.map((rule) => (
-                  <tr key={rule.id}>
-                    <td>{rule.name}</td>
-                    <td className="mono faint">{rule.id}</td>
-                    <td>
+                  <TableRow key={rule.id}>
+                    <TableCell wrap>{rule.name}</TableCell>
+                    <TableCell mono faint secondary>
+                      {rule.id}
+                    </TableCell>
+                    <TableCell>
                       <StateBadge
                         state={rule.enabled ? "online" : "offline"}
                         label={t(rule.enabled ? "rules.on" : "rules.off", locale)}
                       />
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+      </div>
     </>
   );
 }

@@ -1,8 +1,18 @@
-import { Card, EmptyState, StateBadge } from "@/components/ui";
+import { StateBadge } from "@/components/ui/badge";
+import { Card, CardEmpty } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import { fetchSchedules, type ScheduleRow } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import { PAGE, TABLE } from "@/lib/tokens";
 
 /**
  * Read-only on purpose, for now.
@@ -12,6 +22,10 @@ import { requestHost, sessionToken } from "@/lib/tenant-headers";
  * cannot be checked by fetching the page. Adding a create form would mean a
  * client component, and this feature's own tests are worth more than a form
  * that duplicates what `POST /v1/schedules` already validates and audits.
+ *
+ * Moved onto the design system. The fetch, the failure case, the empty case and
+ * the four helpers below are untouched: the page reads nothing new and still
+ * writes nothing, so what changed is the way it looks.
  */
 
 /** A cadence read as "every two hours" rather than as 7200. */
@@ -79,74 +93,84 @@ export default async function SchedulePage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("schedule.title", locale)}</h1>
-          <p className="page-desc">{t("schedule.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("schedule.title", locale)}</h1>
+          <p className={PAGE.description}>{t("schedule.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className="danger">{t("schedule.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("schedule.loadError", locale)}</p> : null}
 
-      <Card bodyless>
+      <Card>
         {schedules.length === 0 ? (
-          <EmptyState
+          <CardEmpty
             title={t("empty.schedule.title", locale)}
-            desc={t("empty.schedule.desc", locale)}
+            description={t("empty.schedule.desc", locale)}
           />
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("schedule.colName", locale)}</th>
-                  <th>{t("schedule.colAction", locale)}</th>
-                  <th>{t("schedule.colTarget", locale)}</th>
-                  <th>{t("schedule.colCadence", locale)}</th>
-                  <th>{t("schedule.colNextDue", locale)}</th>
-                  <th>{t("schedule.colLastRun", locale)}</th>
-                  <th>{t("schedule.colLastResult", locale)}</th>
-                  <th>{t("schedule.colEnabled", locale)}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {schedules.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.name}</td>
-                    <td className="mono">
-                      {row.action === "public_ip_check"
-                        ? t("schedule.actionPublicIp", locale)
-                        : (row.commandKind ?? row.action)}
-                    </td>
-                    <td className="mono faint">{target(row, locale)}</td>
-                    <td>{cadence(row.intervalSeconds, locale)}</td>
-                    <td>{row.enabled ? moment(row.nextDueAt, locale) : "—"}</td>
-                    <td>{moment(row.lastRunAt, locale)}</td>
-                    <td>
-                      {row.lastStatus ? (
-                        <>
-                          <StateBadge
-                            state={statusTone(row.lastStatus)}
-                            label={t(`schedule.status.${row.lastStatus}`, locale)}
-                          />
-                          {row.lastDetail ? (
-                            <div className="mono faint">{row.lastDetail}</div>
-                          ) : null}
-                        </>
-                      ) : (
-                        <span className="faint">{t("schedule.never", locale)}</span>
-                      )}
-                    </td>
-                    <td>
-                      <StateBadge
-                        state={row.enabled ? "online" : "offline"}
-                        label={t(row.enabled ? "schedule.on" : "schedule.off", locale)}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHead>
+              {/*
+                Eight columns, and the widest table on any read-only page here.
+                Three of them are marked `secondary` and leave the phone: the
+                target, the cadence and the last run are how a task was set up
+                and what it did before, whereas the question this table is
+                opened with is "is it on, when does it fire next, and did the
+                last one work". The same mark goes on the header cell and the
+                body cell of a column, which is what makes the pair drop
+                together.
+              */}
+              <TableRow head>
+                <TableHeaderCell>{t("schedule.colName", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("schedule.colAction", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary>{t("schedule.colTarget", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary>{t("schedule.colCadence", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("schedule.colNextDue", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary>{t("schedule.colLastRun", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("schedule.colLastResult", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("schedule.colEnabled", locale)}</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {schedules.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell wrap>{row.name}</TableCell>
+                  <TableCell mono>
+                    {row.action === "public_ip_check"
+                      ? t("schedule.actionPublicIp", locale)
+                      : (row.commandKind ?? row.action)}
+                  </TableCell>
+                  <TableCell mono faint secondary wrap>
+                    {target(row, locale)}
+                  </TableCell>
+                  <TableCell secondary>{cadence(row.intervalSeconds, locale)}</TableCell>
+                  <TableCell>{row.enabled ? moment(row.nextDueAt, locale) : "—"}</TableCell>
+                  <TableCell secondary>{moment(row.lastRunAt, locale)}</TableCell>
+                  <TableCell>
+                    {row.lastStatus ? (
+                      <>
+                        <StateBadge
+                          state={statusTone(row.lastStatus)}
+                          label={t(`schedule.status.${row.lastStatus}`, locale)}
+                        />
+                        {row.lastDetail ? (
+                          <span className={TABLE.cellNote}>{row.lastDetail}</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className={TABLE.cellFaint}>{t("schedule.never", locale)}</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <StateBadge
+                      state={row.enabled ? "online" : "offline"}
+                      label={t(row.enabled ? "schedule.on" : "schedule.off", locale)}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </Card>
     </>

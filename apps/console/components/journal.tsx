@@ -1,7 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Output } from "@/components/ui/output";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import type { JournalEvent } from "@/lib/catalog";
+import { cn } from "@/lib/cn";
+import { JOURNAL, SEGMENTED } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -13,6 +26,23 @@ type Labels = Record<string, string>;
  * the device reported it that way or the projection mangled it. This is the
  * only place that answers it, so a row expands to the envelope verbatim rather
  * than to a summary.
+ *
+ * ## Moved onto the design system
+ *
+ * Nothing about what this component does has changed: the same filter, the
+ * same per-row fetch, the same expand-to-collapse toggle. Two things it used to
+ * rely on were not what they looked like:
+ *
+ * - The filter was `<div className="button-row">` with `segmented-on` on the
+ *   selected button, and `segmented-on` is **not a rule** — the stylesheet only
+ *   declares `.button-row button.segmented-on`, so it worked because of the
+ *   container it happened to be in. `SEGMENTED` needs no ancestor, which is the
+ *   same correction `BUTTON.variant.risk` is to `.risk`.
+ * - The payload block was `<pre className="output">` inside a table cell. `pre`
+ *   is `white-space: pre`, so one long line of an envelope sets the cell's
+ *   min-content width to that whole line and the table grows to fit it. That is
+ *   the overflow this card was told to deal with, and `Output` is the primitive
+ *   built for it — a scroll container of its own, in both axes.
  */
 export function Journal({
   events,
@@ -54,11 +84,12 @@ export function Journal({
   }
 
   return (
-    <div className="stack">
-      <div className="button-row">
+    <div className={JOURNAL.stack}>
+      <div className={SEGMENTED.root} role="group" aria-label={labels.filter}>
         <button
           type="button"
-          className={kind === "" ? "segmented-on" : ""}
+          aria-pressed={kind === ""}
+          className={cn(SEGMENTED.option, kind === "" ? SEGMENTED.optionSelected : undefined)}
           onClick={() => setKind("")}
         >
           {labels.all}
@@ -67,7 +98,11 @@ export function Journal({
           <button
             key={candidate}
             type="button"
-            className={kind === candidate ? "segmented-on" : ""}
+            aria-pressed={kind === candidate}
+            className={cn(
+              SEGMENTED.option,
+              kind === candidate ? SEGMENTED.optionSelected : undefined,
+            )}
             onClick={() => setKind(candidate)}
           >
             {candidate}
@@ -75,48 +110,64 @@ export function Journal({
         ))}
       </div>
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{labels.colAt}</th>
-              <th>{labels.colKind}</th>
-              <th>{labels.colSeq}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((event) => {
-              const key = rowKey(event);
-              return (
-                <tr key={key}>
-                  <td className="mono faint">
-                    {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
-                  </td>
-                  <td>
-                    <span className="badge badge-info">{event.kind}</span>
-                  </td>
-                  <td className="mono faint">{event.seq}</td>
-                  <td>
-                    <button type="button" className="link-button" onClick={() => void expand(event)}>
-                      {open === key ? labels.hide : labels.show}
-                    </button>
-                    {open === key ? (
-                      <pre className="output">
-                        {payloads[key] === undefined
-                          ? labels.loading
-                          : JSON.stringify(payloads[key], null, 2)}
-                      </pre>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <Table>
+        <TableHead>
+          <TableRow head>
+            <TableHeaderCell>{labels.colAt}</TableHeaderCell>
+            <TableHeaderCell>{labels.colKind}</TableHeaderCell>
+            <TableHeaderCell secondary>{labels.colSeq}</TableHeaderCell>
+            {/* The toggle column has no heading, as it had none before. The
+                cell itself stays, so the header row still has one cell per
+                column. */}
+            <TableHeaderCell />
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {shown.map((event) => {
+            const key = rowKey(event);
+            return (
+              <TableRow key={key}>
+                <TableCell mono faint>
+                  {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
+                </TableCell>
+                <TableCell>
+                  <Badge tone="info" dot={false}>
+                    {event.kind}
+                  </Badge>
+                </TableCell>
+                <TableCell mono faint secondary>
+                  {event.seq}
+                </TableCell>
+                {/* `wrap` is what keeps the expanded payload from setting this
+                    column's width: `Output` scrolls, and the cell around it is
+                    allowed to be narrower than the longest line in it. */}
+                <TableCell wrap>
+                  <Button
+                    variant="subtle"
+                    size="sm"
+                    aria-expanded={open === key}
+                    onClick={() => void expand(event)}
+                  >
+                    {open === key ? labels.hide : labels.show}
+                  </Button>
+                  {open === key ? (
+                    <Output>
+                      {payloads[key] === undefined
+                        ? labels.loading
+                        : JSON.stringify(payloads[key], null, 2)}
+                    </Output>
+                  ) : null}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
 
-      {shown.length === 0 ? <p className="faint">{labels.none}</p> : null}
+      {/* Only reachable through the filter: the page renders its own empty
+          state when nothing arrived at all, so this is "the filter matched
+          nothing", which is a different sentence about a different cause. */}
+      {shown.length === 0 ? <p className={JOURNAL.filteredOut}>{labels.none}</p> : null}
     </div>
   );
 }

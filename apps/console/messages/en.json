@@ -322,6 +322,7 @@
   "journal.title": "Journal",
   "journal.desc": "What the devices actually sent.",
   "journal.note": "newest first — expand a row for the envelope verbatim",
+  "journal.filter": "Filter by kind",
   "journal.all": "All",
   "journal.colAt": "Arrived",
   "journal.colKind": "Kind",

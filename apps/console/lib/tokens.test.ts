@@ -986,16 +986,35 @@ test("every primitive still exports what it says, drawn by the recipes it names"
 });
 
 /**
- * The ten pages that import the old barrel keep compiling untouched.
+ * The pages that import the old barrel keep compiling untouched.
  *
  * `components/ui.tsx` is now a compatibility layer over `components/ui/*`, and
  * the thing that must not change is its surface: ten pages, spread across six
- * of the seven remaining migration cards, import from it, and only one of those
- * cards is allowed to edit it. `tsc --noEmit` is the real proof that the prop
- * signatures still fit — this is the cheaper one that says the *names* are
- * still there, and it fails with the name of the page that would break.
+ * of the seven remaining migration cards, imported from it when it was written,
+ * and only one of those cards is allowed to edit it. `tsc --noEmit` is the real
+ * proof that the prop signatures still fit — this is the cheaper one that says
+ * the *names* are still there, and it fails with the name of the page that
+ * would break.
+ *
+ * 🔴 **A list of files rather than a count, and that is not a style choice.**
+ * Seven page cards are in flight in seven worktrees, each of them migrating a
+ * different page off this barrel, and each of them therefore has to say the
+ * remaining set is smaller. As a *number*, two cards that both write `9` merge
+ * without a conflict into `9` when the truth after both is `8` — a wrong value
+ * arrived at by a clean automatic merge, which is the worst kind. As a *list*,
+ * two cards delete different lines and git merges both deletions correctly.
+ * The list reaching empty is what makes the barrel deletable.
  */
-test("the old ui barrel still exports every name its ten importers ask for", () => {
+const BARREL_IMPORTERS = [
+  "app/devices/[deviceId]/page.tsx",
+  "app/devices/page.tsx",
+  "app/inbox/[peer]/page.tsx",
+  "app/inbox/page.tsx",
+  "app/proxy/page.tsx",
+  "app/settings/page.tsx",
+];
+
+test("the old ui barrel still exports every name its remaining importers ask for", () => {
   const barrel = codeOnly(readSource("components/ui.tsx"));
   const importers: string[] = [];
   const missing: string[] = [];
@@ -1013,7 +1032,11 @@ test("the old ui barrel still exports every name its ten importers ask for", () 
   }
 
   assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
-  assert.equal(importers.length, 10, `${importers.length} pages import the barrel, not ten`);
+  assert.deepEqual(
+    importers.sort(),
+    [...BARREL_IMPORTERS].sort(),
+    "a page started or stopped importing the barrel without this list being told",
+  );
 });
 
 /**
@@ -1584,7 +1607,7 @@ test("the secret input knows about one value and not about how many there are", 
  */
 const RULES_SHIPPED_UNASKED = [
   // Ordinary English in the recipes' own comments.
-  "block",
+  // `block` left this list under T015: `TABLE.cellNote` asks for it.
   "collapse",
   "filter",
   "inline",

@@ -74,6 +74,7 @@ export function TableCell({
   mono,
   faint,
   secondary,
+  wrap,
   className,
   ...props
 }: React.TdHTMLAttributes<HTMLTableCellElement> & {
@@ -81,12 +82,20 @@ export function TableCell({
   faint?: boolean;
   /** Drops off the phone. Put it on the header cell of the same column too. */
   secondary?: boolean;
+  /**
+   * For a column with no upper bound on its width — an SMS body, a pasted
+   * name, a payload. It lets the cell be narrower than its longest unbroken
+   * run, which is the only thing that stops one long URL from making the whole
+   * table three times the width of the phone. See `TABLE.cellWrap`.
+   */
+  wrap?: boolean;
 }) {
   return (
     <td
       className={cn(
         tableCellClass({ mono, faint }),
         secondary ? TABLE.cellSecondary : undefined,
+        wrap ? TABLE.cellWrap : undefined,
         className,
       )}
       {...props}

@@ -322,6 +322,7 @@
   "journal.title": "日志",
   "journal.desc": "设备实际发上来的东西。",
   "journal.note": "最新在前 —— 展开可看原始报文",
+  "journal.filter": "按类型筛选",
   "journal.all": "全部",
   "journal.colAt": "到达时间",
   "journal.colKind": "类型",
