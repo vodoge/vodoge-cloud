@@ -501,11 +501,45 @@ test("the password field is a password field and cannot be revealed", () => {
  * names the module it imports the component from.
  */
 test("the overview's bearer pill is the shared badge, not a hand-written one", () => {
-  const source = readSource("app/page.tsx");
-  const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
+  // Comments stripped, and the assertion is on the *call site*. `<Badge` named
+  // in prose, or an import left behind after the element it imported was
+  // deleted, are both things that keep a "is it wired up" check green while
+  // the wiring is gone.
+  const code = codeOnly(readSource("app/page.tsx"));
+  const rendered = code.match(/<Badge\b[^>]*/g) ?? [];
+  assert.equal(rendered.length, 1, "exactly one bearer pill should be rendered");
+  assert.match(rendered[0], /tone="info"/, "the tone the hand-written pill had, kept");
+  assert.match(rendered[0], /dot=\{false\}/, "a bearer is a category, not a state");
+
+  const handWritten = classListsIn(code).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
   assert.deepEqual(handWritten, [], "a badge is still being drawn from the old stylesheet");
-  assert.match(source, /from "@\/components\/ui\/badge"/, "the shared badge is not imported");
-  assert.match(source, /<Badge\b/, "nothing renders the shared badge");
+});
+
+/**
+ * Every part of the page comes from the shared components, at the point of use.
+ *
+ * Counting call sites rather than imports. An import is wiring that survives
+ * the deletion of the thing it was wired to, and hand-written markup beside a
+ * component that does the same job is how this console got two badges, two
+ * cards and two tables that disagree.
+ */
+test("the overview is drawn by the shared components, at the point of use", () => {
+  const code = codeOnly(readSource("app/page.tsx"));
+  const uses = (pattern: RegExp) => (code.match(pattern) ?? []).length;
+
+  assert.equal(uses(/<StatCard\b/g), 3, "three fleet numbers");
+  assert.equal(uses(/<StatRow\b/g), 1);
+  assert.equal(uses(/<Table\b/g), 1);
+  assert.equal(uses(/<CardEmpty\b/g), 1, "the empty case still says what would be here");
+  // A bare `<table>` is not only a second implementation: preflight is off, so
+  // the legacy stylesheet's bare-element rules would style it, which is the
+  // exact mechanism by which the two drift apart.
+  assert.equal(uses(/<(table|thead|tbody|tr|th|td)\b/g), 0, "hand-written table markup is back");
+  // Counting call sites is not enough on its own, and this line exists because
+  // an injected defect proved it: a fourth stat written as a bare `<section>`
+  // beside the three components leaves all the counts above correct. Every
+  // section on this page has to come out of a shared component.
+  assert.equal(uses(/<section\b/g), 0, "a card was written by hand beside the components");
 });
 
 /**
@@ -521,6 +555,16 @@ test("the overview stays a read-only server component", () => {
   for (const forbidden of [/"use client"/, /<form\b/, /<button\b/, /<Button\b/, /\bonClick\b/]) {
     assert.ok(!forbidden.test(code), `the overview gained ${forbidden} — it writes nothing`);
   }
+  // And the locale is handed to every string, from the server's own read. A
+  // `t(key)` with the locale left off renders the default language into the
+  // HTML and is then corrected by hydration, so it looks right in a browser
+  // and is wrong for everything that does not run scripts.
+  assert.match(code, /await getRequestLocale\(\)/, "the locale is no longer resolved server-side");
+  assert.equal(
+    (code.match(/\bt\(/g) ?? []).length,
+    (code.match(/\bt\("[^"]+",\s*locale\b/g) ?? []).length,
+    "a t() call on this page is missing its locale argument",
+  );
 });
 
 /* ── The helpers ─────────────────────────────────────────────────────── */
