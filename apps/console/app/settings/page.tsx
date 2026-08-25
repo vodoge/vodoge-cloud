@@ -1,7 +1,9 @@
-import { PasswordForm, SettingsForm, type Field } from "@/components/settings-form";
-import { Card } from "@/components/ui";
+import { PasswordForm, SettingsForm, type ChannelTest } from "@/components/settings-form";
+import { Badge } from "@/components/ui/badge";
+import { CardDisclosure, CardPanel as Card } from "@/components/ui/card";
+import { SpecRow, SpecTable, TableBody } from "@/components/ui/table";
 import { fetchSettings, type SettingsBySection } from "@/lib/catalog";
-import { t, type Locale } from "@/lib/i18n";
+import { MISSING_KEY_PATTERN, t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import {
   bearerHeader,
@@ -12,66 +14,36 @@ import {
 } from "@/lib/session";
 import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
+import {
+  CARD,
+  NOTIFICATION_FIELDS,
+  PAGE,
+  SECURITY_FIELDS,
+  SMS_FIELDS,
+  displaySettingValue,
+  groupSettingsFields,
+  notificationChannels,
+  readSettingValue,
+  settingsGroupIsOn,
+  settingsSaveConsequence,
+  type SettingsField,
+  type SettingsGroup,
+} from "@/lib/tokens";
 
 /**
  * The old product's settings were machine-global: one box, one owner, one set
  * of channels. Here every one of them belongs to a tenant.
  *
- * Two of the old sections are deliberately absent. HTTPS and its certificate
- * are terminated at the gateway for every tenant at once, so they are not a
- * tenant's to configure; and device defaults have no fields yet, so rendering
- * an empty card would only raise a question the page cannot answer.
- */
-const NOTIFICATION_FIELDS: Field[] = [
-  { path: "webhook.enabled", kind: "boolean" },
-  { path: "webhook.urls", kind: "list" },
-  { path: "webhook.secret", kind: "secret" },
-  { path: "email.enabled", kind: "boolean" },
-  { path: "email.smtp_host", kind: "text" },
-  { path: "email.smtp_port", kind: "number" },
-  { path: "email.username", kind: "text" },
-  { path: "email.password", kind: "secret" },
-  { path: "email.from_address", kind: "text" },
-  { path: "email.to_addresses", kind: "list" },
-  { path: "bark.enabled", kind: "boolean" },
-  { path: "bark.urls", kind: "list" },
-  { path: "telegram.enabled", kind: "boolean" },
-  { path: "telegram.chat_id", kind: "text" },
-  { path: "telegram.bot_token", kind: "secret" },
-  // The bot half. It shares the token above -- one bot, one credential -- and
-  // is otherwise independent: a deployment may want alerts without a bot, or a
-  // bot without alerts. Each operator line is "<telegram id>=<account email>",
-  // and the account named there is the one the bot acts as, with that
-  // account's role. Mapping a chat here grants exactly what that account can
-  // already do and nothing more.
-  { path: "telegram.bot.enabled", kind: "boolean" },
-  { path: "telegram.bot.operators", kind: "list" },
-  { path: "feishu.enabled", kind: "boolean" },
-  { path: "feishu.webhook_url", kind: "text" },
-  { path: "feishu.secret", kind: "secret" },
-  { path: "wecom.enabled", kind: "boolean" },
-  { path: "wecom.webhook_url", kind: "text" },
-  { path: "pushplus.enabled", kind: "boolean" },
-  { path: "pushplus.token", kind: "secret" },
-  { path: "pushplus.topic", kind: "text" },
-];
-
-/**
- * The channels above, derived rather than listed a second time.
+ * The field tables moved to `lib/tokens.ts`, where a test can read them: this
+ * page's real content is a list of dotted paths and their types, and a `.tsx`
+ * cannot be read by a test in this app. What is left here is the page — which
+ * cards there are, who may write, and which strings the forms are handed.
  *
- * Every one of them can be tested, because the gateway has a sender for every
- * one of them — `settings.NotificationChannels()` and `notify.Registry()` are
- * held equal by a test on that side. Writing the testable set out by hand is
- * how the last drift started: telegram had fields here and no sender there, so
- * configuring it did nothing at all and said nothing about it.
+ * `locale` is resolved on the server and passed down. It is deliberately not
+ * read from a cookie in an effect: this console has shipped that bug twice, and
+ * it renders the server's HTML in the default language every time while looking
+ * correct in a browser, because hydration fixes it before anyone looks.
  */
-const NOTIFICATION_CHANNELS = [
-  ...new Set(NOTIFICATION_FIELDS.map((field) => field.path.split(".")[0]!)),
-];
-
-const SMS_FIELDS: Field[] = [{ path: "hourly_limit", kind: "number" }];
-const SECURITY_FIELDS: Field[] = [{ path: "session_ttl_hours", kind: "number" }];
-
 export default async function SettingsPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
@@ -88,6 +60,11 @@ export default async function SettingsPage() {
   const writable = mayWrite(role);
 
   const labels = fieldLabels(locale);
+  const confirm = {
+    question: t("confirm.question", locale),
+    proceed: t("confirm.proceed", locale),
+    cancel: t("confirm.cancel", locale),
+  };
 
   // Every field on this page saves through PUT /v1/settings/{section}, which
   // the gateway refuses outright for a read-only session. Rendering the forms
@@ -96,9 +73,10 @@ export default async function SettingsPage() {
   // not "cannot see"; hiding the section would take away the visibility the
   // account exists to have.
   function section(
-    fields: Field[],
+    fields: readonly SettingsField[],
     values: Record<string, unknown>,
     name: "notifications" | "sms" | "security",
+    title: string,
   ) {
     return writable ? (
       <SettingsForm
@@ -106,7 +84,13 @@ export default async function SettingsPage() {
         initial={values}
         fields={fields}
         labels={labels}
-        testable={name === "notifications" ? NOTIFICATION_CHANNELS : undefined}
+        confirm={confirm}
+        saveTitle={t("settings.confirmSaveTitle", locale, { section: title })}
+        saveConsequence={settingsSaveConsequence(fields, {
+          save: t("settings.confirmSave", locale, { section: title }),
+          secrets: t("settings.confirmSaveSecrets", locale),
+        })}
+        testable={name === "notifications" ? channelTests(fields, labels, locale) : undefined}
       />
     ) : (
       <ReadOnlyFields fields={fields} values={values} labels={labels} />
@@ -115,32 +99,50 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("settings.title", locale)}</h1>
-          <p className="page-desc">{t("settings.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("settings.title", locale)}</h1>
+          <p className={PAGE.description}>{t("settings.desc", locale)}</p>
         </div>
-        {writable ? null : <span className="badge badge-warn">{t("role.readOnlyBadge", locale)}</span>}
+        {writable ? null : (
+          <Badge tone="warn" dot={false}>
+            {t("role.readOnlyBadge", locale)}
+          </Badge>
+        )}
       </div>
 
-      {loadError ? <p className="danger">{t("settings.loadError", locale)}</p> : null}
-      {writable ? null : <p className="faint">{t("role.readOnlySettings", locale)}</p>}
+      {loadError ? <p className={PAGE.error}>{t("settings.loadError", locale)}</p> : null}
+      {writable ? null : <p className={PAGE.description}>{t("role.readOnlySettings", locale)}</p>}
 
-      <div className="card-grid">
+      {/* `PAGE.stack`, not the `card-grid` this page asked for from the day it
+          was written. That class is in no stylesheet and never has been, so
+          these four cards have been sitting in ordinary block flow with no gap
+          at all between them, on a page whose markup says it lays them out in a
+          grid. It was found by a check, not by three separate surveys. */}
+      <div className={PAGE.stack}>
         <Card
-          className="card-span-all"
           title={t("settings.notifications", locale)}
           note={t("settings.notificationsNote", locale)}
         >
-          {section(NOTIFICATION_FIELDS, settings.notifications ?? {}, "notifications")}
+          {section(
+            NOTIFICATION_FIELDS,
+            settings.notifications ?? {},
+            "notifications",
+            t("settings.notifications", locale),
+          )}
         </Card>
 
         <Card title={t("settings.sms", locale)} note={t("settings.smsNote", locale)}>
-          {section(SMS_FIELDS, settings.sms ?? {}, "sms")}
+          {section(SMS_FIELDS, settings.sms ?? {}, "sms", t("settings.sms", locale))}
         </Card>
 
         <Card title={t("settings.security", locale)} note={t("settings.securityNote", locale)}>
-          {section(SECURITY_FIELDS, settings.security ?? {}, "security")}
+          {section(
+            SECURITY_FIELDS,
+            settings.security ?? {},
+            "security",
+            t("settings.security", locale),
+          )}
         </Card>
 
         {/* Not gated. Rotating your own password is not a tenant write, the
@@ -180,57 +182,110 @@ async function currentRole(host: string, token: string | undefined): Promise<Con
   }
 }
 
-/** The same fields a form would render, as values. */
+/**
+ * One confirmation per channel, written on the server.
+ *
+ * Derived from the fields, so there is no list of channels here to fall behind
+ * the one the gateway has senders for — which is the drift that once left
+ * telegram configurable and unable to send. The text is interpolated here
+ * rather than in the form because `lib/i18n.ts` imports both catalogues, and
+ * importing it from a client component would ship every string in this console
+ * to the browser twice over.
+ */
+function channelTests(
+  fields: readonly SettingsField[],
+  labels: Record<string, string>,
+  locale: Locale,
+): ChannelTest[] {
+  return notificationChannels(fields).map((channel) => {
+    const label = labels[channel] ?? channel;
+    return {
+      channel,
+      label,
+      title: t("settings.confirmTestTitle", locale, { channel: label }),
+      consequence: t("settings.confirmTest", locale, { channel: label }),
+    };
+  });
+}
+
+/**
+ * The same fields a form would render, as values.
+ *
+ * A `SpecTable`, not the data grid: this is a list of a name and a reading, and
+ * it has no `<th>` row at all — one of the five tables in this console that
+ * have none, which is why any narrow-screen treatment built on header text
+ * would have done nothing here. It folds by channel exactly as the editable
+ * form does, so a read-only account reads the same page shape.
+ */
 function ReadOnlyFields({
   fields,
   values,
   labels,
 }: {
-  fields: Field[];
+  fields: readonly SettingsField[];
   values: Record<string, unknown>;
   labels: Record<string, string>;
 }) {
+  const stored = Object.fromEntries(
+    fields.map((field) => [field.path, readSettingValue(values, field.path)]),
+  );
+  const words = { on: labels.valueOn as string, off: labels.valueOff as string };
+
   return (
-    <div className="table-wrap">
-      <table>
-        <tbody>
-          {fields.map((field) => (
-            <tr key={field.path}>
-              <td>{labels[field.path] ?? field.path}</td>
-              <td className="mono">{display(read(values, field.path))}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className={CARD.stack}>
+      {groupSettingsFields(fields).map((group) =>
+        group.name === null ? (
+          <SpecTable key="flat">
+            <TableBody>{rows(group, values, labels, words)}</TableBody>
+          </SpecTable>
+        ) : (
+          <CardDisclosure
+            key={group.name}
+            open={settingsGroupIsOn(group, stored)}
+            title={labels[group.name] ?? group.name}
+            hint={
+              group.enabledPath === null ? undefined : (
+                <Badge tone={settingsGroupIsOn(group, stored) ? "ok" : "neutral"}>
+                  {settingsGroupIsOn(group, stored) ? labels.channelOn : labels.channelOff}
+                </Badge>
+              )
+            }
+          >
+            <SpecTable>
+              <TableBody>{rows(group, values, labels, words)}</TableBody>
+            </SpecTable>
+          </CardDisclosure>
+        ),
+      )}
     </div>
   );
 }
 
-/** A stored value at a dotted path, the same way the form reads it. */
-function read(source: Record<string, unknown>, path: string): unknown {
-  let cursor: unknown = source;
-  for (const key of path.split(".")) {
-    if (!cursor || typeof cursor !== "object") return undefined;
-    cursor = (cursor as Record<string, unknown>)[key];
-  }
-  return cursor;
-}
-
-function display(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "—";
-  if (Array.isArray(value)) return value.length === 0 ? "—" : value.join(", ");
-  if (typeof value === "boolean") return value ? "on" : "off";
-  return String(value);
+function rows(
+  group: SettingsGroup,
+  values: Record<string, unknown>,
+  labels: Record<string, string>,
+  words: { on: string; off: string },
+) {
+  return group.fields.map((field) => (
+    <SpecRow key={field.path} term={labels[field.path] ?? field.path} mono>
+      {displaySettingValue(readSettingValue(values, field.path), words)}
+    </SpecRow>
+  ));
 }
 
 /**
- * Field labels are looked up by the same dotted path the form posts, so a
- * field added to the list above needs one translation key and nothing else.
+ * Field labels are looked up by the same dotted path the form posts, so a field
+ * added to `NOTIFICATION_FIELDS` needs one translation key and nothing else.
+ *
+ * A channel's own name is `f.<channel>` — the prefix its fields share. A
+ * channel added without one falls back to the prefix itself rather than
+ * rendering ⟦f.whatever⟧ in a panel heading; `tokens.test.ts` asserts every
+ * channel this console actually ships has a name in both catalogues, so the
+ * fallback is for the next one rather than for these.
  */
 function fieldLabels(locale: Locale): Record<string, string> {
-  const paths = [...NOTIFICATION_FIELDS, ...SMS_FIELDS, ...SECURITY_FIELDS].map(
-    (field) => field.path,
-  );
+  const fields = [...NOTIFICATION_FIELDS, ...SMS_FIELDS, ...SECURITY_FIELDS];
   const labels: Record<string, string> = {
     save: t("settings.save", locale),
     saved: t("settings.saved", locale),
@@ -243,9 +298,18 @@ function fieldLabels(locale: Locale): Record<string, string> {
     test: t("settings.test", locale),
     testSent: t("settings.testSent", locale),
     testFailed: t("settings.testFailed", locale),
+    listHint: t("settings.listHint", locale),
+    channelOn: t("settings.channelOn", locale),
+    channelOff: t("settings.channelOff", locale),
+    valueOn: t("settings.valueOn", locale),
+    valueOff: t("settings.valueOff", locale),
   };
-  for (const path of paths) {
-    labels[path] = t(`f.${path}`, locale);
+  for (const field of fields) {
+    labels[field.path] = t(`f.${field.path}`, locale);
+  }
+  for (const channel of notificationChannels(NOTIFICATION_FIELDS)) {
+    const name = t(`f.${channel}`, locale);
+    labels[channel] = MISSING_KEY_PATTERN.test(name) ? channel : name;
   }
   return labels;
 }

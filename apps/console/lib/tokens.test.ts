@@ -24,8 +24,12 @@ import {
   MIGRATED_SOURCES,
   NAV_GROUPS,
   NON_UTILITY_CLASSES,
+  NOTIFICATION_FIELDS,
   REDACTED_SECRET,
   SAFE_AREA,
+  SECURITY_FIELDS,
+  SETTINGS_FIELD_KINDS,
+  SMS_FIELDS,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
@@ -58,9 +62,16 @@ import {
   consequenceProblem,
   deviceTab,
   deviceTabHref,
+  displaySettingValue,
+  groupSettingsFields,
   navState,
+  notificationChannels,
   rootTokenValues,
   secretInputProps,
+  settingsDocument,
+  settingsFormValues,
+  settingsGroupIsOn,
+  settingsSaveConsequence,
   tableCellClass,
   themeOverrideValues,
   toneForState,
@@ -475,6 +486,12 @@ const NOT_A_RECIPE = new Set([
   // writes are only allowed to happen after somebody answered one.
   "CARD_POLICY_CONFIRMATIONS",
   "CONFIRMED_WRITES",
+  // The settings form's field tables: dotted paths and the type of each, which
+  // the page used to hold where no test could read them.
+  "SETTINGS_FIELD_KINDS",
+  "NOTIFICATION_FIELDS",
+  "SMS_FIELDS",
+  "SECURITY_FIELDS",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -1036,26 +1053,34 @@ test("every primitive still exports what it says, drawn by the recipes it names"
 });
 
 /**
- * The pages that still import the old barrel keep compiling untouched.
+ * The pages that import the old barrel keep compiling untouched.
  *
- * `components/ui.tsx` is a compatibility layer over `components/ui/*`, and the
- * thing that must not change is its surface: it was ten pages, spread across
- * six of the seven remaining migration cards, and only one of those cards is
- * allowed to edit it. `tsc --noEmit` is the real proof that the prop signatures
- * still fit — this is the cheaper one that says the *names* are still there,
- * and it fails with the name of the page that would break.
+ * `components/ui.tsx` is now a compatibility layer over `components/ui/*`, and
+ * the thing that must not change is its surface: ten pages, spread across six
+ * of the seven remaining migration cards, imported from it when it was written,
+ * and only one of those cards is allowed to edit it. `tsc --noEmit` is the real
+ * proof that the prop signatures still fit — this is the cheaper one that says
+ * the *names* are still there, and it fails with the name of the page that
+ * would break.
  *
- * 🔴 **The count is a bound, not a number, and that is deliberate.** Every one
- * of the seven page migrations removes an importer, so a hard `10` is a
- * guaranteed merge conflict between cards that are running at the same time and
- * a line each of them has to edit for a reason that has nothing to do with what
- * it is checking. `BARREL_IMPORTERS` may only come down: a page that starts
- * importing the barrel again fails, and the day it reaches zero the barrel and
- * this test go together.
+ * 🔴 **A list of files rather than a count, and that is not a style choice.**
+ * Seven page cards are in flight in seven worktrees, each of them migrating a
+ * different page off this barrel, and each of them therefore has to say the
+ * remaining set is one smaller. As a *number*, two cards that both write `9`
+ * merge without a conflict into `9` when the truth after both is `8` — a wrong
+ * value arrived at by a clean automatic merge, which is the worst kind. As a
+ * *list*, two cards delete two different lines and git merges both deletions
+ * correctly. The list reaching empty is what makes the barrel deletable.
  */
-const BARREL_IMPORTERS = 10;
+const BARREL_IMPORTERS = [  "app/inbox/[peer]/page.tsx",
+  "app/inbox/page.tsx",
+  "app/journal/page.tsx",
+  "app/rules/page.tsx",
+  "app/schedule/page.tsx",
+  "app/sessions/page.tsx",
+];
 
-test("the old ui barrel still exports every name the pages left on it ask for", () => {
+test("the old ui barrel still exports every name its remaining importers ask for", () => {
   const barrel = codeOnly(readSource("components/ui.tsx"));
   const importers: string[] = [];
   const missing: string[] = [];
@@ -1073,19 +1098,10 @@ test("the old ui barrel still exports every name the pages left on it ask for", 
   }
 
   assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
-
-  // A bound rather than the ten it started at. Ten was right on the day the
-  // barrel was sealed and is wrong the moment any of the seven page cards lands
-  // — T014 took `/inbox` and `/inbox/[peer]` off it, so it is eight — and a
-  // count that every card has to edit is a count that produces seven merge
-  // conflicts and says nothing. What has to stay true is both ends: above zero,
-  // or the regex broke and this test is measuring nothing; at or below ten, or
-  // a page has started importing the compatibility layer again, which is the
-  // direction nothing should be moving in.
-  assert.ok(importers.length > 0, "no page imports the barrel: the import regex has broken");
-  assert.ok(
-    importers.length <= 10,
-    `${importers.length} pages import the barrel; it was ten and only goes down`,
+  assert.deepEqual(
+    importers.sort(),
+    [...BARREL_IMPORTERS].sort(),
+    "a page started or stopped importing the barrel without this list being told",
   );
 });
 
@@ -1997,6 +2013,369 @@ test("the proxy page still asks who is looking before drawing the export control
   );
 });
 
+/* ── The settings page ───────────────────────────────────────────────────
+ *
+ * The densest form in this console: one PUT per section, a body assembled from
+ * a runtime field table, two actions that reach outside the browser, and a
+ * credential rule where being wrong saves eight bullet characters as somebody's
+ * SMTP password. None of it was reachable from a test while it lived in the
+ * page, which is why the field tables and the document builder are in
+ * `lib/tokens.ts` now.
+ */
+
+/**
+ * 🔴 The request body, beside the one the page sent before it was touched.
+ *
+ * This card was allowed one appearance change that is not a class swap: the
+ * "one per line" list field, which carried multi-line meaning in a *single*
+ * line box, becomes a `<textarea>`. "The behaviour does not change" is a claim
+ * about the request — same field, same PUT, same bytes — and a claim about
+ * bytes deserves the bytes. The literal below is the body, verbatim.
+ *
+ * Every rule the old `save()` had is pinned here at once: key order follows the
+ * field table, a number arrives as a number rather than the string the box
+ * held, and a list splits on newlines *and* commas — the second half is what
+ * keeps what an operator typed into the old single-line box meaning what it
+ * meant.
+ *
+ * 🔴 **An untouched credential is sent back as the marker, and that is
+ * correct.** It reads like the bug this whole area exists to prevent and it is
+ * the opposite: the gateway sends `••••••••` in place of a stored credential
+ * *and takes it back to mean "leave that one alone"* — the sentence is at the
+ * top of the file this came out of. The skip on `""`/`undefined` is for a
+ * different case, a box the operator emptied on purpose. Writing this expected
+ * body from memory got it wrong in exactly that place, and the harness in
+ * `scratchpad/t013/request-shape.cjs` — which runs the *previous* `read`,
+ * `coerce`, `write` and `save` transcribed out of `git show HEAD` beside the
+ * ones here — is what settled it: 36 of 36 cases byte-identical.
+ */
+const SETTINGS_PUT_BODY =
+  '{"webhook":{"enabled":true,"urls":["https://a.example/hook","https://b.example/hook"],' +
+  '"secret":"n3w-signing-key"},"email":{"enabled":true,"smtp_host":"smtp.example.com",' +
+  '"smtp_port":2525,"username":"alerts","password":"••••••••",' +
+  '"from_address":"alerts@example.com",' +
+  '"to_addresses":["ops@example.com","sre@example.com"]},"bark":{"enabled":false,"urls":[]},' +
+  '"telegram":{"enabled":false,"chat_id":"","bot":{"enabled":false,"operators":[]}},' +
+  '"feishu":{"enabled":false,"webhook_url":""},"wecom":{"enabled":false,"webhook_url":""},' +
+  '"pushplus":{"enabled":false,"topic":""}}';
+
+test("the settings form sends the document it has always sent", () => {
+  // What the gateway hands back: two channels configured, and both of their
+  // credentials replaced by the redaction marker.
+  const stored = {
+    webhook: {
+      enabled: true,
+      urls: ["https://a.example/hook", "https://b.example/hook"],
+      secret: REDACTED_SECRET,
+    },
+    email: {
+      enabled: true,
+      smtp_host: "smtp.example.com",
+      smtp_port: 587,
+      username: "alerts",
+      password: REDACTED_SECRET,
+      from_address: "alerts@example.com",
+      to_addresses: ["ops@example.com"],
+    },
+  };
+
+  const values = {
+    ...settingsFormValues(stored, NOTIFICATION_FIELDS),
+    // The operator types a new signing key, leaves the SMTP password alone,
+    // changes the port, and adds a second recipient on its own line.
+    "webhook.secret": "n3w-signing-key",
+    "email.smtp_port": "2525",
+    "email.to_addresses": "ops@example.com\nsre@example.com",
+  };
+
+  assert.equal(
+    JSON.stringify(settingsDocument(NOTIFICATION_FIELDS, values)),
+    SETTINGS_PUT_BODY,
+    "the body of PUT /v1/settings/notifications is not what it was",
+  );
+
+  // And each rule again on its own, so a failure above says which one broke.
+  const body = settingsDocument(NOTIFICATION_FIELDS, values) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  assert.equal(
+    body.email.password,
+    REDACTED_SECRET,
+    "an untouched credential goes back as the marker, which is how the gateway is told to keep it",
+  );
+  assert.equal(body.webhook.secret, "n3w-signing-key", "a typed secret has to be sent");
+  assert.equal(body.email.smtp_port, 2525, "a number box sends a string");
+  assert.equal(body.bark.enabled, false, "an absent boolean has to become false, not undefined");
+
+  // The other half of the credential rule: a box the operator emptied is left
+  // out of the document entirely, rather than sent as an empty credential.
+  const emptied = settingsDocument(NOTIFICATION_FIELDS, {
+    ...values,
+    "email.password": "",
+  }) as Record<string, Record<string, unknown>>;
+  assert.ok(
+    !("password" in emptied.email),
+    "an emptied credential box would be saved as an empty credential",
+  );
+
+  // 🔴 The textarea's whole justification: the two ways of writing a list are
+  // the same list. If they ever stop being, changing the control changed what
+  // an operator's existing input means.
+  const list = [{ path: "email.to_addresses", kind: "list" }] as const;
+  assert.deepEqual(
+    settingsDocument(list, { "email.to_addresses": "ops@example.com\nsre@example.com" }),
+    settingsDocument(list, { "email.to_addresses": "ops@example.com, sre@example.com" }),
+    "newlines and commas have to keep meaning the same thing",
+  );
+  assert.deepEqual(settingsDocument(list, { "email.to_addresses": "  \n \n " }), {
+    email: { to_addresses: [] },
+  });
+});
+
+test("a read-only account is shown the value, in its own language", () => {
+  const words = { on: "开", off: "关" };
+  assert.equal(displaySettingValue(true, words), "开");
+  assert.equal(displaySettingValue(false, words), "关");
+  assert.equal(displaySettingValue(["a", "b"], words), "a, b");
+  assert.equal(displaySettingValue([], words), "—");
+  assert.equal(displaySettingValue("", words), "—");
+  assert.equal(displaySettingValue(undefined, words), "—");
+  assert.equal(displaySettingValue(587, words), "587");
+});
+
+/**
+ * The channels are derived, and there is nowhere for a count to hide.
+ *
+ * "Seven notification channels" is how this page is described and it is written
+ * down nowhere, correctly: a channel is a path prefix in `NOTIFICATION_FIELDS`,
+ * the gateway holds its own settings list equal to its sender registry, and the
+ * last drift on this page started from a hand-written list of testable channels
+ * that had fallen behind the fields.
+ */
+test("the channels come from the field paths and are named in both catalogues", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const groups = groupSettingsFields(NOTIFICATION_FIELDS);
+  assert.deepEqual(
+    groups.flatMap((group) => group.fields),
+    [...NOTIFICATION_FIELDS],
+    "grouping dropped, reordered or duplicated a field: a setting stopped being editable",
+  );
+  assert.deepEqual(
+    groups.map((group) => group.name),
+    notificationChannels(NOTIFICATION_FIELDS),
+    "the testable channels and the folded panels disagree about what a channel is",
+  );
+
+  const unswitchable = groups.filter((group) => group.enabledPath === null);
+  assert.deepEqual(
+    unswitchable.map((group) => group.name),
+    [],
+    "a channel with no enabled switch cannot say on or off in a folded summary",
+  );
+
+  // Every panel heading and every field label, in both languages. A missing one
+  // renders as ⟦f.whatever⟧ in a card the operator is reading.
+  const missing: string[] = [];
+  const keys = [
+    ...groups.map((group) => `f.${group.name}`),
+    ...[...NOTIFICATION_FIELDS, ...SMS_FIELDS, ...SECURITY_FIELDS].map(
+      (field) => `f.${field.path}`,
+    ),
+  ];
+  for (const key of keys) {
+    if (typeof zh[key] !== "string") missing.push(`zh ${key}`);
+    if (typeof en[key] !== "string") missing.push(`en ${key}`);
+  }
+  assert.deepEqual(missing, [], "a settings label has no translation");
+
+  // Derived, not listed: a channel nobody has heard of still gets a panel.
+  const invented = groupSettingsFields([
+    ...NOTIFICATION_FIELDS,
+    { path: "matrix.enabled", kind: "boolean" },
+    { path: "matrix.room", kind: "text" },
+  ]);
+  assert.equal(invented.length, groups.length + 1, "the grouping is a list, not a derivation");
+  assert.equal(invented[invented.length - 1].enabledPath, "matrix.enabled");
+
+  // A section whose fields are not under a prefix is one flat group, not a
+  // panel called "hourly_limit".
+  const flat = groupSettingsFields(SMS_FIELDS);
+  assert.deepEqual(flat, [
+    { name: null, fields: [...SMS_FIELDS], enabledPath: null },
+  ]);
+  assert.equal(settingsGroupIsOn(flat[0], {}), false);
+});
+
+test("no file on the settings page writes down how many channels there are", () => {
+  const channels = notificationChannels(NOTIFICATION_FIELDS);
+  const offenders: string[] = [];
+
+  for (const relative of ["components/settings-form.tsx", "app/settings/page.tsx"]) {
+    const source = readSource(relative);
+    // A channel's *name* in a string literal is the list being written a second
+    // time, whatever it is called.
+    for (const literal of scan(source).literals) {
+      if (channels.includes(literal.text)) offenders.push(`${relative}: ${literal.text}`);
+    }
+    // And the count itself. `rows`, `minLength` and the session timeout are the
+    // only numbers either file has any business holding.
+    for (const match of codeOnly(source).matchAll(/\b\d+\b/g)) {
+      if (Number(match[0]) === channels.length) offenders.push(`${relative}: ${match[0]}`);
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    "the channel set belongs in NOTIFICATION_FIELDS, where the gateway's own list can be compared to it",
+  );
+});
+
+/**
+ * 🔴 A credential is rendered by the one control that cannot echo it.
+ *
+ * `SecretInput` puts an empty box with the marker as its placeholder in front
+ * of a stored credential; anything else — a plain `Input`, a computed `type`, a
+ * reveal toggle — either shows the credential or submits the marker back as the
+ * new one. The failure is silent both ways round.
+ */
+test("the settings form renders every credential through the secret input", () => {
+  const source = readSource("components/settings-form.tsx");
+  const code = codeOnly(source);
+
+  assert.match(code, /from "@\/components\/ui\/secret-input"/, "the sealed control is gone");
+  assert.equal(
+    (code.match(/<SecretInput\b/g) ?? []).length,
+    1,
+    "there is one place a credential is drawn, and this is not it any more",
+  );
+  assert.ok(!/type=\{/.test(code), "a computed input type is how a reveal toggle gets in");
+  assert.ok(!/type="text"/.test(code), "a credential rendered as text is a credential on screen");
+  assert.ok(!/REDACTED|••/.test(code), "the marker belongs in lib/tokens.ts, not copied here");
+
+  // The account's own password boxes: still passwords, still asking the browser
+  // for the right thing. `current-password` on the *new* one is how a browser
+  // offers to fill it with the old one.
+  assert.match(code, /name="current"[^/>]*type="password"[^/>]*autoComplete="current-password"/);
+  assert.match(code, /name="next"[^/>]*type="password"[^/>]*autoComplete="new-password"/);
+
+  // Every kind the field table can hold is decided on explicitly; `text` is the
+  // one that falls through. A kind added to lib/ that this file never learned
+  // about would otherwise render as a text box without anybody noticing.
+  const decided = [...new Set([...code.matchAll(/field\.kind === "(\w+)"/g)].map((m) => m[1]))];
+  assert.deepEqual(
+    decided.sort(),
+    SETTINGS_FIELD_KINDS.filter((kind) => kind !== "text").sort(),
+    "a field kind is being drawn by whatever branch happens to catch it",
+  );
+});
+
+/**
+ * The list field is a textarea, and `FORM.textarea` finally has a caller.
+ *
+ * The recipe was added with no consumer at all, because the only place in this
+ * console that carries multi-line meaning was a single-line `<input>` whose
+ * placeholder said "one per line" — the one thing it told the operator to do
+ * was the one thing it would not let them do. That was ruled an appearance
+ * defect rather than a behaviour change: the field, the PUT and the bytes are
+ * unchanged, and a box's height is not behaviour.
+ */
+test("the one field that means several lines is drawn as several lines", () => {
+  // 🔴 What the box is *given*, which the request-body test cannot see.
+  // `coerceSettingValue` splits on commas as well as newlines, so a stored list
+  // joined with commas produces a byte-identical PUT and a textarea showing
+  // "a@x,b@x" on one line — the exact defect this control was made to fix,
+  // passing every other assertion here. Found by mutation, not by reading.
+  const list = [{ path: "email.to_addresses", kind: "list" }] as const;
+  assert.equal(
+    settingsFormValues({ email: { to_addresses: ["a@example.com", "b@example.com"] } }, list)[
+      "email.to_addresses"
+    ],
+    "a@example.com\nb@example.com",
+    "a stored list has to arrive as one entry per line, which is what the box is now shaped for",
+  );
+
+  const areas = openingTags(readSource("components/settings-form.tsx")).filter(
+    (tag) => tag.name === "textarea",
+  );
+  assert.equal(areas.length, 1, "the list field went back to a single line");
+  assert.match(areas[0].text, /className=\{FORM\.textarea\}/, "the recipe is not the one used");
+  assert.match(
+    areas[0].text,
+    /rows=\{\d+\}/,
+    "height comes from a count of lines, which survives a change of type scale",
+  );
+
+  // The placeholder is not carrying meaning any more. It says the same thing,
+  // in the operator's language, above a box that can actually hold it.
+  const inputs = openingTags(readSource("components/settings-form.tsx")).filter((tag) =>
+    tag.name.endsWith("Input"),
+  );
+  assert.deepEqual(
+    inputs.filter((tag) => /placeholder=/.test(tag.text)).map((tag) => tag.name),
+    [],
+    "a placeholder is being asked to explain a control again",
+  );
+
+  const consumers = [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES].filter((relative) =>
+    /FORM\.textarea/.test(codeOnly(readSource(relative))),
+  );
+  assert.ok(
+    consumers.includes("components/settings-form.tsx"),
+    "FORM.textarea is back to having no consumer, and a recipe nothing uses is a dead rule",
+  );
+});
+
+/**
+ * 🔴 The two actions that leave the browser run from a confirmation only.
+ *
+ * "Send test" was the one unguarded action in this console that reaches a
+ * *person*: it dials the channel now, with the credential the gateway is
+ * holding, and a real notification arrives somewhere real. "Save" writes a
+ * whole section, credentials included, for the tenant.
+ *
+ * Checked at the call site, not at the import. An `ask` that is wired up and a
+ * `fetch` that also still runs straight from the click is exactly the shape a
+ * review reads as correct.
+ */
+test("the settings page cannot send or save without asking first", () => {
+  const code = codeOnly(readSource("components/settings-form.tsx"));
+
+  for (const name of ["sendTest", "saveSettings"]) {
+    const calls = [...code.matchAll(new RegExp(`\\b${name}\\s*\\(`, "g"))];
+    assert.equal(calls.length, 2, `${name} should be declared once and called once, not ${calls.length - 1} times`);
+    assert.match(
+      code.slice(Math.max(0, calls[1].index - 40), calls[1].index),
+      /run:\s*\(\)\s*=>\s*(void\s+)?$/,
+      `${name} no longer runs from a confirmation's run`,
+    );
+  }
+
+  // Every click and every submit goes to a named handler that asks. An inline
+  // arrow here is how the network gets reached directly again.
+  const handlers = [...code.matchAll(/on(?:Click|Submit)=\{([A-Za-z]+)\}/g)].map((m) => m[1]);
+  assert.deepEqual(
+    handlers.sort(),
+    ["askSave", "askTest", "submit"],
+    "a handler on this form reaches the gateway without asking",
+  );
+
+  assert.match(code, /<ConfirmDialog\b/, "the dialog is not rendered");
+
+  // 🔴 And not `window.confirm` in front of it. An extra gate looks like extra
+  // safety and is the thing this dialog replaced: one string, no place for the
+  // consequence, which is how `device.confirmDisruptive` came to be one
+  // sentence shared by seven commands that names none of them. Found by
+  // mutation — adding it back passed every other assertion here.
+  assert.ok(
+    !/\bconfirm\s*\(/.test(code),
+    "window.confirm is back: a question with nowhere to put what will happen",
+  );
+});
+
 /**
  * Every label the proxy page lists resolves, in both languages.
  *
@@ -2066,6 +2445,85 @@ test("a secondary column is secondary in both its header and its cells", () => {
     mismatched,
     [],
     "a column drops off the phone at one end only, which leaves a header over nothing",
+  );
+});
+
+/**
+ * And the confirmations say which thing, not just that something will happen.
+ *
+ * The interpolation is the half that goes wrong quietly: a template that names
+ * `{channel}` and a call that never fills it shows the operator a literal pair
+ * of braces, which is worse than the generic sentence it replaced.
+ */
+test("the settings confirmations name the channel and the section", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  for (const catalogue of [zh, en]) {
+    for (const key of ["settings.confirmTest", "settings.confirmTestTitle"]) {
+      assert.match(catalogue[key], /\{channel\}/, `${key} does not name the channel`);
+    }
+    for (const key of ["settings.confirmSave", "settings.confirmSaveTitle"]) {
+      assert.match(catalogue[key], /\{section\}/, `${key} does not name the section`);
+    }
+  }
+
+  const code = codeOnly(readSource("app/settings/page.tsx"));
+  assert.match(code, /settings\.confirmTest"[\s\S]{0,80}channel:/, "{channel} is never filled in");
+  assert.match(code, /settings\.confirmSave"[\s\S]{0,80}section:/, "{section} is never filled in");
+
+  // The credential sentence is appended only where there is a credential, so
+  // the SMS section's single number does not warn about passwords.
+  const text = { save: "The section is written.", secrets: "Credentials are written." };
+  assert.equal(settingsSaveConsequence(NOTIFICATION_FIELDS, text), `${text.save} ${text.secrets}`);
+  assert.equal(settingsSaveConsequence(SMS_FIELDS, text), text.save);
+  assert.equal(settingsSaveConsequence(SECURITY_FIELDS, text), text.save);
+});
+
+/**
+ * The layout, and the read-only gate that has to survive it.
+ *
+ * `card-grid` was the fourth dead class, and unlike the other three it was on
+ * no survey — three separate readings of this page missed it. The four cards
+ * have been stacking in ordinary block flow with no gap at all while the markup
+ * said they were in a grid. The replacement is measured in a browser at 390px
+ * rather than asserted here; what is asserted here is that the page asks for
+ * something that exists, and that migrating it did not hand a read-only account
+ * a Save button.
+ */
+test("the settings page lays its cards out with something that exists", () => {
+  const source = readSource("app/settings/page.tsx");
+  const { masked } = scan(source);
+  const code = codeOnly(source);
+
+  const stacked = openingTags(source).filter((tag) => /className=\{PAGE\.stack\}/.test(tag.text));
+  assert.equal(stacked.length, 1, "the cards are back in block flow with no gap between them");
+  for (const dead of ["card-grid", "card-span-all"]) {
+    assert.ok(!code.includes(dead), `${dead} is back, and neither of them is a rule anywhere`);
+  }
+
+  // Read-only: the form is the consequent of the writable branch and appears
+  // nowhere else.
+  assert.match(code, /mayWrite\(role\)/, "the role is no longer being asked for");
+  assert.equal((code.match(/<SettingsForm\b/g) ?? []).length, 1);
+  assert.match(
+    code,
+    /return writable \? \(\s*<SettingsForm/,
+    "the editable form is no longer behind the write check",
+  );
+
+  // And changing your own password is *not* behind it. The gateway allows it
+  // for a read-only session, and an account that cannot respond to its own
+  // credential leaking leaves nobody safer. Every brace opened after the stack
+  // closes again before this element, so it is not the arm of a conditional.
+  const stackAt = masked.indexOf("className={PAGE.stack}");
+  const passwordAt = masked.indexOf("<PasswordForm");
+  assert.ok(stackAt !== -1 && passwordAt > stackAt, "the password form left the page");
+  const between = masked.slice(stackAt, passwordAt);
+  assert.equal(
+    (between.match(/\{/g) ?? []).length,
+    (between.match(/\}/g) ?? []).length,
+    "something is gating the password form: a read-only account cannot rotate its own credential",
   );
 });
 
@@ -2185,7 +2643,18 @@ test("the nav is four groups covering every destination exactly once", () => {
   const hrefs = NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href));
   assert.deepEqual(
     hrefs,
-    ["/", "/devices", "/journal", "/audit", "/inbox", "/rules", "/schedule", "/proxy", "/settings"],
+    [
+      "/",
+      "/devices",
+      "/journal",
+      "/audit",
+      "/inbox",
+      "/rules",
+      "/schedule",
+      "/proxy",
+      "/sessions",
+      "/settings",
+    ],
     "the confirmed grouping is fleet / comms / network / settings",
   );
   assert.equal(new Set(hrefs).size, hrefs.length, "a destination appears in one group only");
@@ -2195,6 +2664,39 @@ test("the nav is four groups covering every destination exactly once", () => {
     // A label is dropped only when it would repeat its single link's own name.
     if (group.label === null) assert.equal(group.items.length, 1);
   }
+});
+
+/**
+ * Every page this console serves is reachable without typing a URL.
+ *
+ * `/sessions` was not, for two cards: T007 was given a four-group layout that
+ * did not mention it, implemented exactly that, and reported that the page had
+ * lost its only link. Nothing failed, because "the nav covers every
+ * destination" was checked against a list of destinations that had the same
+ * hole in it. So the list is derived from the routes on disk instead.
+ *
+ * `/login`, `/not-a-tenant` and `/unknown-tenant` are excluded on purpose: two
+ * are error destinations and the third renders outside the shell that draws
+ * this nav. A dynamic segment is a child of the section that links to it.
+ */
+test("every page under app/ has a way in", () => {
+  const routes: string[] = [];
+  const walk = (dir: string, href: string) => {
+    for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${dir}/${entry.name}`, `${href}/${entry.name}`);
+      else if (entry.name === "page.tsx") routes.push(href === "" ? "/" : href);
+    }
+  };
+  walk("app", "");
+
+  const linked = new Set(NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href)));
+  const orphans = routes
+    .filter((route) => !route.includes("["))
+    .filter((route) => !["/login", "/not-a-tenant", "/unknown-tenant"].includes(route))
+    .filter((route) => !linked.has(route))
+    .sort();
+
+  assert.deepEqual(orphans, [], "a page nothing links to: reachable only by typing its URL");
 });
 
 test("every nav string exists in both catalogues", () => {
