@@ -7,7 +7,19 @@
  * the network is gone.
  */
 
-const CACHE = "vodoge-shell-v1";
+/*
+ * Bump `CACHE` whenever a precached file below changes.
+ *
+ * `install` is the only thing that ever writes `OFFLINE_URL`, and it only runs
+ * when the *bytes of this file* differ from the registered worker's. Editing
+ * offline.html without touching this line therefore ships the new page to new
+ * visitors and leaves every already-installed console serving the old one
+ * forever, with nothing anywhere to say so. `activate` deletes the previous
+ * cache by name, so the bump is also what stops them accumulating.
+ *
+ * v2: offline.html became bilingual (T016).
+ */
+const CACHE = "vodoge-shell-v2";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {

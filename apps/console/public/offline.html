@@ -2,27 +2,84 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VoDoge · 离线</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0e14">
+  <title>VoDoge · 离线 / Offline</title>
+  <!--
+    Served by public/sw.js when a navigation fails.
+
+    ## Both languages ship, and one is chosen here
+
+    This is a static asset. It is handed to the browser by the service worker
+    with no server in the loop, so it cannot read messages/{zh,en}.json the way
+    every other string in the console does — and `scripts/check-i18n.mjs`, which
+    asserts the two catalogues have identical keys, cannot see it either.
+
+    Shipping one language and calling it an exception was the other option and
+    it is the wrong one: the reader of this page is by definition someone the
+    network just failed, and they do not get a second chance to switch. So both
+    languages are in the markup, CSS hides the one that is not wanted, and the
+    script below picks between them from `vodoge.locale` — the same cookie, with
+    the same zh default, that lib/request-locale.ts uses on the server. Without
+    JavaScript the default shows. lib/pwa.test.ts checks that the two blocks
+    carry the same set of keys, which is the parity check check-i18n would have
+    made if it could reach this file.
+
+    ## What this page must never say
+
+    It cannot show "data as of HH:MM" and must not try. It is a static file
+    with no idea when this browser last heard from the gateway; any time it
+    printed would be invented. That timestamp belongs to
+    components/connection-status.tsx, which is in a live tab and does know.
+  -->
   <style>
     :root { color-scheme: dark; }
-    body { margin:0; min-height:100dvh; display:grid; place-items:center; padding:2rem;
+    body { margin:0; min-height:100dvh; display:flex; align-items:center; justify-content:center;
+           padding:2rem;
+           padding-left: calc(2rem + env(safe-area-inset-left));
+           padding-right: calc(2rem + env(safe-area-inset-right));
+           padding-bottom: calc(2rem + env(safe-area-inset-bottom));
            background:#0b0e14; color:#e7ecf3;
-           font-family: ui-sans-serif, system-ui, "PingFang SC", sans-serif; }
-    .box { max-width: 34ch; text-align:center; display:grid; gap:.75rem; }
+           font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+                        "PingFang SC", "Hiragino Sans GB", sans-serif; }
+    .box { max-width: 34ch; text-align:center; display:flex; flex-direction:column; gap:.75rem; }
     h1 { font-size:1.25rem; margin:0; }
     p { color:#93a1b5; font-size:.9rem; margin:0; line-height:1.6; }
     .mark { width:40px; height:40px; border-radius:12px; margin:0 auto;
-            background:linear-gradient(135deg,#4ade9b,#22c47f); display:grid;
-            place-items:center; color:#06251a; font-weight:800; }
+            background:linear-gradient(135deg,#4ade9b,#22c47f); display:flex;
+            align-items:center; justify-content:center; color:#06251a; font-weight:800; }
+    /* One of the two blocks, never both, never neither. */
+    html[lang="en"] [data-lang="zh"] { display: none; }
+    html:not([lang="en"]) [data-lang="en"] { display: none; }
   </style>
 </head>
 <body>
   <div class="box">
     <div class="mark">V</div>
-    <h1>暂时连不上云端</h1>
-    <p>控制台需要网络才能显示实时状态。恢复后刷新即可。</p>
-    <p>现场调试可以直接用边缘面板，它断网也能工作。</p>
+
+    <div data-lang="zh">
+      <h1 data-k="title">暂时连不上云端</h1>
+      <p data-k="body">控制台显示的是实时机队状态，所以它不缓存任何数据 —— 与其给你一个已经不真的数字，不如什么都不给。恢复网络后刷新即可。</p>
+      <p data-k="edge">现场调试可以直接用边缘面板，它断网也能工作。</p>
+    </div>
+
+    <div data-lang="en">
+      <h1 data-k="title">Can't reach the cloud</h1>
+      <p data-k="body">This console shows live fleet state, so it caches no data — a number that is no longer true is worse than no number. Reload once the network is back.</p>
+      <p data-k="edge">For work on site, the edge panel runs with no network at all.</p>
+    </div>
   </div>
+
+  <script>
+    (function () {
+      // Same cookie and same default as lib/request-locale.ts. Reading
+      // navigator.language instead would make this page disagree with every
+      // other page in the console for anyone who had switched language.
+      var match = /(?:^|;\s*)vodoge\.locale=(zh|en)/.exec(document.cookie || "");
+      var locale = match ? match[1] : "zh";
+      document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
+      document.title = locale === "en" ? "VoDoge · Offline" : "VoDoge · 离线";
+    })();
+  </script>
 </body>
 </html>
