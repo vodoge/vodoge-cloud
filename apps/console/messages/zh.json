@@ -506,5 +506,12 @@
   "rules.schedulesHint": "周期性自动下发的任务在这里。",
   "role.readOnlyDevice": "只读账号：可以查看这台设备，不能下发命令。",
   "role.readOnlySettings": "只读账号：设置只能查看，不能修改。密码仍可自行修改。",
-  "role.readOnlyBadge": "只读"
+  "role.readOnlyBadge": "只读",
+  "source.label": "源码",
+  "source.console": "控制台",
+  "source.consoleUrl": "https://github.com/yuanshuai1122/vodoge-cloud",
+  "source.edge": "边缘端",
+  "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
+  "source.edgeLicense": "边缘端许可",
+  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE"
 }

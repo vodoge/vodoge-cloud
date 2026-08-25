@@ -506,5 +506,12 @@
   "rules.schedulesHint": "Recurring work that runs without an operator lives here.",
   "role.readOnlyDevice": "Read-only account: this device can be watched, not operated.",
   "role.readOnlySettings": "Read-only account: settings are shown but cannot be changed. Your own password still can be.",
-  "role.readOnlyBadge": "read-only"
+  "role.readOnlyBadge": "read-only",
+  "source.label": "Source",
+  "source.console": "Console",
+  "source.consoleUrl": "https://github.com/yuanshuai1122/vodoge-cloud",
+  "source.edge": "Edge",
+  "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
+  "source.edgeLicense": "Edge licensing",
+  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE"
 }

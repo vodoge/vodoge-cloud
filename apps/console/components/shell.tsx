@@ -18,6 +18,12 @@ const NAV = [
   { href: "/settings", key: "nav.settings" },
 ] as const;
 
+/**
+ * Anchors are `text-decoration: none` globally, so a link that is not part of
+ * a styled control has to say it is a link.
+ */
+const SOURCE_LINK = { textDecoration: "underline" } as const;
+
 export function Shell({
   tenant,
   locale,
@@ -73,6 +79,50 @@ export function Shell({
       </header>
 
       <main className="shell-main">{children}</main>
+
+      {/* Where the source is.
+          Deliberately not a licence notice. This console carries no vowifi-go
+          code -- that was grepped for, and there is none -- so AGPL section 13
+          does not reach it, and this repository declares no licence of its own;
+          naming one here would be inventing an answer nobody has given. What is
+          left is a fact worth putting on the page people actually use: the
+          source is public, and this is where. It lives in the shell rather than
+          on /settings so every page carries it, and outside every role gate,
+          because a read-only account is not a lesser reader. */}
+      <footer
+        className="hint"
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "var(--s3)",
+          padding: "var(--s4) var(--s5)",
+          maxWidth: "1400px",
+          width: "100%",
+          margin: "0 auto",
+        }}
+      >
+        <span className="faint">{t("source.label", locale)}</span>
+        <a
+          style={SOURCE_LINK}
+          href={t("source.consoleUrl", locale)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("source.console", locale)}
+        </a>
+        <a style={SOURCE_LINK} href={t("source.edgeUrl", locale)} target="_blank" rel="noreferrer">
+          {t("source.edge", locale)}
+        </a>
+        <a
+          style={SOURCE_LINK}
+          href={t("source.edgeLicenseUrl", locale)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("source.edgeLicense", locale)}
+        </a>
+      </footer>
     </div>
   );
 }

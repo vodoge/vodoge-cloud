@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   MISSING_KEY_PATTERN,
+  catalogs,
   diffCatalogKeys,
   interpolate,
   t,
@@ -409,4 +410,86 @@ test("every catalogue key a component asks t() for exists in both locales", () =
     .map(([key, where]) => `${where} ${key}`)
     .sort();
   assert.deepEqual(unresolved, []);
+});
+
+/*
+ * ---------------------------------------------------------------------------
+ * The source link.
+ *
+ * T091 licensed the edge repository; nothing said so on the page anyone
+ * actually visits. The link added to the shell is the whole of that change,
+ * which makes it exactly the kind of change that rots quietly: a string in a
+ * catalogue nobody renders, or a URL that was translated.
+ *
+ * Both tests read the catalogue rather than restating it. A list of keys
+ * retyped here would agree with whatever its author believed, which is the
+ * failure this repository has already shipped once.
+ * ---------------------------------------------------------------------------
+ */
+
+/** Every source.* key, taken from the catalogue rather than named here. */
+function sourceKeys(): string[] {
+  return Object.keys(catalogs.zh as Record<string, string>)
+    .filter((key) => key.startsWith("source."))
+    .sort();
+}
+
+test("the source URLs are one URL, not one per locale", () => {
+  const zh = catalogs.zh as Record<string, string>;
+  const en = catalogs.en as Record<string, string>;
+  const urlKeys = sourceKeys().filter((key) => key.endsWith("Url"));
+
+  // Without a floor this passes loudest when the keys are gone.
+  assert.ok(urlKeys.length >= 3, `only found ${urlKeys.length} source URL keys`);
+
+  // A URL is not prose. Holding it in the catalogue is how it stays out of the
+  // markup, but it also means two copies of it -- and a typo in the locale the
+  // people who wrote it do not read is a dead link nobody here would ever see.
+  // check-i18n compares keys, never values, so it cannot catch this.
+  const faults: string[] = [];
+  for (const key of urlKeys) {
+    if (zh[key] !== en[key]) {
+      faults.push(`${key}: zh has ${zh[key]}, en has ${en[key]}`);
+    }
+    // Parsed, not pattern-matched. new URL() normalises, so a stray space or
+    // a missing scheme comes back as a different string than the catalogue
+    // holds, and a relative href never parses at all.
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(zh[key] ?? "");
+    } catch {
+      parsed = null;
+    }
+    if (parsed === null || parsed.protocol !== "https:" || parsed.href !== zh[key]) {
+      faults.push(`${key}: not an absolute https URL: ${JSON.stringify(zh[key])}`);
+    }
+  }
+  assert.deepEqual(faults, []);
+});
+
+test("a server component renders every source.* string, so JavaScript-off sees the link", () => {
+  const keys = new Set(sourceKeys());
+  assert.ok(keys.size >= 6, `only found ${keys.size} source keys`);
+
+  // Two failures at once. A string that no component asks for is a link that
+  // exists only in a JSON file; a string asked for only by a "use client"
+  // module is a link that needs hydration to appear, and the deployed-page
+  // check for this card is a fetch that runs no JavaScript. Where the link is
+  // rendered is therefore part of what was asked for, not an implementation
+  // detail.
+  const renderedBy = new Map<string, string[]>();
+  for (const [file, source] of componentSources()) {
+    const code = withoutComments(source);
+    const kind = isClientModule(code) ? "client" : "server";
+    for (const call of translationCalls(code)) {
+      if (call.key === null || !keys.has(call.key)) continue;
+      renderedBy.set(call.key, [...(renderedBy.get(call.key) ?? []), `${file} (${kind})`]);
+    }
+  }
+
+  const missing = [...keys]
+    .filter((key) => !(renderedBy.get(key) ?? []).some((where) => where.endsWith("(server)")))
+    .map((key) => `${key} -> ${(renderedBy.get(key) ?? ["nowhere"]).join(", ")}`)
+    .sort();
+  assert.deepEqual(missing, []);
 });
