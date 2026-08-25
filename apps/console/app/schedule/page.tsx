@@ -134,18 +134,35 @@ export default async function SchedulePage() {
             <TableBody>
               {schedules.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell wrap>{row.name}</TableCell>
-                  <TableCell mono>
+                  {/*
+                    `nowrap`, not `wrap`, and this table is why the pair
+                    exists. At 390px eight columns cannot all fit, so every one
+                    of them is laid out at its min-content width — and a
+                    Chinese label's min-content width is one character, because
+                    CJK breaks between any two of them. Measured: 保号短信-移动-每月
+                    came out as a vertical strip. These four hold one reading
+                    each and are told to stay on one line; the table gets wider
+                    and scrolls inside its card, which is what a wide grid is
+                    supposed to do.
+                  */}
+                  <TableCell nowrap>{row.name}</TableCell>
+                  <TableCell mono nowrap>
                     {row.action === "public_ip_check"
                       ? t("schedule.actionPublicIp", locale)
                       : (row.commandKind ?? row.action)}
                   </TableCell>
-                  <TableCell mono faint secondary wrap>
+                  <TableCell mono faint secondary>
                     {target(row, locale)}
                   </TableCell>
-                  <TableCell secondary>{cadence(row.intervalSeconds, locale)}</TableCell>
-                  <TableCell>{row.enabled ? moment(row.nextDueAt, locale) : "—"}</TableCell>
-                  <TableCell secondary>{moment(row.lastRunAt, locale)}</TableCell>
+                  <TableCell secondary nowrap>
+                    {cadence(row.intervalSeconds, locale)}
+                  </TableCell>
+                  <TableCell nowrap>
+                    {row.enabled ? moment(row.nextDueAt, locale) : "—"}
+                  </TableCell>
+                  <TableCell secondary nowrap>
+                    {moment(row.lastRunAt, locale)}
+                  </TableCell>
                   <TableCell>
                     {row.lastStatus ? (
                       <>

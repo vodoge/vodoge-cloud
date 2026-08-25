@@ -213,8 +213,16 @@ type Literal = { readonly start: number; readonly text: string };
  * `${…}` skipped as well, or every interpolation reads as a broken class name.
  */
 function scan(source: string): { masked: string; code: string; literals: Literal[] } {
-  const masked = [...source];
-  const code = [...source];
+  // 🔴 `split("")`, never `[...source]`. The spread iterates code *points*, so
+  // one astral character — a 🔴 in a comment, and this file is full of them —
+  // makes the array one element shorter than the string from that point on,
+  // while every offset used below comes from `indexOf`, `slice` and `.length`,
+  // which count code *units*. Everything after the first emoji is then blanked
+  // one character to the left: the `/` of a `{/* … */}` survives and the `}`
+  // that closes it does not. It cost this card two failing guards with symptoms
+  // — an empty class list, unbalanced braces — that pointed nowhere near it.
+  const masked = source.split("");
+  const code = source.split("");
   const literals: Literal[] = [];
   const blank = (target: string[], from: number, to: number) => {
     for (let i = from; i < to; i++) if (target[i] !== "\n") target[i] = " ";
@@ -792,6 +800,42 @@ test("the source scanner keeps its place in every file it reads", () => {
   assert.deepEqual(broken, [], "the scanner lost track; the guards built on it are unreliable");
 });
 
+/**
+ * And it keeps its place past an emoji, which it did not.
+ *
+ * The check above only sees this if some file in the ledger happens to contain
+ * an astral character, and "happens to" is not coverage — the file that caught
+ * it could have its comment reworded tomorrow. `scan` built its arrays with a
+ * spread, which iterates code points, while its offsets all come from
+ * `indexOf`/`slice`, which count code units. One 🔴 in a comment and everything
+ * after it is blanked a character to the left: below, the `/` of the JSX
+ * comment survives and the `}` closing it is eaten, so a real file reports
+ * unbalanced braces and a class list that is not there.
+ */
+test("the scanner counts an emoji the way the offsets around it do", () => {
+  const source = [
+    "/** A doc comment with a 🔴 in it. */",
+    "export function Thing() {",
+    "  return (",
+    "    <div>",
+    "      {/* A JSX comment after the emoji. */}",
+    "      <span>{value}</span>",
+    "    </div>",
+    "  );",
+    "}",
+  ].join("\n");
+
+  const { masked } = scan(source);
+  assert.equal(
+    masked.split("{").length - masked.split("}").length,
+    0,
+    "the scanner is a character out after the emoji, and every guard built on it is guessing",
+  );
+  // And the mask really did its job rather than balancing by accident.
+  assert.ok(!masked.includes("JSX comment"), "the comment was not masked");
+  assert.ok(masked.includes("{value}"), "the mask ate code it should have kept");
+});
+
 /* ── Nothing escapes the guards ──────────────────────────────────────── */
 
 /**
@@ -1063,6 +1107,117 @@ test("the compatibility layer delegates and never draws", () => {
   for (const source of ["@/components/ui/card", "@/components/ui/badge"]) {
     assert.ok(code.includes(source), `the barrel no longer delegates to ${source}`);
   }
+});
+
+/**
+ * 🔴 One empty state. The reconciliation this card was given, stated as a test.
+ *
+ * `T001` renamed `EmptyState` to `CardEmpty` in `components/ui/card.tsx` and
+ * left eight pages importing the old name, which is how two implementations of
+ * the same thing start. The barrel's is a wrapper over the real one rather
+ * than a copy, and the plan to open a third file for it was dropped — but
+ * "there is one of these" was a thing somebody had to remember, and the guard
+ * next door only says the barrel does not *draw*. It says nothing about a
+ * ninth page quietly growing its own.
+ *
+ * Three claims, each of which a second implementation has to break:
+ *
+ * 1. **One file draws it.** Exactly one `.tsx` reads `CARD.empty*`. A copy has
+ *    to get its classes from somewhere, and the recipes are the only place
+ *    classes are allowed to come from.
+ * 2. **Two files name it**, and the second delegates. The barrel's `EmptyState`
+ *    has `CardEmpty` in its body; renaming a prop is all it is allowed to do.
+ * 3. **Nobody hand-draws one from the stylesheet.** `.empty`, `.empty-title`
+ *    and `.empty-desc` are still in `@layer legacy` and still work, so a page
+ *    could write the markup itself and look perfectly right.
+ */
+test("there is one empty state in this console, and one file draws it", () => {
+  const drawing: string[] = [];
+  const naming: string[] = [];
+  const handDrawn: string[] = [];
+
+  for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
+    const source = readSource(relative);
+    const code = codeOnly(source);
+    if (/\bCARD\.empty[A-Za-z]*\b/.test(code)) drawing.push(relative);
+    if (/export\s+(?:function|const)\s+\w*Empty\w*\b/.test(code)) naming.push(relative);
+    const names = classesIn(classListsIn(source));
+    if (names.some((name) => name === "empty" || name.startsWith("empty-"))) {
+      handDrawn.push(relative);
+    }
+  }
+
+  assert.deepEqual(
+    drawing.sort(),
+    ["components/ui/card.tsx"],
+    "a second file is drawing an empty state of its own out of the recipe",
+  );
+  assert.deepEqual(
+    naming.sort(),
+    ["components/ui.tsx", "components/ui/card.tsx"],
+    "an empty state was declared somewhere new: there are meant to be two names for one of them",
+  );
+  assert.match(
+    codeOnly(readSource("components/ui.tsx")),
+    /function EmptyState[\s\S]{0,200}?<CardEmpty\b/,
+    "the barrel's EmptyState stopped delegating to CardEmpty, which makes it the second one",
+  );
+  assert.deepEqual(
+    handDrawn,
+    [],
+    "a page is drawing an empty state with the old stylesheet's classes",
+  );
+});
+
+/**
+ * The two width props exist because a table cell is sized from min-content,
+ * and both directions of that turned out to be needed.
+ *
+ * `wrap` lowers min-content so an unbounded column can be squeezed; `nowrap`
+ * raises it so a Chinese label is not squeezed to one character a line — CJK
+ * has a break opportunity between any two characters, which is why the second
+ * one is not the absence of the first. Both were measured at 390px rather than
+ * reasoned about, and both are props, so both can be silently dropped from a
+ * page by a merge. A prop that nothing passes is a prop that has stopped
+ * working, and nothing else here would notice.
+ */
+test("the two table width props are wired to the recipes and to a page", () => {
+  const table = codeOnly(readSource("components/ui/table.tsx"));
+  assert.ok(table.includes("TABLE.cellWrap"), "the wrap prop no longer reaches its recipe");
+  assert.ok(table.includes("TABLE.cellNowrap"), "the nowrap prop no longer reaches its recipe");
+  assert.equal(TABLE.cellWrap, "break-all", "overflow-wrap does not lower min-content; this must");
+  assert.equal(TABLE.cellNowrap, "whitespace-nowrap");
+
+  const passes = (prop: string, relative: string) =>
+    new RegExp(`<Table(?:Header)?Cell\\b[^>]*\\b${prop}\\b`).test(codeOnly(readSource(relative)));
+
+  // The unbounded columns: an SMS body and the envelope's payload row.
+  assert.ok(passes("wrap", "app/sessions/page.tsx"), "the message body stopped asking to wrap");
+  assert.ok(passes("wrap", "components/journal.tsx"), "the payload row stopped asking to wrap");
+  // The eight-column grid, which is the one that produced a vertical strip.
+  assert.ok(passes("nowrap", "app/schedule/page.tsx"), "the schedule's readings can be squeezed");
+});
+
+/**
+ * The envelope gets a row of its own, spanning the whole table.
+ *
+ * In the last cell it got whatever the other three columns left over, which at
+ * 390px measured 79px — a JSON block the width of a thumbnail. The span has to
+ * match the number of columns, and nothing about a wrong number is visible in
+ * review: too small leaves a gap on the right and looks like a styling bug.
+ */
+test("the journal's payload row spans every column the table has", () => {
+  const code = codeOnly(readSource("components/journal.tsx"));
+  const headers = (code.match(/<TableHeaderCell\b/g) ?? []).length;
+  const declared = Number(/const PAYLOAD_COLUMNS = (\d+)/.exec(code)?.[1]);
+  assert.ok(headers > 0, "the journal stopped rendering a header row: this test is measuring air");
+  assert.equal(declared, headers, "the payload row and the table disagree about how wide it is");
+  assert.match(code, /colSpan=\{PAYLOAD_COLUMNS\}/, "the payload is back inside one column");
+  assert.match(
+    code,
+    /<Output\s+className=\{JOURNAL\.payload\}/,
+    "the payload lost the class that lets the table fit the card; measured, it went 311px -> 1112px",
+  );
 });
 
 test("a file on the unmigrated list is really still unmigrated", () => {

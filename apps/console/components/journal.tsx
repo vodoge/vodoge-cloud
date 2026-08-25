@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Output } from "@/components/ui/output";
@@ -17,6 +17,15 @@ import { cn } from "@/lib/cn";
 import { JOURNAL, SEGMENTED } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
+
+/**
+ * How many columns the payload row spans: arrived, kind, seq, the toggle.
+ *
+ * One of them is `secondary` and is not rendered on a phone, which is fine —
+ * a `colspan` wider than the row has is clamped to what is there. Getting it
+ * *too small* is the failure that matters, and it leaves a gap on the right.
+ */
+const PAYLOAD_COLUMNS = 4;
 
 /**
  * What the devices actually said.
@@ -41,8 +50,15 @@ type Labels = Record<string, string>;
  * - The payload block was `<pre className="output">` inside a table cell. `pre`
  *   is `white-space: pre`, so one long line of an envelope sets the cell's
  *   min-content width to that whole line and the table grows to fit it. That is
- *   the overflow this card was told to deal with, and `Output` is the primitive
- *   built for it — a scroll container of its own, in both axes.
+ *   the overflow this card was told to deal with.
+ *
+ *   🔴 **`Output` alone does not fix it**, and that was measured rather than
+ *   assumed: at 390px the table came out 1311px wide inside a 311px card with
+ *   `Output` in the cell, against 1409px for the `.output` it replaced. A
+ *   scroll container's min-content size is not zero for the box sizing the
+ *   cell around it. `JOURNAL.payload` makes the envelope wrap, which takes the
+ *   table to the width of the card; `Output` keeps the vertical ceiling and
+ *   the scroll that goes with it.
  */
 export function Journal({
   events,
@@ -125,40 +141,49 @@ export function Journal({
         <TableBody>
           {shown.map((event) => {
             const key = rowKey(event);
+            const expanded = open === key;
             return (
-              <TableRow key={key}>
-                <TableCell mono faint>
-                  {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
-                </TableCell>
-                <TableCell>
-                  <Badge tone="info" dot={false}>
-                    {event.kind}
-                  </Badge>
-                </TableCell>
-                <TableCell mono faint secondary>
-                  {event.seq}
-                </TableCell>
-                {/* `wrap` is what keeps the expanded payload from setting this
-                    column's width: `Output` scrolls, and the cell around it is
-                    allowed to be narrower than the longest line in it. */}
-                <TableCell wrap>
-                  <Button
-                    variant="subtle"
-                    size="sm"
-                    aria-expanded={open === key}
-                    onClick={() => void expand(event)}
-                  >
-                    {open === key ? labels.hide : labels.show}
-                  </Button>
-                  {open === key ? (
-                    <Output>
-                      {payloads[key] === undefined
-                        ? labels.loading
-                        : JSON.stringify(payloads[key], null, 2)}
-                    </Output>
-                  ) : null}
-                </TableCell>
-              </TableRow>
+              <Fragment key={key}>
+                <TableRow className={expanded ? JOURNAL.rowOpen : undefined}>
+                  <TableCell mono faint>
+                    {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge tone="info" dot={false}>
+                      {event.kind}
+                    </Badge>
+                  </TableCell>
+                  <TableCell mono faint secondary>
+                    {event.seq}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="subtle"
+                      size="sm"
+                      aria-expanded={expanded}
+                      onClick={() => void expand(event)}
+                    >
+                      {expanded ? labels.hide : labels.show}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+                {/* The envelope gets a row of its own across every column
+                    rather than the last cell. Inside the cell it had whatever
+                    the other three columns left over, which at 390px was
+                    measured at 79px — a JSON block the width of a thumbnail.
+                    Spanning the row gives it the card. */}
+                {expanded ? (
+                  <TableRow className={JOURNAL.payloadRow}>
+                    <TableCell colSpan={PAYLOAD_COLUMNS} wrap>
+                      <Output className={JOURNAL.payload}>
+                        {payloads[key] === undefined
+                          ? labels.loading
+                          : JSON.stringify(payloads[key], null, 2)}
+                      </Output>
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </Fragment>
             );
           })}
         </TableBody>

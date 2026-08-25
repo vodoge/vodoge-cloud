@@ -625,8 +625,37 @@ export const TABLE = {
    * still lays the column out at its content's width when there is room, so
    * this only bites on the screens where the alternative was a table three
    * times the width of the phone.
+   *
+   * ⚠️ **Only on a column that dominates its row.** Lowering min-content to a
+   * single character also lets the column be squeezed *to* a single character
+   * when its neighbours want the space, and `/schedule` demonstrated it: eight
+   * columns of dates and identifiers turned a task's name into a vertical
+   * strip one character wide. A wide grid scrolls sideways in its card
+   * instead; that is what `TABLE.wrapper` is for.
    */
   cellWrap: "break-all",
+  /**
+   * The opposite, and the reason it is needed is not obvious.
+   *
+   * 🔴 **A Chinese label's min-content width is one character.** CJK text has a
+   * break opportunity between any two characters with no hyphen and no marker,
+   * so a column holding 保号短信-移动-每月 can be squeezed to the width of 保 and
+   * the browser is doing exactly what it is told. When a table's min-content
+   * total exceeds its container every column is laid out at min-content, which
+   * is how `/schedule` — eight columns at 390px — rendered a task's name as a
+   * vertical strip one character wide. Measured; it survived removing
+   * `cellWrap`, because `cellWrap` was never what caused it.
+   *
+   * For a cell holding one atomic reading: a name, a cadence, a timestamp. The
+   * table gets wider and scrolls sideways inside its card, which is the
+   * behaviour a wide grid is supposed to have.
+   *
+   * Not the default, though it arguably should be. Four other page migrations
+   * are in flight against this same recipe and every table in the console
+   * would change shape at once — that is a decision for whoever holds them
+   * all, not for one page card. See the note for T015.
+   */
+  cellNowrap: "whitespace-nowrap",
   /**
    * A second line under a cell's main value: the detail behind a status, the
    * number behind a name. `block` because it hangs under, not beside.
@@ -971,6 +1000,41 @@ export const CONFIRM = {
 export const JOURNAL = {
   /** The filter above the table, then the table. */
   stack: "flex flex-col gap-s4",
+  /**
+   * 🔴 **The envelope wraps here, and `Output` on its own does not make it.**
+   *
+   * `OUTPUT.root` scrolls in both axes, which is right for the two callers
+   * that hold a diagnostic's reading in a card of its own. This one is inside
+   * a table cell, and a scroll container's min-content size is *not* zero for
+   * the purpose of sizing the cell around it: `pre` is `white-space: pre`, so
+   * the cell demanded the width of the envelope's longest line and the table
+   * grew to fit. Measured at 390px: the journal's table came out **1311px
+   * wide inside a 311px card** with `Output` alone — against 1409px for the
+   * hand-styled `.output` it replaced, which is not a fix.
+   *
+   * So the payload wraps instead. Long lines break rather than scroll
+   * sideways, which on a phone is the difference between one horizontal
+   * scroller and two nested ones, and the pretty-printed newlines survive
+   * because the whitespace rule preserves them. `Output` keeps its vertical
+   * scroll and its ceiling.
+   *
+   * Passed as the caller's class rather than changed in `OUTPUT`: the other
+   * two call sites are an AT transcript and a command's reply in cards of
+   * their own, they belong to another card, and they do not have a table
+   * around them.
+   */
+  payload: "whitespace-pre-wrap break-all",
+  /**
+   * The row that is open, and the row holding what it opened to.
+   *
+   * The envelope is a row of its own spanning every column rather than the
+   * last cell, because inside the cell it got what the other three columns
+   * left over — 79px at 390px, measured. Two rows for one record then need to
+   * read as one: the tint joins them and the dropped rule takes away the line
+   * that would otherwise say they are separate records.
+   */
+  rowOpen: "border-b-0 bg-surface-hover",
+  payloadRow: "bg-surface-hover",
   /**
    * "Nothing matched the filter", which is not the page's empty state.
    *
