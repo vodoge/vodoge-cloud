@@ -458,6 +458,19 @@ export async function fetchJournal(
   });
 }
 
+/**
+ * Where a row in the profile table came from.
+ *
+ * Rendered, not hidden. The two sources are not equally durable: `inventory`
+ * is the `app.esim_profiles` projection, which survives a page reload and
+ * remembers chips nobody has touched today, while `read` is the last
+ * `read_esim_info` command's own result and lives only as long as that command
+ * stays in the recent-command window. An operator who cannot tell them apart
+ * will read an empty table as "the chip has no profiles" when what happened is
+ * that the reading scrolled out of the window.
+ */
+export type EsimProfileSource = "inventory" | "read";
+
 export type EsimProfileRow = {
   eid: string;
   iccid: string;
@@ -465,6 +478,7 @@ export type EsimProfileRow = {
   nickname: string | null;
   modemImei: string | null;
   collectedAt: number;
+  source: EsimProfileSource;
 };
 
 export async function fetchEsimProfiles(
@@ -486,6 +500,7 @@ export async function fetchEsimProfiles(
       nickname: asString(row.nickname),
       modemImei: asString(row.modem_imei),
       collectedAt: asNumber(row.collected_at) ?? 0,
+      source: "inventory" as const,
     };
   });
 }
@@ -787,11 +802,40 @@ export type EsimNotificationRow = {
   iccid: string | null;
 };
 
+/**
+ * One profile as ES10c listed it, before it becomes a table row.
+ *
+ * Four names for the same profile arrive from the card and all four are kept.
+ * `nickname` is the only one an operator can set and the only one the
+ * `app.esim_profiles` projection carries, and on both chips on the bench it is
+ * null -- so a table that read only that column would show two nameless rows
+ * for a card whose own answer says "WEBBING" and "Wireless".
+ */
+export type EsimReadProfile = {
+  iccid: string;
+  enabled: boolean;
+  label: string | null;
+  name: string | null;
+  nickname: string | null;
+  provider: string | null;
+  /** SGP.22 profile class: 0 test, 1 provisioning, 2 operational. */
+  profileClass: number | null;
+  isdpAid: string | null;
+};
+
 /** The result of one `read_esim_info` command. */
 export type EsimInfoResult = {
   imei: string;
   eid: string;
   chip: EsimChipInfo;
+  /**
+   * What the card said it holds.
+   *
+   * The edge has sent this array since the command existed; the console threw
+   * it away until 2026-08-25, which is the whole reason the profile table was
+   * empty on a bench where both chips answer with two profiles.
+   */
+  profiles: EsimReadProfile[];
   notifications: EsimNotificationRow[];
   notificationsError: string | null;
   profilesError: string | null;
@@ -906,12 +950,329 @@ export function parseEsimInfoResult(value: unknown): EsimInfoResult | null {
       sasAccreditationNumber: asString(chip.sas_accreditation_number),
       decodedFields: asNumber(chip.decoded_fields) ?? 0,
     },
+    profiles: arrayOf(row.profiles)
+      .map(parseEsimReadProfile)
+      .filter((entry): entry is EsimReadProfile => entry !== null),
     notifications: arrayOf(row.notifications)
       .map(parseEsimNotification)
       .filter((entry): entry is EsimNotificationRow => entry !== null),
     notificationsError: asString(row.notifications_error),
     profilesError: asString(row.profiles_error),
   };
+}
+
+/**
+ * One entry of the `profiles` array in a `read_esim_info` result.
+ *
+ * An entry with no ICCID is dropped rather than rendered blank: the ICCID is
+ * what the switch command addresses, so a row without one is a row whose
+ * button could only aim at nothing.
+ */
+function parseEsimReadProfile(value: unknown): EsimReadProfile | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const iccid = asString(row.iccid);
+  if (!iccid) {
+    return null;
+  }
+  return {
+    iccid,
+    // Absent reads as disabled, and that asymmetry is deliberate: the switch
+    // button only appears on a disabled row, so guessing "enabled" for a field
+    // the agent did not send would hide the control instead of offering one
+    // that might be redundant.
+    enabled: asBoolean(row.enabled) === true,
+    label: asString(row.label),
+    name: asString(row.name),
+    nickname: asString(row.nickname),
+    provider: asString(row.provider),
+    profileClass: asNumber(row.class),
+    isdpAid: asString(row.isdp_aid),
+  };
+}
+
+/** Enough of a relayed command for the eSIM helpers below. */
+export type EsimCommandRow = {
+  kind: string;
+  status: string;
+  completed_at: number | null;
+  payload: Record<string, unknown> | null;
+  result: { status?: string; reason?: string; details?: unknown } | null;
+};
+
+/** One chip reading, with the time the command it came from finished. */
+export type EsimChipReading = {
+  info: EsimInfoResult;
+  completedAt: number | null;
+};
+
+/** The two eSIM commands that open an ISD-R channel and can fail doing it. */
+const ESIM_CHIP_COMMANDS = new Set(["read_esim_info", "list_esim_profiles"]);
+
+/**
+ * The most recent successful chip reading per EID.
+ *
+ * Per EID rather than per IMEI on purpose: the EID is the chip, and a module
+ * that was read twice should not produce two entries that disagree.
+ */
+export function latestEsimChipReads(rows: readonly EsimCommandRow[]): EsimChipReading[] {
+  const seen = new Map<string, EsimChipReading>();
+  for (const row of rows) {
+    if (row.kind !== "read_esim_info" || row.status !== "succeeded") continue;
+    const info = parseEsimInfoResult(row.result?.details);
+    if (!info) continue;
+    const existing = seen.get(info.eid);
+    if (existing && (existing.completedAt ?? 0) >= (row.completed_at ?? 0)) continue;
+    seen.set(info.eid, { info, completedAt: row.completed_at });
+  }
+  return [...seen.values()].sort((left, right) => left.info.eid.localeCompare(right.info.eid));
+}
+
+/**
+ * The card's own name for a profile, in the order an operator would want it.
+ *
+ * Nickname first because it is the only one a human chose. Everything after it
+ * is the card's, and falling through to them beats rendering a dash: on the
+ * bench every nickname is null while the names are "WEBBING" and "Wireless".
+ */
+export function esimProfileDisplayName(profile: EsimReadProfile): string | null {
+  return profile.nickname ?? profile.name ?? profile.provider ?? profile.label;
+}
+
+/**
+ * What one module last said it holds, whichever command asked.
+ *
+ * Both `read_esim_info` and `list_esim_profiles` return the same ES10c list,
+ * and the page offers a button for each. Only the first carries an EID, so a
+ * listing from the second borrows the EID from the newest reading of the same
+ * module -- and is dropped when there is none, because a profile that cannot
+ * be filed under a chip is a row with no heading. Borrowing it assumes the
+ * card in a module did not change between the two commands, which on a bench
+ * where nobody can reach the hardware is safe, and the borrowed listing only
+ * ever wins when it is the newer of the two.
+ */
+export type EsimProfileListing = {
+  modemImei: string;
+  eid: string | null;
+  profiles: EsimReadProfile[];
+  /**
+   * Kept because an empty list means two different things.
+   *
+   * A card with no profiles and a card that refused the query both answer with
+   * nothing, and the edge is careful to say which happened. Dropping this
+   * would turn a refusal into "this chip is empty".
+   */
+  profilesError: string | null;
+  collectedAt: number;
+};
+
+export function latestEsimProfileListings(
+  rows: readonly EsimCommandRow[],
+): EsimProfileListing[] {
+  const eidByImei = new Map<string, string>();
+  for (const { info } of latestEsimChipReads(rows)) {
+    eidByImei.set(info.imei, info.eid);
+  }
+  const byImei = new Map<string, EsimProfileListing>();
+  for (const row of rows) {
+    if (row.status !== "succeeded" || !ESIM_CHIP_COMMANDS.has(row.kind)) continue;
+    const details = row.result?.details;
+    if (!details || typeof details !== "object") continue;
+    const body = details as Record<string, unknown>;
+    const modemImei = asString(body.imei) ?? asString((row.payload ?? {}).modem_imei);
+    if (!modemImei) continue;
+    const at = row.completed_at ?? 0;
+    const existing = byImei.get(modemImei);
+    if (existing && existing.collectedAt >= at) continue;
+    byImei.set(modemImei, {
+      modemImei,
+      eid: asString(body.eid) ?? eidByImei.get(modemImei) ?? null,
+      profiles: arrayOf(body.profiles)
+        .map(parseEsimReadProfile)
+        .filter((entry): entry is EsimReadProfile => entry !== null),
+      profilesError: asString(body.profiles_error),
+      collectedAt: at,
+    });
+  }
+  return [...byImei.values()].sort((left, right) =>
+    left.modemImei.localeCompare(right.modemImei),
+  );
+}
+
+/**
+ * The profile table, rebuilt from the last listing each module produced.
+ *
+ * This exists because `app.esim_profiles` has never had a row in it: nothing
+ * on the edge emits the `EsimInventory` envelope the projection is fed by. The
+ * profile list itself, though, has been travelling in every `read_esim_info`
+ * result since that command shipped, and the console was dropping it on the
+ * floor. Reading it here needs no contract change, no edge change and no
+ * second writer on any projection -- the data is already in the command log.
+ *
+ * `collectedAt` is the command's completion time rather than a timestamp from
+ * the card, because the card does not send one. That is the honest reading:
+ * it says when we asked, which is the most anyone can claim.
+ */
+export function esimProfileRowsFromReads(rows: readonly EsimCommandRow[]): EsimProfileRow[] {
+  const out: EsimProfileRow[] = [];
+  for (const listing of latestEsimProfileListings(rows)) {
+    if (!listing.eid) continue;
+    for (const profile of listing.profiles) {
+      out.push({
+        eid: listing.eid,
+        iccid: profile.iccid,
+        // ES10c answers with a boolean, so "deleted" is a state this path can
+        // never produce. A profile that is gone from the card is simply absent
+        // from the list, and inventing a third value from a two-valued field
+        // would be the console making something up.
+        state: profile.enabled ? "enabled" : "disabled",
+        nickname: esimProfileDisplayName(profile),
+        modemImei: listing.modemImei,
+        collectedAt: listing.collectedAt,
+        source: "read",
+      });
+    }
+  }
+  return out;
+}
+
+/** enabled first, then disabled, then whatever is no longer on the chip. */
+function esimStateRank(state: string): number {
+  if (state === "enabled") return 0;
+  if (state === "disabled") return 1;
+  if (state === "deleted") return 2;
+  return 3;
+}
+
+/**
+ * The durable inventory and the last reading, as one table.
+ *
+ * Same chip and same ICCID means same row, and the newer collection wins.
+ * Neither source is dropped wholesale: the projection remembers profiles that
+ * have since been deleted, which is exactly what someone needs when a card
+ * stops working after a switch, and the reading is the only thing that knows
+ * what is on the chip right now.
+ *
+ * A tie goes to the reading, because it carries the modem IMEI the switch
+ * command has to be addressed to and a projection row without one renders a
+ * profile nobody can act on.
+ */
+export function mergeEsimProfiles(
+  inventory: readonly EsimProfileRow[],
+  fromReads: readonly EsimProfileRow[],
+): EsimProfileRow[] {
+  const byKey = new Map<string, EsimProfileRow>();
+  for (const row of [...inventory, ...fromReads]) {
+    if (!row.eid || !row.iccid) continue;
+    const key = `${row.eid}/${row.iccid}`;
+    const existing = byKey.get(key);
+    if (existing && existing.collectedAt > row.collectedAt) continue;
+    byKey.set(key, row);
+  }
+  return [...byKey.values()].sort(
+    (left, right) =>
+      left.eid.localeCompare(right.eid) ||
+      esimStateRank(left.state) - esimStateRank(right.state) ||
+      left.iccid.localeCompare(right.iccid),
+  );
+}
+
+/**
+ * Why a chip read failed, in the only two flavours that matter to a reader.
+ *
+ * `no-euicc` is not a fault. It is a plain SIM in a slot the console offered
+ * an eSIM button for.
+ */
+export type EsimReadFailureCause = "no-euicc" | "read-failed";
+
+export type EsimReadFailure = {
+  modemImei: string;
+  cause: EsimReadFailureCause;
+  /** The edge's own words, always rendered, never replaced by our reading. */
+  reason: string;
+  failedAt: number | null;
+};
+
+/**
+ * The edge names the step it died on, and only one step means "no eUICC here".
+ *
+ * `session.rs` wraps the very first thing an LPA does -- selecting the ISD-R
+ * applet -- as `open ISD-R channel: ...`. SGP.22 requires every eUICC to carry
+ * ISD-R, so a card that refuses that channel is not one. Every later failure
+ * (the EID read, `GetEUICCInfo2`) reports its own step instead, and a refused
+ * profile or notification list does not fail the command at all: it comes back
+ * `succeeded` with `profiles_error` set.
+ */
+function refusedIsdrChannel(reason: string): boolean {
+  return /open ISD-R channel/i.test(reason);
+}
+
+/**
+ * The chip reads that are currently broken, one per module, already classified.
+ *
+ * Suppressed once a later read of the same module succeeded, for the reason
+ * `newestFailureAfterSuccess` exists: a command list holds every attempt, so
+ * "has anything ever failed" is almost always yes, and what a reader needs is
+ * whether the situation is broken now.
+ *
+ * The refusal alone is not taken as proof that a module has no eUICC. A chip
+ * we have read before, and a slot that never had one, can both fail to open a
+ * channel -- a card that has fallen off the module answers nothing either. So
+ * a module is only called `no-euicc` when nothing in view has ever got an EID
+ * out of it: no reading in the command window, and no row in the durable
+ * inventory. A chip with a history that stops answering is `read-failed`,
+ * which is the honest description of a thing that used to work.
+ *
+ * The window is what it is: the console fetches the last 60 commands. A eUICC
+ * that broke long enough ago for every success to have scrolled out would be
+ * misread as absent -- which is why the inventory is consulted too, and why
+ * this gets stronger the day `app.esim_profiles` stops being empty.
+ */
+export function esimReadFailures(
+  rows: readonly EsimCommandRow[],
+  inventory: readonly EsimProfileRow[] = [],
+): EsimReadFailure[] {
+  const knownEuicc = new Set<string>();
+  for (const row of inventory) {
+    if (row.modemImei && row.eid) knownEuicc.add(row.modemImei);
+  }
+  const newestSuccess = new Map<string, number>();
+  const failures = new Map<string, EsimReadFailure>();
+  for (const row of rows) {
+    if (!ESIM_CHIP_COMMANDS.has(row.kind)) continue;
+    const imei = asString((row.payload ?? {}).modem_imei);
+    // Unattributable. Rendering it against no module would put a failure
+    // banner on a page that cannot say which of three it is about.
+    if (!imei) continue;
+    const at = row.completed_at ?? 0;
+    if (row.status === "succeeded") {
+      if (at > (newestSuccess.get(imei) ?? -1)) newestSuccess.set(imei, at);
+      const info = parseEsimInfoResult(row.result?.details);
+      if (info?.eid) knownEuicc.add(imei);
+      continue;
+    }
+    if (row.status !== "failed") continue;
+    const existing = failures.get(imei);
+    if (existing && (existing.failedAt ?? 0) >= at) continue;
+    failures.set(imei, {
+      modemImei: imei,
+      cause: "read-failed",
+      reason: row.result?.reason ?? "",
+      failedAt: row.completed_at,
+    });
+  }
+  return [...failures.values()]
+    .filter((failure) => (failure.failedAt ?? 0) > (newestSuccess.get(failure.modemImei) ?? -1))
+    .map((failure) => ({
+      ...failure,
+      cause:
+        refusedIsdrChannel(failure.reason) && !knownEuicc.has(failure.modemImei)
+          ? ("no-euicc" as const)
+          : ("read-failed" as const),
+    }))
+    .sort((left, right) => left.modemImei.localeCompare(right.modemImei));
 }
 
 function parseEsimNotification(value: unknown): EsimNotificationRow | null {

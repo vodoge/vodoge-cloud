@@ -10,6 +10,11 @@ import {
   fetchSessions,
   fetchThread,
   fetchThreads,
+  esimProfileDisplayName,
+  esimProfileRowsFromReads,
+  esimReadFailures,
+  latestEsimProfileListings,
+  mergeEsimProfiles,
   parseDevice,
   parseEsimAuthentication,
   parseEsimDownload,
@@ -493,6 +498,57 @@ test("a rejected schedules request is an error, not an empty list", async () => 
   );
 });
 
+/**
+ * The details a real `read_esim_info` produced against 867018069514820.
+ *
+ * Copied out of `app.commands` on the production host: command
+ * 066def7f-7a33-4b1f-86fd-7a3fc5024c8b, completed 2026-08-24 13:48:43Z. The
+ * `profiles` array is the bench's real answer, nicknames and all -- which is
+ * to say both nicknames are null and the only names the card offers are in
+ * `name` / `provider` / `label`.
+ */
+const REAL_CHIP_READ = {
+  imei: "867018069514820",
+  eid: "89086030202200000026000178339240",
+  chip: { decoded_fields: 16 },
+  profiles: [
+    {
+      name: "WEBBING",
+      class: 2,
+      iccid: "89852351225042214201",
+      label: "WEBBING",
+      enabled: true,
+      isdp_aid: "A0000005591010FFFFFFFF8900001200",
+      nickname: null,
+      provider: "Saily",
+    },
+    {
+      name: "Wireless",
+      class: 2,
+      iccid: "8901240527197122156",
+      label: "Wireless",
+      enabled: false,
+      isdp_aid: "A0000005591010FFFFFFFF8900001300",
+      nickname: null,
+      provider: "Wireless",
+    },
+  ],
+  notifications: [],
+  notifications_error: null,
+  profiles_error: null,
+};
+
+/**
+ * The reason the edge gave for the one failed chip read on this bench.
+ *
+ * Command d1eb02a7-dc33-4dac-9ac3-ad613fb8e354, `read_esim_info` against
+ * 867018069509705, 2026-08-24 01:12:55Z, reason_code `esim_info_failed`. That
+ * module holds a China Mobile plastic SIM, which has no ISD-R applet, so the
+ * refusal happens at the first step and never reaches an ES10 command.
+ */
+const REAL_ISDR_REFUSAL =
+  "QMI transport error: open ISD-R channel: QMI request rejected with result 1 error 80";
+
 test("a chip reading is decoded from the command result", () => {
   // The details a real read_esim_info produced against 867018069514820.
   const details = {
@@ -548,6 +604,359 @@ test("a chip reading is decoded from the command result", () => {
   // notification on both chips on the bench.
   assert.equal(info.notifications[0].sequenceNumber, 0);
   assert.deepEqual(info.notifications[1].operations, ["enable"]);
+});
+
+test("the profile list the edge already sends is no longer thrown away", () => {
+  const info = parseEsimInfoResult(REAL_CHIP_READ);
+  assert.ok(info);
+  // The bug this test exists for: `parseEsimInfoResult` returned six fields
+  // and `profiles` was not one of them, so a card answering with two profiles
+  // reached a page that rendered "no eUICC has reported anything yet".
+  assert.equal(info.profiles.length, 2);
+  assert.equal(info.profiles[0].iccid, "89852351225042214201");
+  assert.equal(info.profiles[0].enabled, true);
+  assert.equal(info.profiles[0].nickname, null);
+  assert.equal(info.profiles[0].profileClass, 2);
+  assert.equal(info.profiles[1].iccid, "8901240527197122156");
+  assert.equal(info.profiles[1].enabled, false);
+  // Nickname is null on both, so the name has to come from somewhere else or
+  // the table shows two dashes for a card that named itself.
+  assert.equal(esimProfileDisplayName(info.profiles[0]), "WEBBING");
+  assert.equal(esimProfileDisplayName(info.profiles[1]), "Wireless");
+});
+
+test("a profile with no ICCID is dropped rather than rendered unswitchable", () => {
+  const info = parseEsimInfoResult({
+    imei: "867018069514820",
+    eid: "89086030202200000026000178339240",
+    profiles: [{ enabled: true, name: "nameless" }, "nope", null, { iccid: "8944" }],
+  });
+  assert.ok(info);
+  assert.equal(info.profiles.length, 1);
+  assert.equal(info.profiles[0].iccid, "8944");
+  // Absent reads as disabled: the switch button only shows on a disabled row,
+  // so the safe guess is the one that offers the control.
+  assert.equal(info.profiles[0].enabled, false);
+});
+
+test("the profile table is rebuilt from the last chip read of each eUICC", () => {
+  const rows = esimProfileRowsFromReads([
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 1_756_042_123_000,
+      payload: { modem_imei: "867018069514820" },
+      result: { status: "succeeded", details: REAL_CHIP_READ },
+    },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], {
+    eid: "89086030202200000026000178339240",
+    iccid: "89852351225042214201",
+    state: "enabled",
+    nickname: "WEBBING",
+    // What the switch button is addressed to. Without it the row renders
+    // without its control and the table is a picture, not a page.
+    modemImei: "867018069514820",
+    collectedAt: 1_756_042_123_000,
+    source: "read",
+  });
+  assert.equal(rows[1].state, "disabled");
+  assert.equal(rows[1].iccid, "8901240527197122156");
+});
+
+test("only the newest reading of a chip becomes rows", () => {
+  const stale = {
+    ...REAL_CHIP_READ,
+    profiles: [{ iccid: "89852351225042214201", enabled: false, name: "WEBBING" }],
+  };
+  const rows = esimProfileRowsFromReads([
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: REAL_CHIP_READ },
+    },
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 100,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: stale },
+    },
+    // A failed read holds no details and must not blank out the good one.
+    {
+      kind: "read_esim_info",
+      status: "failed",
+      completed_at: 300,
+      payload: { modem_imei: "867018069514820" },
+      result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+    },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].state, "enabled");
+  assert.equal(rows[0].collectedAt, 200);
+});
+
+test("the inventory and the last reading merge into one row per profile", () => {
+  const projected = {
+    eid: "89086030202200000026000178339240",
+    iccid: "89852351225042214201",
+    state: "disabled",
+    nickname: "from the projection",
+    modemImei: "867018069514820",
+    collectedAt: 100,
+    source: "inventory" as const,
+  };
+  const deleted = { ...projected, iccid: "8944000000000000000", state: "deleted" };
+  const merged = mergeEsimProfiles(
+    [projected, deleted],
+    esimProfileRowsFromReads([
+      {
+        kind: "read_esim_info",
+        status: "succeeded",
+        completed_at: 200,
+        payload: { modem_imei: "867018069514820" },
+        result: { details: REAL_CHIP_READ },
+      },
+    ]),
+  );
+  // Three rows, not four: same chip and same ICCID is one profile.
+  assert.equal(merged.length, 3);
+  assert.deepEqual(
+    merged.map((row) => [row.iccid, row.state, row.source]),
+    [
+      ["89852351225042214201", "enabled", "read"],
+      ["8901240527197122156", "disabled", "read"],
+      // The projection remembers what the chip no longer lists, which is the
+      // question someone asks after a switch went wrong.
+      ["8944000000000000000", "deleted", "inventory"],
+    ],
+  );
+});
+
+test("a stale reading does not overwrite a fresher inventory row", () => {
+  const fresh = {
+    eid: "89086030202200000026000178339240",
+    iccid: "89852351225042214201",
+    state: "enabled",
+    nickname: "fresh",
+    modemImei: "867018069514820",
+    collectedAt: 900,
+    source: "inventory" as const,
+  };
+  const merged = mergeEsimProfiles(
+    [fresh],
+    esimProfileRowsFromReads([
+      {
+        kind: "read_esim_info",
+        status: "succeeded",
+        completed_at: 200,
+        payload: { modem_imei: "867018069514820" },
+        result: { details: REAL_CHIP_READ },
+      },
+    ]),
+  );
+  const webbing = merged.find((row) => row.iccid === "89852351225042214201");
+  assert.equal(webbing?.source, "inventory");
+  assert.equal(webbing?.nickname, "fresh");
+});
+
+test("the refresh button's own command reaches the table too", () => {
+  // `list_esim_profiles` answers with {imei, profiles} and no EID, which is
+  // why the console could not file its rows anywhere. The EID is borrowed from
+  // the newest reading of the same module. Without this the button labelled
+  // "read the chip" appears to do nothing at all.
+  const rows = esimProfileRowsFromReads([
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 100,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: REAL_CHIP_READ },
+    },
+    {
+      kind: "list_esim_profiles",
+      status: "succeeded",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: {
+        details: {
+          imei: "867018069514820",
+          profiles: [
+            {
+              name: "WEBBING",
+              class: 2,
+              iccid: "89852351225042214201",
+              label: "WEBBING",
+              enabled: true,
+              isdp_aid: "A0000005591010FFFFFFFF8900001200",
+              nickname: null,
+              provider: "Saily",
+            },
+          ],
+        },
+      },
+    },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].eid, "89086030202200000026000178339240");
+  assert.equal(rows[0].collectedAt, 200);
+});
+
+test("a listing whose chip has never been identified is not filed under a guess", () => {
+  const listings = latestEsimProfileListings([
+    {
+      kind: "list_esim_profiles",
+      status: "succeeded",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: { imei: "867018069514820", profiles: [{ iccid: "8944" }] } },
+    },
+  ]);
+  assert.equal(listings.length, 1);
+  assert.equal(listings[0].eid, null);
+  // Visible as a listing, absent from the table: a row with no EID has no
+  // heading to sit under, and inventing one would be worse than showing none.
+  assert.deepEqual(esimProfileRowsFromReads([
+    {
+      kind: "list_esim_profiles",
+      status: "succeeded",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: { imei: "867018069514820", profiles: [{ iccid: "8944" }] } },
+    },
+  ]), []);
+});
+
+test("a refused profile list is kept apart from an empty chip", () => {
+  const listings = latestEsimProfileListings([
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 100,
+      payload: { modem_imei: "867018069514820" },
+      result: {
+        details: {
+          ...REAL_CHIP_READ,
+          profiles: [],
+          profiles_error: "eUICC returned profile list error 127 (undefined error)",
+        },
+      },
+    },
+  ]);
+  assert.equal(listings.length, 1);
+  assert.deepEqual(listings[0].profiles, []);
+  assert.match(listings[0].profilesError ?? "", /127/);
+});
+
+test("a module with no eUICC is reported as that, not as a broken chip", () => {
+  const failures = esimReadFailures([
+    {
+      kind: "read_esim_info",
+      status: "failed",
+      completed_at: 1_756_000_375_242,
+      payload: { modem_imei: "867018069509705" },
+      result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+    },
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 1_756_000_374_496,
+      payload: { modem_imei: "862547055142811" },
+      result: { details: { ...REAL_CHIP_READ, imei: "862547055142811" } },
+    },
+  ]);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].modemImei, "867018069509705");
+  assert.equal(failures[0].cause, "no-euicc");
+  // The edge's own words survive the classification. Our reading of them is
+  // an addition to the page, never a replacement for what it said.
+  assert.equal(failures[0].reason, REAL_ISDR_REFUSAL);
+});
+
+test("the same refusal from a chip we have read before is a failure, not an absence", () => {
+  const failures = esimReadFailures([
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 100,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: REAL_CHIP_READ },
+    },
+    {
+      kind: "read_esim_info",
+      status: "failed",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+    },
+  ]);
+  assert.equal(failures.length, 1);
+  // Byte for byte the same reason as the test above, and a different verdict:
+  // this chip has an EID on record, so a slot that answers nothing today is a
+  // chip that stopped answering rather than a slot that never had one.
+  assert.equal(failures[0].cause, "read-failed");
+});
+
+test("a chip in the durable inventory is never called absent", () => {
+  const failures = esimReadFailures(
+    [
+      {
+        kind: "list_esim_profiles",
+        status: "failed",
+        completed_at: 200,
+        payload: { modem_imei: "867018069514820" },
+        result: { status: "failed", reason: `esim_list_failed: ${REAL_ISDR_REFUSAL}` },
+      },
+    ],
+    [
+      {
+        eid: "89086030202200000026000178339240",
+        iccid: "89852351225042214201",
+        state: "enabled",
+        nickname: null,
+        modemImei: "867018069514820",
+        collectedAt: 50,
+        source: "inventory",
+      },
+    ],
+  );
+  assert.equal(failures[0].cause, "read-failed");
+});
+
+test("a failure a later read recovered from is not shown at all", () => {
+  const failures = esimReadFailures([
+    {
+      kind: "read_esim_info",
+      status: "failed",
+      completed_at: 100,
+      payload: { modem_imei: "867018069514820" },
+      result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+    },
+    {
+      kind: "read_esim_info",
+      status: "succeeded",
+      completed_at: 200,
+      payload: { modem_imei: "867018069514820" },
+      result: { details: REAL_CHIP_READ },
+    },
+  ]);
+  assert.deepEqual(failures, []);
+});
+
+test("a failure that names no module is not attributed to one", () => {
+  const failures = esimReadFailures([
+    {
+      kind: "read_esim_info",
+      status: "failed",
+      completed_at: 100,
+      payload: null,
+      result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+    },
+  ]);
+  assert.deepEqual(failures, []);
 });
 
 test("a reading with no EID identifies nothing and is dropped", () => {
