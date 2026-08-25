@@ -1677,7 +1677,21 @@ test("the nav is four groups covering every destination exactly once", () => {
   const hrefs = NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href));
   assert.deepEqual(
     hrefs,
-    ["/", "/devices", "/journal", "/audit", "/inbox", "/rules", "/schedule", "/proxy", "/settings"],
+    [
+      "/",
+      "/devices",
+      "/journal",
+      "/audit",
+      "/inbox",
+      // Comms, not Settings: `/sessions` is `/inbox`'s messages grouped per
+      // peer, and the grouping that put it elsewhere was confirmed against a
+      // description of it as sign-in sessions. See NAV_GROUPS.
+      "/sessions",
+      "/rules",
+      "/schedule",
+      "/proxy",
+      "/settings",
+    ],
     "the confirmed grouping is fleet / comms / network / settings",
   );
   assert.equal(new Set(hrefs).size, hrefs.length, "a destination appears in one group only");

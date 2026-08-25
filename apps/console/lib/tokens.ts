@@ -999,9 +999,17 @@ export const SEGMENTED = {
  * nav written as markup is a nav nothing can check. `tokens.test.ts` asserts
  * every key here resolves in both catalogues and every href is unique.
  *
- * `/sessions` is deliberately absent — see the note in
- * `docs/goals/vodoge-ui-refactor/notes/T007-shell-and-nav.md`. The page still
- * exists and still renders; it has no nav entry under the confirmed grouping.
+ * 🔴 **`/sessions` is in Comms, and the reason it was ever anywhere else is
+ * worth keeping written down.** The grouping was confirmed with the operator
+ * against a description of `/sessions` as *sign-in sessions*, which put it
+ * under Settings; it is nothing of the kind. `sessions.desc` says "SMS threads
+ * grouped by peer number", it reads `GET /v1/sessions`, and its columns are
+ * peer, count and last message — it is `/inbox`'s data seen per peer instead
+ * of per message. Under Settings the nav rendered as "Settings > Sessions,
+ * Settings", which is the repeated label `navGroupLabel` exists to avoid.
+ * Re-confirmed with the operator 2026-08-25 and moved next to `/inbox`.
+ * (T007's note records it as absent from the nav entirely, which is the state
+ * this replaces.)
  */
 
 export type NavItem = { readonly href: string; readonly key: string };
@@ -1025,6 +1033,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "nav.group.comms",
     items: [
       { href: "/inbox", key: "nav.inbox" },
+      { href: "/sessions", key: "nav.sessions" },
       { href: "/rules", key: "nav.rules" },
       { href: "/schedule", key: "nav.schedule" },
     ],
