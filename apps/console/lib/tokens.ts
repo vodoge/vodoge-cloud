@@ -478,6 +478,24 @@ export const PAGE = {
   /** A load failure above the content it failed to load. */
   error: "m-0 mb-s4 text-sm text-bad",
   /**
+   * A sentence between the heading and the content, pointing somewhere else.
+   *
+   * `/rules` is the only page with one: rules and schedules are the two halves
+   * of automation, and the operator looking for the second is already standing
+   * on the first. Quieter than the description under the title, because it is
+   * about a different page.
+   */
+  hint: "m-0 text-sm text-fg-muted",
+  /**
+   * A link inside a sentence.
+   *
+   * `globals.css:162` sets `a { text-decoration: none }` for every anchor, so a
+   * link in running text is indistinguishable from the text around it and has
+   * to say it is a link itself. Deleting the legacy layer does not fix that
+   * either — preflight removes the underline too.
+   */
+  link: "font-semibold text-accent underline",
+  /**
    * The blocks of a page below its heading, one under the other.
    *
    * A gap rather than a margin on each block, so that a block which is
@@ -663,6 +681,63 @@ export const TABLE = {
    * Saying it here is both the migration and the fix.
    */
   cellLink: "font-medium text-accent hover:underline",
+  /**
+   * A column of text with no width limit, allowed to be narrower than its
+   * longest word.
+   *
+   * 🔴 **`word-break`, not `overflow-wrap`, and that is the whole point.**
+   * The `overflow-wrap: break-word` utility lets a long word spill onto a
+   * second line *after* the box has been sized, and explicitly does not change
+   * the box's min-content size. A table cell is sized *from* min-content, so
+   * that utility on one changes nothing at all: the column still demands the
+   * width of the longest unbroken run in it, and the table grows until it does.
+   * `word-break: break-all` does change min-content, so a cell carrying this
+   * can be squeezed. (Measured, not read: T014 found the other half of this the
+   * expensive way, and naming that utility here shipped a dead rule — see the
+   * ledger in `tokens.test.ts`.)
+   *
+   * For the columns that hold something with no upper bound on width and no
+   * spaces to break at — an SMS body carrying a 120-character activation URL,
+   * a rule name somebody pasted, a journal payload. Automatic table layout
+   * still lays the column out at its content's width when there is room, so
+   * this only bites on the screens where the alternative was a table three
+   * times the width of the phone.
+   *
+   * ⚠️ **Only on a column that dominates its row.** Lowering min-content to a
+   * single character also lets the column be squeezed *to* a single character
+   * when its neighbours want the space, and `/schedule` demonstrated it: eight
+   * columns of dates and identifiers turned a task's name into a vertical
+   * strip one character wide. A wide grid scrolls sideways in its card
+   * instead; that is what `TABLE.wrapper` is for.
+   */
+  cellWrap: "break-all",
+  /**
+   * The opposite, and the reason it is needed is not obvious.
+   *
+   * 🔴 **A Chinese label's min-content width is one character.** CJK text has a
+   * break opportunity between any two characters with no hyphen and no marker,
+   * so a column holding 保号短信-移动-每月 can be squeezed to the width of 保 and
+   * the browser is doing exactly what it is told. When a table's min-content
+   * total exceeds its container every column is laid out at min-content, which
+   * is how `/schedule` — eight columns at 390px — rendered a task's name as a
+   * vertical strip one character wide. Measured; it survived removing
+   * `cellWrap`, because `cellWrap` was never what caused it.
+   *
+   * For a cell holding one atomic reading: a name, a cadence, a timestamp. The
+   * table gets wider and scrolls sideways inside its card, which is the
+   * behaviour a wide grid is supposed to have.
+   *
+   * Not the default, though it arguably should be. Four other page migrations
+   * are in flight against this same recipe and every table in the console
+   * would change shape at once — that is a decision for whoever holds them
+   * all, not for one page card. See the note for T015.
+   */
+  cellNowrap: "whitespace-nowrap",
+  /**
+   * A second line under a cell's main value: the detail behind a status, the
+   * number behind a name. `block` because it hangs under, not beside.
+   */
+  cellNote: "mt-s1 block font-mono text-xs text-fg-faint",
   /**
    * The other table shape: a two-column field/value specification.
    *
@@ -1206,6 +1281,62 @@ export const INBOX = {
 } as const;
 
 /**
+ * `/journal`, which is the one read-only page with a control on it.
+ *
+ * Page-level rather than a primitive: two class lists used by one component,
+ * and a `components/ui/journal-stack.tsx` would be a component nobody else can
+ * ever call. They live here rather than in the `.tsx` for the same reason
+ * everything else does — a `.tsx` cannot be read by a test in this app.
+ */
+export const JOURNAL = {
+  /** The filter above the table, then the table. */
+  stack: "flex flex-col gap-s4",
+  /**
+   * 🔴 **The envelope wraps here, and `Output` on its own does not make it.**
+   *
+   * `OUTPUT.root` scrolls in both axes, which is right for the two callers
+   * that hold a diagnostic's reading in a card of its own. This one is inside
+   * a table cell, and a scroll container's min-content size is *not* zero for
+   * the purpose of sizing the cell around it: `pre` is `white-space: pre`, so
+   * the cell demanded the width of the envelope's longest line and the table
+   * grew to fit. Measured at 390px: the journal's table came out **1311px
+   * wide inside a 311px card** with `Output` alone — against 1409px for the
+   * hand-styled `.output` it replaced, which is not a fix.
+   *
+   * So the payload wraps instead. Long lines break rather than scroll
+   * sideways, which on a phone is the difference between one horizontal
+   * scroller and two nested ones, and the pretty-printed newlines survive
+   * because the whitespace rule preserves them. `Output` keeps its vertical
+   * scroll and its ceiling.
+   *
+   * Passed as the caller's class rather than changed in `OUTPUT`: the other
+   * two call sites are an AT transcript and a command's reply in cards of
+   * their own, they belong to another card, and they do not have a table
+   * around them.
+   */
+  payload: "whitespace-pre-wrap break-all",
+  /**
+   * The row that is open, and the row holding what it opened to.
+   *
+   * The envelope is a row of its own spanning every column rather than the
+   * last cell, because inside the cell it got what the other three columns
+   * left over — 79px at 390px, measured. Two rows for one record then need to
+   * read as one: the tint joins them and the dropped rule takes away the line
+   * that would otherwise say they are separate records.
+   */
+  rowOpen: "border-b-0 bg-surface-hover",
+  payloadRow: "bg-surface-hover",
+  /**
+   * "Nothing matched the filter", which is not the page's empty state.
+   *
+   * The page draws `CardEmpty` when the journal itself is empty. This line
+   * only appears when rows exist and the chosen kind has none of them, so it
+   * has to read as a consequence of the filter rather than as "no data".
+   */
+  filteredOut: "m-0 text-sm text-fg-faint",
+} as const;
+
+/**
  * A setting with two or three states, as one control rather than a row of
  * competing buttons. Only the selected option is filled.
  */
@@ -1223,18 +1354,17 @@ export const SEGMENTED = {
  * nav written as markup is a nav nothing can check. `tokens.test.ts` asserts
  * every key here resolves in both catalogues and every href is unique.
  *
- * `/sessions` had no entry at all between T007 and now: the confirmed grouping
- * was given without it, and T007 reported that the page had become reachable
- * only by typing its URL. The operator's answer on 2026-08-25 was to put it in
- * the settings group, which is what it does here, and which is why that group
- * now carries a label — a two-item group with no label is a divider.
- *
- * ⚠️ `/sessions` is **not** the login-session page. `GET /v1/sessions` returns
- * SMS threads grouped by peer number (`sessions.desc`: "SMS threads grouped by
- * peer number"), so by content it is a sibling of `/inbox` rather than of
- * `settings.securityNote` ("session policy", which is the login TTL). Moving it
- * to the comms group is a one-line change here plus the href list in
- * `tokens.test.ts`; see `notes/T013-settings.md`.
+ * 🔴 **`/sessions` is in Comms, and the reason it was ever anywhere else is
+ * worth keeping written down.** The grouping was confirmed with the operator
+ * against a description of `/sessions` as *sign-in sessions*, which put it
+ * under Settings; it is nothing of the kind. `sessions.desc` says "SMS threads
+ * grouped by peer number", it reads `GET /v1/sessions`, and its columns are
+ * peer, count and last message — it is `/inbox`'s data seen per peer instead
+ * of per message. Under Settings the nav rendered as "Settings > Sessions,
+ * Settings", which is the repeated label `navGroupLabel` exists to avoid.
+ * Re-confirmed with the operator 2026-08-25 and moved next to `/inbox`.
+ * (T007's note records it as absent from the nav entirely, which is the state
+ * this replaces.)
  */
 
 export type NavItem = { readonly href: string; readonly key: string };
@@ -1258,6 +1388,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "nav.group.comms",
     items: [
       { href: "/inbox", key: "nav.inbox" },
+      { href: "/sessions", key: "nav.sessions" },
       { href: "/rules", key: "nav.rules" },
       { href: "/schedule", key: "nav.schedule" },
     ],
@@ -1269,7 +1400,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: "nav.group.settings",
     items: [
-      { href: "/sessions", key: "nav.sessions" },
       { href: "/settings", key: "nav.settings" },
     ],
   },
@@ -1839,17 +1969,22 @@ export const MIGRATED_SOURCES = [
   "app/devices/page.tsx",
   "app/inbox/[peer]/page.tsx",
   "app/inbox/page.tsx",
+  "app/journal/page.tsx",
   "app/layout.tsx",
   "app/login/page.tsx",
   "app/not-a-tenant/page.tsx",
   "app/not-found.tsx",
   "app/page.tsx",
   "app/proxy/page.tsx",
+  "app/rules/page.tsx",
+  "app/schedule/page.tsx",
+  "app/sessions/page.tsx",
   "app/settings/page.tsx",
   "components/card-policies.tsx",
   "components/connection-status.tsx",
   "components/conversation.tsx",
   "components/device-admin.tsx",
+  "components/journal.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
@@ -2049,14 +2184,9 @@ export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
  * markup would count as migration progress without any having happened.
  */
 export const UNMIGRATED_SOURCES = [
-  "app/journal/page.tsx",
-  "app/rules/page.tsx",
-  "app/schedule/page.tsx",
-  "app/sessions/page.tsx",
   "app/unknown-tenant/page.tsx",
   "components/device-console.tsx",
   "components/esim-panel.tsx",
-  "components/journal.tsx",
 ];
 
 /**

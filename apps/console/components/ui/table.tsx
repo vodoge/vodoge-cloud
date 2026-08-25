@@ -74,6 +74,8 @@ export function TableCell({
   mono,
   faint,
   secondary,
+  wrap,
+  nowrap,
   className,
   ...props
 }: React.TdHTMLAttributes<HTMLTableCellElement> & {
@@ -81,12 +83,33 @@ export function TableCell({
   faint?: boolean;
   /** Drops off the phone. Put it on the header cell of the same column too. */
   secondary?: boolean;
+  /**
+   * For a column with no upper bound on its width — an SMS body, a pasted
+   * name, a payload. It lets the cell be narrower than its longest unbroken
+   * run, which is the only thing that stops one long URL from making the whole
+   * table three times the width of the phone. See `TABLE.cellWrap`.
+   *
+   * Only on a column that dominates its row: it also lets the column be
+   * squeezed *to* nothing when its neighbours want the space.
+   */
+  wrap?: boolean;
+  /**
+   * For a cell holding one atomic reading — a name, a cadence, a timestamp.
+   *
+   * Needed rather than decorative on any label that might be Chinese: CJK
+   * breaks between any two characters, so a name's min-content width is one
+   * character and a crowded table will lay it out that way. See
+   * `TABLE.cellNowrap`.
+   */
+  nowrap?: boolean;
 }) {
   return (
     <td
       className={cn(
         tableCellClass({ mono, faint }),
         secondary ? TABLE.cellSecondary : undefined,
+        wrap ? TABLE.cellWrap : undefined,
+        nowrap ? TABLE.cellNowrap : undefined,
         className,
       )}
       {...props}

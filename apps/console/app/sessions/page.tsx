@@ -1,10 +1,37 @@
 import { LiveReload } from "@/components/live-reload";
-import { Card, EmptyState } from "@/components/ui";
+import { Card, CardEmpty } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import { fetchSessions, type SessionRow } from "@/lib/catalog";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
+import { PAGE } from "@/lib/tokens";
 
+/**
+ * Threads, one row per peer.
+ *
+ * Moved onto the design system. The fetch, the failure case, the empty case
+ * and the ordering are untouched: this page has no controls and writes
+ * nothing, so there was nothing to change but the way it looks.
+ *
+ * The message body is the one column here with no width limit — an SMS can be
+ * a paragraph of Chinese or a 120-character activation URL — so it carries
+ * `wrap`. `count` is `secondary` and leaves the phone: how many messages a
+ * thread holds is context, while who sent what and when is the question the
+ * row is being read for.
+ *
+ * `locale` is resolved on the server and used directly, never read from a
+ * cookie in an effect. This console has shipped that bug twice; it renders the
+ * server's HTML in the default language every time while looking correct in a
+ * browser, because hydration fixes it before anyone looks.
+ */
 export default async function SessionsPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
@@ -20,45 +47,45 @@ export default async function SessionsPage() {
   return (
     <>
       <LiveReload />
-      <div className="page-head">
+      <div className={PAGE.head}>
         <div>
-          <h1 className="page-title">{t("sessions.title", locale)}</h1>
-          <p className="page-desc">{t("sessions.desc", locale)}</p>
+          <h1 className={PAGE.title}>{t("sessions.title", locale)}</h1>
+          <p className={PAGE.description}>{t("sessions.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className="danger">{t("sessions.loadError", locale)}</p> : null}
+      {loadError ? <p className={PAGE.error}>{t("sessions.loadError", locale)}</p> : null}
 
-      <Card bodyless>
+      <Card>
         {sessions.length === 0 ? (
-          <EmptyState
+          <CardEmpty
             title={t("empty.sessions.title", locale)}
-            desc={t("empty.sessions.desc", locale)}
+            description={t("empty.sessions.desc", locale)}
           />
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("sessions.colPeer", locale)}</th>
-                  <th>{t("sessions.colCount", locale)}</th>
-                  <th>{t("sessions.colLastBody", locale)}</th>
-                  <th>{t("sessions.colLastReceived", locale)}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((row) => (
-                  <tr key={`${row.deviceId}:${row.peer}`}>
-                    <td className="mono">{row.peer}</td>
-                    <td className="mono">{row.count}</td>
-                    <td>{row.lastBody}</td>
-                    <td className="mono faint">
-                      {new Date(row.lastReceivedAt).toISOString().replace("T", " ").slice(0, 19)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHead>
+              <TableRow head>
+                <TableHeaderCell>{t("sessions.colPeer", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary>{t("sessions.colCount", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("sessions.colLastBody", locale)}</TableHeaderCell>
+                <TableHeaderCell>{t("sessions.colLastReceived", locale)}</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sessions.map((row) => (
+                <TableRow key={`${row.deviceId}:${row.peer}`}>
+                  <TableCell mono>{row.peer}</TableCell>
+                  <TableCell mono secondary>
+                    {row.count}
+                  </TableCell>
+                  <TableCell wrap>{row.lastBody}</TableCell>
+                  <TableCell mono faint>
+                    {new Date(row.lastReceivedAt).toISOString().replace("T", " ").slice(0, 19)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </Card>
     </>
