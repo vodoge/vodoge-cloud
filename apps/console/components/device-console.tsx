@@ -1,6 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ButtonRow } from "@/components/ui/button-row";
+import {
+  Card,
+  CardContent,
+  CardEmpty,
+  CardHeader,
+  CardNote,
+  CardPanel,
+  CardTitle,
+} from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Field, FormError, FormHint, InlineForm, Input, Select } from "@/components/ui/form";
+import { Output } from "@/components/ui/output";
 import {
   latestUssdExchange,
   ussdCancelRequest,
@@ -16,6 +31,15 @@ import {
 import { t, type Locale } from "@/lib/i18n";
 import { operatorName } from "@/lib/plmn";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
+import {
+  AT_COMMAND_GUARDS,
+  CARD,
+  LOG,
+  PAGE,
+  atCommandGuard,
+  deviceCommandGuard,
+  toneForCommandStatus,
+} from "@/lib/tokens";
 
 /**
  * One command's lifecycle as the console sees it.
@@ -57,6 +81,7 @@ type CommandRow = {
  */
 export type DeviceLabelKey =
   | "modem"
+  | "modemNote"
   | "noModems"
   | "noCommands"
   | "waiting"
@@ -64,8 +89,15 @@ export type DeviceLabelKey =
   | "run"
   | "send"
   | "cancel"
+  | "console"
+  | "consoleNote"
+  | "diagTitle"
+  | "diagNote"
   | "atCommand"
+  | "atNote"
+  | "atGuarded"
   | "ussdCode"
+  | "ussdNote"
   | "ussdSession"
   | "ussdSessionModem"
   | "ussdReply"
@@ -73,14 +105,20 @@ export type DeviceLabelKey =
   | "ussdExpired"
   | UssdStageLabelKey
   | "selectOperator"
+  | "networkTitle"
+  | "networkNote"
   | "pin"
   | "automatic"
   | "radioOn"
   | "dataOn"
+  | "danger"
+  | "dangerNote"
+  | "recovery"
+  | "recoveryNote"
+  | "logTitle"
+  | "logNote"
   | "usbnetMode"
   | "usbnetWarning"
-  | "confirmUsbnet"
-  | "confirmDisruptive"
   | "modem_report"
   | "list_esim_profiles"
   | "restart_modem"
@@ -120,6 +158,15 @@ const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknow
  * The grouping is the safety mechanism the page relies on: reading a signal
  * level and taking a modem off the network for two minutes should not be two
  * identical buttons side by side.
+ *
+ * 🔴 What the grouping is **not** any more: the thing that decides whether a
+ * confirmation appears. It used to be — `DISRUPTIVE.map` drew the buttons and
+ * put one shared `window.confirm` behind them — and that is exactly how the
+ * free-text AT box, manual PLMN selection and both USSD sends went out with
+ * nothing in front of them, because none of them is in this array. The
+ * decision now lives in `DEVICE_COMMAND_GUARDS`, keyed by what is being sent
+ * rather than by which loop drew the button, and this array only says which
+ * buttons live in the danger zone.
  */
 const READ_ONLY = ["modem_report", "list_esim_profiles"] as const;
 const DISRUPTIVE = [
@@ -136,9 +183,9 @@ const DISRUPTIVE = [
  * Disruptive actions whose button means "off".
  *
  * Both of these can take a working module off the air, and both have a plain
- * companion button below that turns them back on. Kept as data rather than a
- * condition inside the loop: the second one is where a ternary would have
- * quietly started turning the radio off for the wrong command.
+ * companion button in the recovery row that turns them back on. Kept as data
+ * rather than a condition inside the loop: the second one is where a ternary
+ * would have quietly started turning the radio off for the wrong command.
  */
 const TURNS_OFF: Record<string, Record<string, unknown>> = {
   set_radio: { enabled: false },
@@ -148,43 +195,38 @@ const TURNS_OFF: Record<string, Record<string, unknown>> = {
 /** What the module can be told to expose over USB. */
 const USBNET_MODES = ["rmnet", "ecm", "mbim", "rndis"] as const;
 
-export function DeviceConsole({
-  deviceId,
-  modems,
-  labels,
-  locale,
-}: {
-  deviceId: string;
-  modems: ModemRow[];
-  labels: Labels;
-  /**
-   * The locale of the request, resolved on the server.
-   *
-   * Almost everything drawn here arrives already translated in `labels`, which
-   * the page renders per request. The exception was the one sentence the page
-   * cannot render for this component, because it depends on something the
-   * server does not know: whether the session may write. That sentence was
-   * looked up against a `useState<Locale>(DEFAULT_LOCALE)` that only became
-   * the real locale inside an effect -- after hydration. The server runs no
-   * effects and has no such state, so the HTML it sent said the default
-   * language every time: an English request shipped `<html lang="en">` with a
-   * Chinese read-only notice inside it, and the browser quietly corrected it on
-   * mount. That is why it went unnoticed for so long. Reading the live DOM
-   * shows the corrected text; only fetching the response without executing
-   * JavaScript shows what was actually served.
-   *
-   * Taking the locale as a prop -- the same fix EsimPanel already carries
-   * (T066) -- is what removes it, because a prop exists before the first
-   * render. The permission still resolves after mount, and it has to: nothing
-   * on the server knows it. What changes is that the sentence it produces is
-   * now in the language that was asked for.
-   */
-  locale: Locale;
-}) {
-  const [imei, setImei] = useState(modems[0]?.imei ?? "");
+/** A command waiting for the operator to answer for it. */
+type Pending = {
+  readonly kind: string;
+  readonly extra: Record<string, unknown>;
+  /** The message key of the sentence that says what will happen. */
+  readonly consequence: string;
+  readonly title: string;
+};
+
+/** What a control does when it wants a command sent. */
+type Request = (kind: string, extra?: Record<string, unknown>) => void;
+
+/**
+ * The shared half of both panels on this page: the command relay itself.
+ *
+ * 🔴 **`request` is the only way a control may reach the gateway.** It asks
+ * `deviceCommandGuard` what stands in front of the command *with the payload
+ * it is about to be sent with* — which is what makes `set_radio {enabled:
+ * false}` a guarded command and `set_radio {enabled: true}` an unguarded one
+ * without either of them being a special case in a click handler.
+ *
+ * `runNow` performs the request and is deliberately not handed to anything
+ * that renders: `tokens.test.ts` asserts it appears in no `onClick`, no
+ * `onSubmit` and in no prop, because a dialog that is still *defined* while a
+ * button calls the write directly is the false green this board has been
+ * bitten by before (T004).
+ */
+function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   // "unknown" until the gateway has been asked, and the controls are drawn for
   // "write" only. Closed by default on purpose: this component is rendered on
   // the server before it can ask anything, and an account's controls appearing
@@ -193,7 +235,7 @@ export function DeviceConsole({
   // who does have the rights.
   const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
   // Polling stops once nothing is outstanding, so an idle page costs nothing.
-  const pending = commands.some((row) => !TERMINAL.has(row.status));
+  const outstanding = commands.some((row) => !TERMINAL.has(row.status));
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -238,12 +280,12 @@ export function DeviceConsole({
   }, [refresh]);
 
   useEffect(() => {
-    if (!pending) return;
+    if (!outstanding) return;
     const timer = setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
-  }, [pending, refresh]);
+  }, [outstanding, refresh]);
 
-  const issue = useCallback(
+  const runNow = useCallback(
     async (kind: string, extra: Record<string, unknown> = {}) => {
       setBusy(true);
       setError(null);
@@ -273,11 +315,182 @@ export function DeviceConsole({
     [deviceId, imei, labels.failed, refresh],
   );
 
-  const rescan = (
-    <button type="button" disabled={busy} onClick={() => void issue("refresh_modems")}>
-      {labels.refresh_modems}
-    </button>
+  const request = useCallback<Request>(
+    (kind, extra = {}) => {
+      const guard = deviceCommandGuard(kind, { modem_imei: imei, ...extra });
+      if (guard.consequence === null) {
+        void runNow(kind, extra);
+        return;
+      }
+      setPending({
+        kind,
+        extra,
+        consequence: guard.consequence,
+        title: confirmationTitle(labels, kind, extra, imei),
+      });
+    },
+    [imei, labels, runNow],
   );
+
+  const cancelPending = useCallback(() => setPending(null), []);
+  // Reads the action it is showing, and deliberately not from inside a state
+  // updater: React may run an updater twice, and this one sends a request.
+  const proceed = useCallback(() => {
+    if (!pending) return;
+    const { kind, extra } = pending;
+    setPending(null);
+    void runNow(kind, extra);
+  }, [pending, runNow]);
+
+  return { commands, busy, error, permission, pending, request, proceed, cancelPending };
+}
+
+/**
+ * What the dialog's heading names.
+ *
+ * The command in words plus the module it is aimed at, because every module on
+ * a device is addressed by IMEI here and "restart module" over the wrong one is
+ * the mistake this heading exists to catch. A typed AT command names itself:
+ * the text is the whole of what is about to happen.
+ */
+function confirmationTitle(
+  labels: Labels,
+  kind: string,
+  extra: Record<string, unknown>,
+  imei: string,
+): string {
+  const target = typeof extra.modem_imei === "string" ? extra.modem_imei : imei;
+  const what = kind === "run_at_command" ? String(extra.command ?? "") : commandLabel(labels, kind);
+  return target ? `${what} — ${target}` : what;
+}
+
+/** The dialog's own chrome, asked the same way everywhere. */
+function confirmLabels(locale: Locale) {
+  return {
+    question: t("confirm.question", locale),
+    proceed: t("confirm.proceed", locale),
+    cancel: t("confirm.cancel", locale),
+  };
+}
+
+/**
+ * The two read-only commands and the log they answer in.
+ *
+ * These were in the console panel, beside eleven controls that change
+ * something, and both of them only read: a diagnostic report and an ES10c
+ * profile listing. They belong with the host vitals and the radio readings,
+ * which is what the diagnostics tab is. T010 built that tab and left the seam
+ * because this file was not on its list.
+ *
+ * The command log is drawn on both tabs and that is not an oversight: it is
+ * where a command's *answer* appears, so a panel that can issue one without
+ * showing the log is a panel where pressing a button does nothing visible.
+ */
+export function DeviceDiagnostics({
+  deviceId,
+  modems,
+  labels,
+  locale,
+}: {
+  deviceId: string;
+  modems: ModemRow[];
+  labels: Labels;
+  locale: Locale;
+}) {
+  const [imei, setImei] = useState(modems[0]?.imei ?? "");
+  const { busy, commands, error, permission, pending, request, proceed, cancelPending } =
+    useDeviceCommands(deviceId, imei, labels);
+
+  return (
+    <>
+      <CardPanel title={labels.diagTitle} note={labels.diagNote}>
+        {permission !== "write" ? (
+          <FormHint>{t("role.readOnlyDevice", locale)}</FormHint>
+        ) : (
+          <div className={PAGE.section}>
+            <ModemPicker
+              modems={modems}
+              imei={imei}
+              onSelect={setImei}
+              labels={labels}
+              busy={busy}
+            />
+            <ButtonRow>
+              {READ_ONLY.map((kind) => (
+                <Button
+                  key={kind}
+                  variant="ghost"
+                  disabled={busy || modems.length === 0}
+                  onClick={() => request(kind)}
+                >
+                  {labels[kind]}
+                </Button>
+              ))}
+              {/* Reachable with no modules listed on purpose: "nothing is
+                  listed" is the situation this button exists for. */}
+              <Button variant="ghost" disabled={busy} onClick={() => request("refresh_modems")}>
+                {labels.refresh_modems}
+              </Button>
+            </ButtonRow>
+            {error ? <FormError>{error}</FormError> : null}
+          </div>
+        )}
+      </CardPanel>
+
+      <CommandLogCard commands={commands} labels={labels} />
+
+      {pending ? (
+        <ConfirmDialog
+          open
+          title={pending.title}
+          consequence={t(pending.consequence, locale)}
+          labels={confirmLabels(locale)}
+          busy={busy}
+          onConfirm={proceed}
+          onCancel={cancelPending}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function DeviceConsole({
+  deviceId,
+  modems,
+  labels,
+  locale,
+}: {
+  deviceId: string;
+  modems: ModemRow[];
+  labels: Labels;
+  /**
+   * The locale of the request, resolved on the server.
+   *
+   * Almost everything drawn here arrives already translated in `labels`, which
+   * the page renders per request. The exceptions are the sentences the page
+   * cannot render for this component, because they depend on something the
+   * server does not know: whether the session may write, and which
+   * confirmation a control is about to show. Those were looked up against a
+   * `useState<Locale>(DEFAULT_LOCALE)` that only became the real locale inside
+   * an effect -- after hydration. The server runs no effects and has no such
+   * state, so the HTML it sent said the default language every time: an
+   * English request shipped `<html lang="en">` with a Chinese read-only notice
+   * inside it, and the browser quietly corrected it on mount. That is why it
+   * went unnoticed for so long. Reading the live DOM shows the corrected text;
+   * only fetching the response without executing JavaScript shows what was
+   * actually served.
+   *
+   * Taking the locale as a prop -- the same fix EsimPanel already carries
+   * (T066) -- is what removes it, because a prop exists before the first
+   * render. The permission still resolves after mount, and it has to: nothing
+   * on the server knows it. What changes is that the sentence it produces is
+   * now in the language that was asked for.
+   */
+  locale: Locale;
+}) {
+  const [imei, setImei] = useState(modems[0]?.imei ?? "");
+  const { busy, commands, error, permission, pending, request, proceed, cancelPending } =
+    useDeviceCommands(deviceId, imei, labels);
 
   // Every control in this component issues POST /v1/commands, which the
   // gateway refuses for a read-only session, so there is nothing here for one
@@ -285,10 +498,12 @@ export function DeviceConsole({
   // such an account is for. The log stays.
   if (permission !== "write") {
     return (
-      <div className="stack">
-        {permission === "read" ? <p className="faint">{t("role.readOnlyDevice", locale)}</p> : null}
-        <CommandLog commands={commands} labels={labels} />
-      </div>
+      <>
+        <CardPanel title={labels.console} note={labels.consoleNote}>
+          {permission === "read" ? <FormHint>{t("role.readOnlyDevice", locale)}</FormHint> : null}
+        </CardPanel>
+        <CommandLogCard commands={commands} labels={labels} />
+      </>
     );
   }
 
@@ -298,120 +513,174 @@ export function DeviceConsole({
     // device that already has a modem would put it everywhere except where
     // someone is looking for it.
     return (
-      <div className="stack">
-        <p className="faint">{labels.noModems}</p>
-        <div className="button-row">{rescan}</div>
-        {error ? <p className="error">{error}</p> : null}
-        <CommandLog commands={commands} labels={labels} />
-      </div>
+      <>
+        <CardPanel title={labels.console} note={labels.consoleNote}>
+          <div className={PAGE.section}>
+            <CardEmpty title={labels.noModems} />
+            <ButtonRow>
+              <Button variant="ghost" disabled={busy} onClick={() => request("refresh_modems")}>
+                {labels.refresh_modems}
+              </Button>
+            </ButtonRow>
+            {error ? <FormError>{error}</FormError> : null}
+          </div>
+        </CardPanel>
+        <CommandLogCard commands={commands} labels={labels} />
+      </>
     );
   }
 
   return (
-    <div className="stack">
-      <label className="field">
-        <span>{labels.modem}</span>
-        <select value={imei} onChange={(event) => setImei(event.target.value)}>
+    <>
+      <CardPanel title={labels.console} note={labels.consoleNote}>
+        <ModemPicker modems={modems} imei={imei} onSelect={setImei} labels={labels} busy={busy} />
+      </CardPanel>
+
+      <AtConsole busy={busy} labels={labels} locale={locale} onRun={request} />
+
+      <CardPanel title={labels.send_ussd} note={labels.ussdNote}>
+        <UssdConsole
+          busy={busy}
+          labels={labels}
+          commands={commands}
+          selectedImei={imei}
+          onRun={request}
+        />
+      </CardPanel>
+
+      <CardPanel title={labels.networkTitle} note={labels.networkNote}>
+        <div className={PAGE.section}>
+          <OperatorControls busy={busy} labels={labels} onRun={request} />
+          <UsbnetControls busy={busy} labels={labels} onRun={request} />
+        </div>
+      </CardPanel>
+
+      <DangerZone busy={busy} labels={labels} onRun={request} />
+
+      {error ? <FormError>{error}</FormError> : null}
+
+      <CommandLogCard commands={commands} labels={labels} />
+
+      {pending ? (
+        <ConfirmDialog
+          open
+          title={pending.title}
+          consequence={t(pending.consequence, locale)}
+          labels={confirmLabels(locale)}
+          busy={busy}
+          onConfirm={proceed}
+          onCancel={cancelPending}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** Which module everything below is aimed at. */
+function ModemPicker({
+  modems,
+  imei,
+  onSelect,
+  labels,
+  busy,
+}: {
+  modems: ModemRow[];
+  imei: string;
+  onSelect: (value: string) => void;
+  labels: Labels;
+  busy: boolean;
+}) {
+  return (
+    <>
+      <Field label={labels.modem}>
+        <Select
+          value={imei}
+          disabled={busy || modems.length === 0}
+          onChange={(event) => onSelect(event.target.value)}
+        >
           {modems.map((modem) => (
             <option key={modem.imei} value={modem.imei}>
               {modem.imei}
               {modem.homePlmn ? ` — ${operatorName(modem.homePlmn)}` : ""}
             </option>
           ))}
-        </select>
-      </label>
-
-      <div className="button-row">
-        {READ_ONLY.map((kind) => (
-          <button key={kind} type="button" disabled={busy} onClick={() => void issue(kind)}>
-            {labels[kind]}
-          </button>
-        ))}
-        {rescan}
-      </div>
-
-      <AtConsole busy={busy} labels={labels} onRun={issue} />
-      <UssdConsole
-        busy={busy}
-        labels={labels}
-        commands={commands}
-        selectedImei={imei}
-        onRun={issue}
-      />
-      <OperatorControls busy={busy} labels={labels} onRun={issue} />
-      <UsbnetControls busy={busy} labels={labels} onRun={issue} />
-
-      <div className="button-row">
-        {DISRUPTIVE.map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            className="risk"
-            disabled={busy}
-            onClick={() => {
-              // These take the module off the network. The confirmation is
-              // deliberate friction, not decoration.
-              if (!window.confirm(labels.confirmDisruptive)) return;
-              void issue(kind, TURNS_OFF[kind] ?? {});
-            }}
-          >
-            {labels[kind]}
-          </button>
-        ))}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void issue("set_radio", { enabled: true })}
-        >
-          {labels.radioOn}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void issue("set_data_network", { enabled: true })}
-        >
-          {labels.dataOn}
-        </button>
-      </div>
-
-      {error ? <p className="error">{error}</p> : null}
-
-      <CommandLog commands={commands} labels={labels} />
-    </div>
+        </Select>
+      </Field>
+      <FormHint>{labels.modemNote}</FormHint>
+    </>
   );
 }
 
+/**
+ * The free-text AT box, which had no guard at all.
+ *
+ * 🔴 This is the hole T030 found and T021's twenty-three-row survey of
+ * dangerous actions had no row for. The only thing between an operator and the
+ * module was `command.trim().length < 2`, so `AT+CFUN=0` and `AT+CFUN=4` went
+ * out **without the confirmation the seven danger-zone buttons have** — and
+ * `AT+CFUN=1,1` is how the vowifi board's T078 watched a module get stranded
+ * at `+CFUN: 7`, on hardware nobody can reach to power-cycle.
+ *
+ * The guarded shapes are listed under the box rather than only inside the
+ * dialog, and they are rendered from `AT_COMMAND_GUARDS` rather than typed out:
+ * a guard added to the table with no copy on screen would be invisible until
+ * the dialog it opens is already too late to be a warning. That is the edge
+ * panel's arrangement, copied deliberately — this is the cloud half of the
+ * `guardFor(command)` it has had since T004.
+ *
+ * And when the box *does* hold a guarded command, the consequence is shown
+ * before the button rather than only after it is pressed.
+ */
 function AtConsole({
   busy,
   labels,
+  locale,
   onRun,
 }: {
   busy: boolean;
   labels: Labels;
-  onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
+  locale: Locale;
+  onRun: Request;
 }) {
   const [command, setCommand] = useState("AT+CSQ");
+  const tripped = atCommandGuard(command);
   return (
-    <form
-      className="inline-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void onRun("run_at_command", { command });
-      }}
-    >
-      <label className="field grow">
-        <span>{labels.atCommand}</span>
-        <input
-          value={command}
-          onChange={(event) => setCommand(event.target.value)}
-          spellCheck={false}
-          autoComplete="off"
-        />
-      </label>
-      <button type="submit" disabled={busy || command.trim().length < 2}>
-        {labels.run}
-      </button>
-    </form>
+    <CardPanel title={labels.atCommand} note={labels.atNote}>
+      <div className={PAGE.section}>
+        <InlineForm
+          onSubmit={(event) => {
+            event.preventDefault();
+            onRun("run_at_command", { command });
+          }}
+        >
+          <Field label={labels.atCommand} inline>
+            <Input
+              value={command}
+              onChange={(event) => setCommand(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </Field>
+          <Button
+            type="submit"
+            variant={tripped ? "risk" : "primary"}
+            disabled={busy || command.trim().length < 2}
+          >
+            {labels.run}
+          </Button>
+        </InlineForm>
+
+        {tripped ? (
+          <FormError>
+            <Badge tone="bad">{tripped.label}</Badge> {t(tripped.consequence, locale)}
+          </FormError>
+        ) : (
+          <FormHint>
+            {labels.atGuarded}: {AT_COMMAND_GUARDS.map((guard) => guard.label).join(" · ")}
+          </FormHint>
+        )}
+      </div>
+    </CardPanel>
   );
 }
 
@@ -431,6 +700,13 @@ function AtConsole({
  * opened it — deliberately not by the selector above, which is whatever the
  * operator last clicked. Sending "2" to a module with no session open does not
  * fail; it dials 2 as a USSD code of its own.
+ *
+ * 🔴 Both sends are guarded now and neither was before (T030). A service code
+ * can be billed and can change the subscription — call forwarding is a USSD
+ * menu — and a menu reply is the choice itself rather than a page turn.
+ * Cancelling is left unguarded on purpose: it closes a session somebody
+ * already opened, and a question in front of the way out is how a dialog
+ * becomes something operators dismiss without reading.
  */
 function UssdConsole({
   busy,
@@ -443,7 +719,7 @@ function UssdConsole({
   labels: Labels;
   commands: CommandRow[];
   selectedImei: string;
-  onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
+  onRun: Request;
 }) {
   const [code, setCode] = useState("");
   const [reply, setReply] = useState("");
@@ -475,67 +751,74 @@ function UssdConsole({
 
   const result = exchange?.result ?? null;
 
-  const send = (request: UssdRequest | null) => {
-    if (!request) return;
-    void onRun("send_ussd", request);
+  // Named `body` rather than `request`, which is what the dispatcher is called
+  // everywhere else in this file: two different things under one name is how a
+  // check that reads call sites — and a reader — gets the wrong one.
+  const send = (body: UssdRequest | null) => {
+    if (!body) return;
+    onRun("send_ussd", body);
   };
 
   return (
-    <div className="stack">
-      <form
-        className="inline-form"
+    <div className={PAGE.section}>
+      <InlineForm
         onSubmit={(event) => {
           event.preventDefault();
           send(ussdStartRequest(selectedImei, code));
         }}
       >
-        <label className="field grow">
-          <span>{labels.ussdCode}</span>
-          <input
+        <Field label={labels.ussdCode} inline>
+          <Input
             value={code}
             onChange={(event) => setCode(event.target.value)}
             placeholder="*101#"
             spellCheck={false}
             autoComplete="off"
           />
-        </label>
-        <button type="submit" disabled={busy || code.trim() === ""}>
+        </Field>
+        <Button type="submit" variant="risk" disabled={busy || code.trim() === ""}>
           {labels.send}
-        </button>
-        <button
-          type="button"
+        </Button>
+        {/* The way out of a session, not a way into one. Plain on purpose. */}
+        <Button
+          variant="ghost"
           disabled={busy}
           onClick={() => send(ussdCancelRequest(exchange, selectedImei))}
         >
           {labels.cancel}
-        </button>
-      </form>
+        </Button>
+      </InlineForm>
 
       {result ? (
-        <div className="stack">
-          <p className="faint">{labels.ussdSession}</p>
+        <div className={PAGE.section}>
+          <FormHint>{labels.ussdSession}</FormHint>
           {/* The stage in words. Four of the seven mean "no answer" for four
               different reasons, and the raw result carries an empty `text` for
               all of them — which is what the one production run looked like:
               a JSON blob reading network_timeout, "" and 30232 ms. */}
-          <p className={result.expectsReply ? undefined : "faint"}>
-            {labels[ussdStageLabelKey(result.stage)]}
-            {ussdStageLabelKey(result.stage) === "ussdStageOther" ? (
-              <span className="mono faint"> {result.stage}</span>
-            ) : null}
-          </p>
-          {result.text ? <pre className="output">{result.text}</pre> : null}
+          {result.expectsReply ? (
+            <FormHint>{labels[ussdStageLabelKey(result.stage)]}</FormHint>
+          ) : (
+            <p className={PAGE.note}>
+              {labels[ussdStageLabelKey(result.stage)]}
+              {ussdStageLabelKey(result.stage) === "ussdStageOther" ? (
+                <span className={PAGE.mono}> {result.stage}</span>
+              ) : null}
+            </p>
+          )}
+          {result.text ? <Output>{result.text}</Output> : null}
 
           {session === "open" ? (
-            <form
-              className="inline-form"
+            <InlineForm
               onSubmit={(event) => {
                 event.preventDefault();
                 // Checked again here rather than trusting the render that drew
                 // the button: the guard is a deadline, and nothing re-renders
                 // the instant it passes.
                 const at = Date.now();
-                if (ussdSessionState(exchange, ussdSessionAgeMs(exchange, observedAt, at)) !== "open") {
+                if (
+                  ussdSessionState(exchange, ussdSessionAgeMs(exchange, observedAt, at)) !== "open"
+                ) {
                   setNow(at);
                   return;
                 }
@@ -543,39 +826,49 @@ function UssdConsole({
                 setReply("");
               }}
             >
-              <label className="field grow">
-                <span>{labels.ussdReply}</span>
-                <input
+              <Field label={labels.ussdReply} inline>
+                <Input
                   value={reply}
                   onChange={(event) => setReply(event.target.value)}
                   placeholder="1"
                   spellCheck={false}
                   autoComplete="off"
                 />
-              </label>
-              <button type="submit" disabled={busy || reply.trim() === ""}>
+              </Field>
+              <Button type="submit" variant="risk" disabled={busy || reply.trim() === ""}>
                 {labels.ussdContinue}
-              </button>
+              </Button>
               {/* Which module the reply goes to, because it is not necessarily
                   the one selected above and an operator has no other way to
                   tell. */}
-              <span className="faint mono">
+              <span className={PAGE.mono}>
                 {labels.ussdSessionModem} {exchange?.modemImei}
               </span>
-            </form>
+            </InlineForm>
           ) : null}
 
           {/* A session that has aged out is the failure worth naming. Left
               silent, the reply box would simply stop being there, and the
               obvious next move — retyping "1" into the code box above — sends
               the menu item to the carrier as a service code. */}
-          {session === "expired" ? <p className="error">{labels.ussdExpired}</p> : null}
+          {session === "expired" ? <FormError>{labels.ussdExpired}</FormError> : null}
         </div>
       ) : null}
     </div>
   );
 }
 
+/**
+ * Which operator the module is on.
+ *
+ * 🔴 Manual selection had no guard (T030), and it is the one control here that
+ * can leave a module looking healthy and reachable by nobody: pinned to a PLMN
+ * that is not on the air, it searches for ever and the fleet page shows
+ * "searching". The way back — automatic — is deliberately *not* guarded, for
+ * the same reason the edge panel does not guard `AT+COPS=0`: a question in
+ * front of the recovery teaches the reflex that defeats the question in front
+ * of the hazard.
+ */
 function OperatorControls({
   busy,
   labels,
@@ -583,48 +876,66 @@ function OperatorControls({
 }: {
   busy: boolean;
   labels: Labels;
-  onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
+  onRun: Request;
 }) {
   const [plmn, setPlmn] = useState("");
   return (
-    <form
-      className="inline-form"
+    <InlineForm
       onSubmit={(event) => {
         event.preventDefault();
-        void onRun("select_operator", { mode: "manual", plmn });
+        onRun("select_operator", { mode: "manual", plmn });
       }}
     >
-      <label className="field grow">
-        <span>{labels.selectOperator}</span>
-        <input
+      <Field label={labels.selectOperator} inline>
+        <Input
           value={plmn}
           onChange={(event) => setPlmn(event.target.value)}
           placeholder="460-01"
           spellCheck={false}
           autoComplete="off"
         />
-      </label>
-      <button type="submit" disabled={busy || !/^[0-9]{3}-[0-9]{2,3}$/.test(plmn)}>
+      </Field>
+      <Button
+        type="submit"
+        variant="risk"
+        disabled={busy || !/^[0-9]{3}-[0-9]{2,3}$/.test(plmn)}
+      >
         {labels.pin}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="ghost"
         disabled={busy}
-        onClick={() => void onRun("select_operator", { mode: "automatic" })}
+        onClick={() => onRun("select_operator", { mode: "automatic" })}
       >
         {labels.automatic}
-      </button>
-    </form>
+      </Button>
+    </InlineForm>
   );
 }
 
 /**
  * Which USB function the module exposes.
  *
- * Deliberately not one of the disruptive buttons above. Those take a module
+ * Deliberately not one of the danger-zone buttons above. Those take a module
  * off the air and leave it in the list; this one takes it out of the list
- * altogether, because the port the fleet is indexed by stops existing. That
- * is not something a generic "are you sure" describes.
+ * altogether, because the port the fleet is indexed by stops existing.
+ *
+ * 🔴 Two defects were fixed here, and both were the same mistake in different
+ * clothes: **a guard that only sometimes applies**.
+ *
+ * - The confirmation was conditional on the mode not being rmnet, so the one
+ *   switch that re-enumerates the module every time asked nothing three
+ *   quarters of the time it was pressed. Both cases are confirmed now, with
+ *   different consequences: rmnet keeps the QMI port and the module finds its
+ *   own way back, and saying so is what stops the other dialog reading like
+ *   boilerplate.
+ * - The red was conditional in the same way **and never rendered at all**.
+ *   `className="risk"` is declared in the stylesheet only as
+ *   `.button-row button.risk` and `.row-actions button.risk`, and this button
+ *   sits in an `<form className="inline-form">` — so the warning colour on the
+ *   control that takes a module out of the device list has never once been
+ *   drawn. `variant="risk"` needs no ancestor; it was measured at 390px after
+ *   the change, and it paints.
  */
 function UsbnetControls({
   busy,
@@ -633,60 +944,129 @@ function UsbnetControls({
 }: {
   busy: boolean;
   labels: Labels;
-  onRun: (kind: string, extra: Record<string, unknown>) => Promise<void>;
+  onRun: Request;
 }) {
   const [mode, setMode] = useState<string>("rmnet");
-  // rmnet is the QMI mode this agent speaks. Any other choice re-enumerates
-  // the module on the spot — not at its next restart — and it drops out of
-  // the device list until this same control puts it back, which the agent
-  // can do because it falls back to finding the module over its AT port.
-  const strands = mode !== "rmnet";
   return (
-    <form
-      className="inline-form"
+    <InlineForm
       onSubmit={(event) => {
         event.preventDefault();
-        if (strands && !window.confirm(labels.confirmUsbnet)) return;
-        void onRun("set_usbnet_mode", { usbnet_mode: mode });
+        onRun("set_usbnet_mode", { usbnet_mode: mode });
       }}
     >
-      <label className="field grow">
-        <span>{labels.usbnetMode}</span>
-        <select value={mode} onChange={(event) => setMode(event.target.value)}>
+      <Field label={labels.usbnetMode} inline>
+        <Select value={mode} onChange={(event) => setMode(event.target.value)}>
           {USBNET_MODES.map((option) => (
             <option key={option} value={option}>
               {option}
             </option>
           ))}
-        </select>
-      </label>
-      <button type="submit" className={strands ? "risk" : undefined} disabled={busy}>
+        </Select>
+      </Field>
+      <Button type="submit" variant="risk" disabled={busy}>
         {labels.run}
-      </button>
-      {strands ? <p className="error">{labels.usbnetWarning}</p> : null}
-    </form>
+      </Button>
+      {/* The long form of the same warning, on screen before the dialog. rmnet
+          is the mode this agent speaks, so the sentence is about the others. */}
+      {mode === "rmnet" ? null : <FormError>{labels.usbnetWarning}</FormError>}
+    </InlineForm>
   );
 }
 
-function CommandLog({ commands, labels }: { commands: CommandRow[]; labels: Labels }) {
+/**
+ * The danger zone.
+ *
+ * 🔴 A red border was the obvious way to draw this box and it would not have
+ * rendered: `CARD.root` asks for a border width and computes to `none 0px` on
+ * this build, which is `BORDER_WIDTH_WITHOUT_A_STYLE` and is precisely the
+ * defect this card was sent here to fix elsewhere in this file. So the zone is
+ * a wash behind its header and a red heading, both of which are properties the
+ * build really sets, and it was measured rather than assumed.
+ *
+ * The way back is in the same card and it is a separate row. It used to be two
+ * plain buttons sitting *inside* the row of seven red ones, which is the
+ * arrangement the card's own brief calls out: a dangerous action and its undo
+ * should not look like eight peers.
+ */
+function DangerZone({
+  busy,
+  labels,
+  onRun,
+}: {
+  busy: boolean;
+  labels: Labels;
+  onRun: Request;
+}) {
+  return (
+    <Card>
+      <CardHeader className={CARD.dangerHeader}>
+        <CardTitle className={CARD.dangerTitle}>{labels.danger}</CardTitle>
+        <CardNote>{labels.dangerNote}</CardNote>
+      </CardHeader>
+      <CardContent>
+        <div className={PAGE.section}>
+          <ButtonRow>
+            {DISRUPTIVE.map((kind) => (
+              <Button
+                key={kind}
+                variant="risk"
+                disabled={busy}
+                onClick={() => onRun(kind, TURNS_OFF[kind] ?? {})}
+              >
+                {labels[kind]}
+              </Button>
+            ))}
+          </ButtonRow>
+
+          <p className={PAGE.sectionTitle}>{labels.recovery}</p>
+          <ButtonRow>
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => onRun("set_radio", { enabled: true })}
+            >
+              {labels.radioOn}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => onRun("set_data_network", { enabled: true })}
+            >
+              {labels.dataOn}
+            </Button>
+          </ButtonRow>
+          <FormHint>{labels.recoveryNote}</FormHint>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CommandLogCard({ commands, labels }: { commands: CommandRow[]; labels: Labels }) {
   if (commands.length === 0) {
-    return <p className="faint">{labels.noCommands}</p>;
+    return (
+      <CardPanel title={labels.logTitle} note={labels.logNote} bodyless>
+        <CardEmpty title={labels.noCommands} />
+      </CardPanel>
+    );
   }
   return (
-    <ol className="command-log">
-      {commands.map((row) => (
-        <li key={row.id}>
-          <div className="command-head">
-            <span className="mono">{commandLabel(labels, row.kind)}</span>
-            <StatusPill status={row.status} />
-            <span className="faint mono">
-              {new Date(row.issued_at).toISOString().replace("T", " ").slice(11, 19)}
-            </span>
-          </div>
-          <CommandOutcome row={row} labels={labels} />
-        </li>
-      ))}
-    </ol>
+    <CardPanel title={labels.logTitle} note={labels.logNote}>
+      <ol className={LOG.list}>
+        {commands.map((row) => (
+          <li key={row.id} className={LOG.entry}>
+            <div className={LOG.head}>
+              <span className={PAGE.mono}>{commandLabel(labels, row.kind)}</span>
+              <Badge tone={toneForCommandStatus(row.status)}>{row.status}</Badge>
+              <span className={PAGE.faint}>
+                {new Date(row.issued_at).toISOString().replace("T", " ").slice(11, 19)}
+              </span>
+            </div>
+            <CommandOutcome row={row} labels={labels} />
+          </li>
+        ))}
+      </ol>
+    </CardPanel>
   );
 }
 
@@ -699,25 +1079,15 @@ function CommandLog({ commands, labels }: { commands: CommandRow[]; labels: Labe
  */
 function CommandOutcome({ row, labels }: { row: CommandRow; labels: Labels }) {
   if (!row.result) {
-    return TERMINAL.has(row.status) ? null : <p className="faint">{labels.waiting}</p>;
+    return TERMINAL.has(row.status) ? null : <FormHint>{labels.waiting}</FormHint>;
   }
   const reason = row.result.reason ?? row.result.reason_code;
   return (
     <>
-      {reason ? <p className="error">{reason}</p> : null}
+      {reason ? <FormError>{reason}</FormError> : null}
       {row.result.details !== undefined && row.result.details !== null ? (
-        <pre className="output">{JSON.stringify(row.result.details, null, 2)}</pre>
+        <Output>{JSON.stringify(row.result.details, null, 2)}</Output>
       ) : null}
     </>
   );
-}
-
-function StatusPill({ status }: { status: string }) {
-  const tone =
-    status === "succeeded"
-      ? "badge-ok"
-      : status === "failed" || status === "expired"
-        ? "badge-bad"
-        : "badge-warn";
-  return <span className={`badge ${tone}`}>{status}</span>;
 }

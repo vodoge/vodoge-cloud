@@ -2,6 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ButtonRow, RowActions } from "@/components/ui/button-row";
+import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Field, FormError, FormHint, Input, Select } from "@/components/ui/form";
+import {
+  SpecRow,
+  SpecTable,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/table";
 import {
   esimProfileRowsFromReads,
   esimReadFailures,
@@ -19,6 +35,13 @@ import {
   type RetrievedNotification,
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
+import {
+  PAGE,
+  TABLE,
+  deviceCommandGuard,
+  esimSwitchVerdict,
+  toneForProfileState,
+} from "@/lib/tokens";
 
 /**
  * One relayed command, as `GET /v1/commands` reports it.
@@ -33,6 +56,14 @@ type CommandRow = EsimCommandRow & { id: string };
 
 const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknown"]);
 
+/** A command waiting for the operator to answer for it. */
+type Pending = {
+  readonly consequence: string;
+  readonly title: string;
+  readonly confirmLabel: string;
+  readonly run: () => void;
+};
+
 /**
  * What each eUICC holds, and switching between profiles.
  *
@@ -46,6 +77,19 @@ const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknow
  * projection would need a table, a writer and a migration to show something
  * that is already in the command log and is only ever looked at right after
  * the button that produced it.
+ *
+ * ## What T011 changed
+ *
+ * - **One module picker instead of a button per module.** Four controls times
+ *   three sticks was twelve buttons before a single profile row was drawn, and
+ *   the page survey counted forty-four on this page for that reason. The
+ *   request is byte-identical: `modem_imei` is still on every body, it is just
+ *   named by a `<select>` rather than by which of three identical buttons was
+ *   pressed.
+ * - **The switch is never reported as done because the command said so.** See
+ *   `esimSwitchVerdict`.
+ * - **Four cards, one per section.** The panel used to be one card holding
+ *   four `<h4>`s and eight tables.
  */
 export function EsimPanel({
   deviceId,
@@ -85,6 +129,8 @@ export function EsimPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commands, setCommands] = useState<CommandRow[]>([]);
+  const [imei, setImei] = useState(modems[0]?.imei ?? "");
+  const [pending, setPending] = useState<Pending | null>(null);
   // Held only until the request goes out. An activation code is a one-time
   // credential, so it lives in this component and nowhere else -- not in the
   // URL, not in a form that survives a reload, and not in the command result
@@ -92,7 +138,7 @@ export function EsimPanel({
   const [activationCode, setActivationCode] = useState("");
   const [confirmationCode, setConfirmationCode] = useState("");
 
-  const pending = commands.some(
+  const reading = commands.some(
     (row) => isEsimRead(row.kind) && !TERMINAL.has(row.status),
   );
   // Tracked separately from the chip reads. An ES9+ round trip runs for a
@@ -122,27 +168,72 @@ export function EsimPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!pending && !authPending && !downloadPending) return;
+    if (!reading && !authPending && !downloadPending) return;
     const timer = setInterval(() => void refresh(), 2000);
     return () => clearInterval(timer);
-  }, [pending, authPending, downloadPending, refresh]);
+  }, [reading, authPending, downloadPending, refresh]);
 
-  async function issue(kind: string, extra: Record<string, unknown>) {
-    setBusy(true);
-    setError(null);
-    const response = await fetch("/v1/commands", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ device_id: deviceId, kind, ...extra }),
-    });
-    setBusy(false);
-    if (!response.ok) {
-      setError((await response.text()).trim() || "failed");
-      return;
-    }
-    await refresh();
-    router.refresh();
-  }
+  /**
+   * The request itself, and the only function in this file that performs one.
+   *
+   * Deliberately not reachable from a click: `request` below is what a control
+   * calls, and `tokens.test.ts` asserts `runNow` appears in no handler and in
+   * no prop. A confirmation that is still *defined* while a button calls the
+   * write directly is the false green this board has been bitten by (T004).
+   */
+  const runNow = useCallback(
+    async (kind: string, extra: Record<string, unknown>) => {
+      setBusy(true);
+      setError(null);
+      const response = await fetch("/v1/commands", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId, kind, ...extra }),
+      });
+      setBusy(false);
+      if (!response.ok) {
+        setError((await response.text()).trim() || t("device.failed", locale));
+        return;
+      }
+      await refresh();
+      router.refresh();
+    },
+    [deviceId, locale, refresh, router],
+  );
+
+  /**
+   * What every control here calls.
+   *
+   * The decision is `DEVICE_COMMAND_GUARDS`, shared with the console panel, so
+   * "which of these commands asks first" is one table that a test can read
+   * rather than eleven click handlers that it cannot.
+   */
+  const request = useCallback(
+    (kind: string, extra: Record<string, unknown>, title: string, confirmLabel: string) => {
+      const guard = deviceCommandGuard(kind, extra);
+      if (guard.consequence === null) {
+        void runNow(kind, extra);
+        return;
+      }
+      setPending({
+        consequence: t(guard.consequence, locale),
+        title,
+        confirmLabel,
+        run: () => void runNow(kind, extra),
+      });
+    },
+    [locale, runNow],
+  );
+
+  const cancelPending = useCallback(() => setPending(null), []);
+  // Reads the action it is showing rather than running inside a state updater:
+  // React may run an updater twice, and this one sends a request.
+  const proceed = useCallback(() => {
+    if (!pending) return;
+    const { run } = pending;
+    setPending(null);
+    run();
+  }, [pending]);
 
   // The durable inventory and the last chip reading, as one table. Today the
   // inventory half is always empty -- nothing emits `EsimInventory` yet -- so
@@ -169,348 +260,481 @@ export function EsimPanel({
   );
   const downloads = latestDownloads(commands);
   const failedDownload = newestFailureAfterSuccess(commands, "download_esim_profile");
+  const verdict = esimSwitchVerdict(commands, inventory);
 
   return (
-    <div className="stack">
-      <div className="button-row">
-        {modems.map((modem) => (
-          <button
-            key={modem.imei}
-            type="button"
-            disabled={busy}
-            onClick={() => void issue("list_esim_profiles", { modem_imei: modem.imei })}
+    <>
+      <Card title={t("esim.modem", locale)} note={t("esim.note", locale)}>
+        <Field label={t("esim.modem", locale)}>
+          <Select
+            value={imei}
+            disabled={busy || modems.length === 0}
+            onChange={(event) => setImei(event.target.value)}
           >
-            {t("esim.refresh", locale)} — {modem.imei}
-          </button>
-        ))}
-      </div>
+            {modems.map((modem) => (
+              <option key={modem.imei} value={modem.imei}>
+                {modem.imei}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {error ? <FormError>{error}</FormError> : null}
+      </Card>
 
-      {error ? <p className="error">{error}</p> : null}
-
-      {/* Not a fault and not a failed read: a plain SIM in a slot the page
-          offered an eSIM button for. Kept apart from the error banner below
-          so a module that never had a chip stops looking like a broken one. */}
-      {readFailures
-        .filter((failure) => failure.cause === "no-euicc")
-        .map((failure) => (
-          <p key={`no-euicc-${failure.modemImei}`} className="faint">
-            {t("esim.notEuicc", locale, { imei: failure.modemImei })}{" "}
-            <span className="mono">{failure.reason}</span>
-          </p>
-        ))}
-      {readFailures
-        .filter((failure) => failure.cause === "read-failed")
-        .map((failure) => (
-          <p key={`read-failed-${failure.modemImei}`} className="error">
-            {t("esim.chipReadFailed", locale, { imei: failure.modemImei })}:{" "}
-            <span className="mono">{failure.reason}</span>
-          </p>
-        ))}
-
-      {/* A card with no profiles and a card that refused to list them both
-          answer with an empty array. The edge says which; without this the
-          page would show the refusal as an empty chip. */}
-      {listings
-        .filter((listing) => listing.profilesError)
-        .map((listing) => (
-          <p key={`profiles-error-${listing.modemImei}`} className="error">
-            {t("esim.profilesError", locale, { imei: listing.modemImei })}:{" "}
-            <span className="mono">{listing.profilesError}</span>
-          </p>
-        ))}
-
-      {inventory.length === 0 ? (
-        <p className="faint">{t("esim.none", locale)}</p>
-      ) : (
-        [...byEid.entries()].map(([eid, rows]) => (
-          <section key={eid} className="stack">
-            <h4 className="section-title mono">
-              {t("esim.colEid", locale)} {eid}
-            </h4>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("esim.colIccid", locale)}</th>
-                    <th>{t("esim.colNickname", locale)}</th>
-                    <th>{t("esim.colState", locale)}</th>
-                    <th>{t("esim.colCollected", locale)}</th>
-                    <th>{t("esim.colSource", locale)}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((profile) => (
-                    <tr key={profile.iccid}>
-                      <td className="mono">{profile.iccid}</td>
-                      <td>{profile.nickname ?? <span className="faint">—</span>}</td>
-                      <td>
-                        <StateBadge state={profile.state} />
-                      </td>
-                      <td className="mono faint">
-                        {new Date(profile.collectedAt)
-                          .toISOString()
-                          .replace("T", " ")
-                          .slice(0, 16)}
-                      </td>
-                      <td className="faint">
-                        {t(
-                          profile.source === "inventory"
-                            ? "esim.sourceInventory"
-                            : "esim.sourceRead",
-                          locale,
-                        )}
-                      </td>
-                      <td className="row-actions">
-                        {/* Only a disabled profile can be switched to, and a
-                            deleted one is not on the chip at all. */}
-                        {profile.state === "disabled" && profile.modemImei ? (
-                          <button
-                            type="button"
-                            className="risk"
-                            disabled={busy}
-                            onClick={() => {
-                              if (!window.confirm(t("esim.confirmSwitch", locale))) return;
-                              void issue("switch_esim_profile", {
-                                modem_imei: profile.modemImei,
-                                target_iccid: profile.iccid,
-                              });
-                            }}
-                          >
-                            {t("esim.switch", locale)}
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))
-      )}
-
-      <h4 className="section-title">{t("esim.chipTitle", locale)}</h4>
-      <div className="button-row">
-        {modems.map((modem) => (
-          <button
-            key={`chip-${modem.imei}`}
-            type="button"
-            disabled={busy}
-            onClick={() => void issue("read_esim_info", { modem_imei: modem.imei })}
-          >
-            {t("esim.readChip", locale)} — {modem.imei}
-          </button>
-        ))}
-      </div>
-      {pending ? <p className="faint">{t("esim.chipBusy", locale)}</p> : null}
-      {/* The failed-read banner is rendered above, next to the inventory it
-          explains, and split by cause. One banner that only knew the status
-          said the same sentence for a module that has no eUICC and for a chip
-          that stopped answering, which are not the same news. */}
-
-      {chips.length === 0 ? (
-        <p className="faint">{t("esim.noChip", locale)}</p>
-      ) : (
-        chips.map(({ info, completedAt }) => (
-          <section key={info.eid} className="stack">
-            <h4 className="section-title mono">
-              {t("esim.colEid", locale)} {info.eid}
-            </h4>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("esim.colField", locale)}</th>
-                    <th>{t("esim.colValue", locale)}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chipFields(info, locale).map(([field, value]) => (
-                    <tr key={field}>
-                      <td>{field}</td>
-                      <td className="mono">{value}</td>
-                    </tr>
-                  ))}
-                  <tr>
-                    <td>{t("esim.readAt", locale)}</td>
-                    <td className="mono faint">
-                      {completedAt
-                        ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
-                        : "—"}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <h4 className="section-title">{t("esim.notifications", locale)}</h4>
-            {info.notificationsError ? (
-              <p className="error">{info.notificationsError}</p>
-            ) : null}
-            {info.notifications.length === 0 ? (
-              <p className="faint">{t("esim.noNotifications", locale)}</p>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("esim.colSeq", locale)}</th>
-                      <th>{t("esim.colOperation", locale)}</th>
-                      <th>{t("esim.colAddress", locale)}</th>
-                      <th>{t("esim.colIccid", locale)}</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {info.notifications.map((notification) => (
-                      <tr key={`${info.eid}-${notification.sequenceNumber}`}>
-                        <td className="mono">{notification.sequenceNumber}</td>
-                        <td>{notification.operations.join(", ") || "—"}</td>
-                        <td className="mono">{notification.address}</td>
-                        <td className="mono">{notification.iccid ?? "—"}</td>
-                        <td className="row-actions">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void issue("retrieve_esim_notification", {
-                                modem_imei: info.imei,
-                                sequence_number: notification.sequenceNumber,
-                              })
-                            }
-                          >
-                            {t("esim.retrieve", locale)}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ))
-      )}
-
-      {retrieved ? (
-        <p className="faint">
-          {t("esim.retrieved", locale, {
-            seq: retrieved.sequenceNumber,
-            bytes: retrieved.payloadBytes,
-            address: retrieved.address,
-          })}{" "}
-          {retrieved.delivered ? null : (
-            <strong>
-              {t("esim.notDelivered", locale, { why: retrieved.deliveryBlockedBy ?? "" })}
-            </strong>
-          )}
-        </p>
-      ) : null}
-
-      <h4 className="section-title">{t("esim.authTitle", locale)}</h4>
-      <div className="button-row">
-        {modems.map((modem) => (
-          <button
-            key={`auth-${modem.imei}`}
-            type="button"
-            disabled={busy}
+      <Card
+        title={t("esim.title", locale)}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy || imei === ""}
             onClick={() =>
-              void issue("initiate_esim_authentication", { modem_imei: modem.imei })
+              request(
+                "list_esim_profiles",
+                { modem_imei: imei },
+                t("esim.refresh", locale),
+                t("esim.refresh", locale),
+              )
             }
           >
-            {t("esim.authStart", locale)} — {modem.imei}
-          </button>
-        ))}
-      </div>
-      {authPending ? <p className="faint">{t("esim.authBusy", locale)}</p> : null}
-      {failedAuthentication ? (
-        <p className="error">
-          {t("esim.authFailed", locale)}: {failedAuthentication.result?.reason ?? ""}
-        </p>
-      ) : null}
-      {authentications.length === 0 ? (
-        <p className="faint">{t("esim.authNone", locale)}</p>
-      ) : (
-        authentications.map(({ authentication, completedAt }) => (
-          <AuthenticationSection
-            key={`${authentication.eid}-${authentication.transactionId}`}
-            authentication={authentication}
-            completedAt={completedAt}
-            locale={locale}
-          />
-        ))
-      )}
+            {t("esim.refresh", locale)}
+          </Button>
+        }
+      >
+        <div className={PAGE.section}>
+          {verdict ? <SwitchVerdict verdict={verdict} locale={locale} /> : null}
 
-      <h4 className="section-title">{t("esim.dlTitle", locale)}</h4>
-      <p className="faint">{t("esim.dlSecret", locale)}</p>
-      <div className="stack">
-        <label>
-          {t("esim.dlCode", locale)}
-          <input
-            type="text"
-            value={activationCode}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="LPA:1$smdp.example.com$MATCHING-ID"
-            onChange={(event) => setActivationCode(event.target.value)}
-          />
-        </label>
-        <label>
-          {t("esim.dlConfirm", locale)}
-          <input
-            type="text"
-            value={confirmationCode}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => setConfirmationCode(event.target.value)}
-          />
-        </label>
-      </div>
-      <div className="button-row">
-        {modems.map((modem) => (
-          <button
-            key={`download-${modem.imei}`}
-            type="button"
-            className="risk"
-            disabled={busy || activationCode.trim() === ""}
-            onClick={() => {
-              if (!window.confirm(t("esim.dlWarn", locale))) return;
-              const code = activationCode.trim();
-              const confirmation = confirmationCode.trim();
-              // Cleared before the request rather than after it. The code is a
-              // one-time credential and leaving it in a field invites a second
-              // click that spends an order which no longer exists.
-              setActivationCode("");
-              setConfirmationCode("");
-              void issue("download_esim_profile", {
-                modem_imei: modem.imei,
-                activation_code: code,
-                ...(confirmation === "" ? {} : { confirmation_code: confirmation }),
-              });
-            }}
+          {/* Not a fault and not a failed read: a plain SIM in a slot the page
+              offered an eSIM button for. Kept apart from the error banner
+              below so a module that never had a chip stops looking broken. */}
+          {readFailures
+            .filter((failure) => failure.cause === "no-euicc")
+            .map((failure) => (
+              <FormHint key={`no-euicc-${failure.modemImei}`}>
+                {t("esim.notEuicc", locale, { imei: failure.modemImei })}{" "}
+                <span className={PAGE.mono}>{failure.reason}</span>
+              </FormHint>
+            ))}
+          {readFailures
+            .filter((failure) => failure.cause === "read-failed")
+            .map((failure) => (
+              <FormError key={`read-failed-${failure.modemImei}`}>
+                {t("esim.chipReadFailed", locale, { imei: failure.modemImei })}:{" "}
+                <span className={PAGE.mono}>{failure.reason}</span>
+              </FormError>
+            ))}
+
+          {/* A card with no profiles and a card that refused to list them both
+              answer with an empty array. The edge says which; without this the
+              page would show the refusal as an empty chip. */}
+          {listings
+            .filter((listing) => listing.profilesError)
+            .map((listing) => (
+              <FormError key={`profiles-error-${listing.modemImei}`}>
+                {t("esim.profilesError", locale, { imei: listing.modemImei })}:{" "}
+                <span className={PAGE.mono}>{listing.profilesError}</span>
+              </FormError>
+            ))}
+
+          {inventory.length === 0 ? (
+            <CardEmpty title={t("esim.none", locale)} />
+          ) : (
+            [...byEid.entries()].map(([eid, rows]) => (
+              <div key={eid} className={PAGE.section}>
+                <h3 className={PAGE.sectionTitle}>
+                  {t("esim.colEid", locale)} <span className={PAGE.mono}>{eid}</span>
+                </h3>
+                <Table>
+                  <TableHead>
+                    <TableRow head>
+                      <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
+                      <TableHeaderCell>{t("esim.colNickname", locale)}</TableHeaderCell>
+                      <TableHeaderCell>{t("esim.colState", locale)}</TableHeaderCell>
+                      {/* Two columns of provenance. Useful when a switch is
+                          being argued about, and not what the row is read for
+                          on a phone. */}
+                      <TableHeaderCell secondary>
+                        {t("esim.colCollected", locale)}
+                      </TableHeaderCell>
+                      <TableHeaderCell secondary>{t("esim.colSource", locale)}</TableHeaderCell>
+                      <TableHeaderCell />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rows.map((profile) => (
+                      <TableRow key={profile.iccid}>
+                        <TableCell mono>{profile.iccid}</TableCell>
+                        <TableCell>
+                          {profile.nickname ?? <span className={TABLE.cellFaint}>—</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge tone={toneForProfileState(profile.state)}>{profile.state}</Badge>
+                        </TableCell>
+                        <TableCell mono faint secondary>
+                          {new Date(profile.collectedAt)
+                            .toISOString()
+                            .replace("T", " ")
+                            .slice(0, 16)}
+                        </TableCell>
+                        <TableCell faint secondary>
+                          {t(
+                            profile.source === "inventory"
+                              ? "esim.sourceInventory"
+                              : "esim.sourceRead",
+                            locale,
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <RowActions>
+                            {/* Only a disabled profile can be switched to, and
+                                a deleted one is not on the chip at all. */}
+                            {profile.state === "disabled" && profile.modemImei ? (
+                              <Button
+                                variant="risk"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() =>
+                                  request(
+                                    "switch_esim_profile",
+                                    {
+                                      modem_imei: profile.modemImei,
+                                      target_iccid: profile.iccid,
+                                    },
+                                    `${t("esim.switch", locale)} — ${profile.iccid}`,
+                                    t("esim.switch", locale),
+                                  )
+                                }
+                              >
+                                {t("esim.switch", locale)}
+                              </Button>
+                            ) : null}
+                          </RowActions>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
+      <Card
+        title={t("esim.chipTitle", locale)}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy || imei === ""}
+            onClick={() =>
+              request(
+                "read_esim_info",
+                { modem_imei: imei },
+                t("esim.readChip", locale),
+                t("esim.readChip", locale),
+              )
+            }
           >
-            {t("esim.dlStart", locale)} — {modem.imei}
-          </button>
-        ))}
-      </div>
-      {downloadPending ? <p className="faint">{t("esim.dlBusy", locale)}</p> : null}
-      {failedDownload ? (
-        <p className="error">
-          {t("esim.dlFailed", locale)}: {failedDownload.result?.reason ?? ""}
-        </p>
+            {t("esim.readChip", locale)}
+          </Button>
+        }
+      >
+        <div className={PAGE.section}>
+          {reading ? <FormHint>{t("esim.chipBusy", locale)}</FormHint> : null}
+          {/* The failed-read banner is rendered above, next to the inventory it
+              explains, and split by cause. One banner that only knew the status
+              said the same sentence for a module that has no eUICC and for a
+              chip that stopped answering, which are not the same news. */}
+
+          {chips.length === 0 ? (
+            <CardEmpty title={t("esim.noChip", locale)} />
+          ) : (
+            chips.map(({ info, completedAt }) => (
+              <div key={info.eid} className={PAGE.section}>
+                <h3 className={PAGE.sectionTitle}>
+                  {t("esim.colEid", locale)} <span className={PAGE.mono}>{info.eid}</span>
+                </h3>
+                <SpecTable>
+                  <TableBody>
+                    {chipFields(info, locale).map(([field, value]) => (
+                      <SpecRow key={field} term={field} mono>
+                        {value}
+                      </SpecRow>
+                    ))}
+                    <SpecRow term={t("esim.readAt", locale)} mono>
+                      <span className={TABLE.cellFaint}>
+                        {completedAt
+                          ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
+                          : "—"}
+                      </span>
+                    </SpecRow>
+                  </TableBody>
+                </SpecTable>
+
+                <h3 className={PAGE.sectionTitle}>{t("esim.notifications", locale)}</h3>
+                {info.notificationsError ? (
+                  <FormError>{info.notificationsError}</FormError>
+                ) : null}
+                {info.notifications.length === 0 ? (
+                  <p className={PAGE.note}>{t("esim.noNotifications", locale)}</p>
+                ) : (
+                  <Table>
+                    <TableHead>
+                      <TableRow head>
+                        <TableHeaderCell>{t("esim.colSeq", locale)}</TableHeaderCell>
+                        <TableHeaderCell>{t("esim.colOperation", locale)}</TableHeaderCell>
+                        {/* An SM-DP+ host name is the widest value in this
+                            table and the one a phone can do without: the row
+                            is read for which sequence number is outstanding. */}
+                        <TableHeaderCell secondary>
+                          {t("esim.colAddress", locale)}
+                        </TableHeaderCell>
+                        <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
+                        <TableHeaderCell />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {info.notifications.map((notification) => (
+                        <TableRow key={`${info.eid}-${notification.sequenceNumber}`}>
+                          <TableCell mono>{notification.sequenceNumber}</TableCell>
+                          <TableCell>{notification.operations.join(", ") || "—"}</TableCell>
+                          <TableCell mono secondary>
+                            {notification.address}
+                          </TableCell>
+                          <TableCell mono>{notification.iccid ?? "—"}</TableCell>
+                          <TableCell>
+                            <RowActions>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() =>
+                                  request(
+                                    "retrieve_esim_notification",
+                                    {
+                                      modem_imei: info.imei,
+                                      sequence_number: notification.sequenceNumber,
+                                    },
+                                    t("esim.retrieve", locale),
+                                    t("esim.retrieve", locale),
+                                  )
+                                }
+                              >
+                                {t("esim.retrieve", locale)}
+                              </Button>
+                            </RowActions>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            ))
+          )}
+
+          {retrieved ? (
+            <p className={PAGE.note}>
+              {t("esim.retrieved", locale, {
+                seq: retrieved.sequenceNumber,
+                bytes: retrieved.payloadBytes,
+                address: retrieved.address,
+              })}{" "}
+              {retrieved.delivered ? null : (
+                <strong>
+                  {t("esim.notDelivered", locale, { why: retrieved.deliveryBlockedBy ?? "" })}
+                </strong>
+              )}
+            </p>
+          ) : null}
+        </div>
+      </Card>
+
+      <Card
+        title={t("esim.authTitle", locale)}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy || imei === ""}
+            onClick={() =>
+              request(
+                "initiate_esim_authentication",
+                { modem_imei: imei },
+                t("esim.authStart", locale),
+                t("esim.authStart", locale),
+              )
+            }
+          >
+            {t("esim.authStart", locale)}
+          </Button>
+        }
+      >
+        <div className={PAGE.section}>
+          {authPending ? <FormHint>{t("esim.authBusy", locale)}</FormHint> : null}
+          {failedAuthentication ? (
+            <FormError>
+              {t("esim.authFailed", locale)}: {failedAuthentication.result?.reason ?? ""}
+            </FormError>
+          ) : null}
+          {authentications.length === 0 ? (
+            <CardEmpty title={t("esim.authNone", locale)} />
+          ) : (
+            authentications.map(({ authentication, completedAt }) => (
+              <AuthenticationSection
+                key={`${authentication.eid}-${authentication.transactionId}`}
+                authentication={authentication}
+                completedAt={completedAt}
+                locale={locale}
+              />
+            ))
+          )}
+        </div>
+      </Card>
+
+      <Card title={t("esim.dlTitle", locale)} note={t("esim.dlSecret", locale)}>
+        <div className={PAGE.section}>
+          <Field label={t("esim.dlCode", locale)}>
+            <Input
+              type="text"
+              value={activationCode}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="LPA:1$smdp.example.com$MATCHING-ID"
+              onChange={(event) => setActivationCode(event.target.value)}
+            />
+          </Field>
+          <Field label={t("esim.dlConfirm", locale)}>
+            <Input
+              type="text"
+              value={confirmationCode}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => setConfirmationCode(event.target.value)}
+            />
+          </Field>
+          <ButtonRow>
+            <Button
+              variant="risk"
+              disabled={busy || imei === "" || activationCode.trim() === ""}
+              onClick={() => {
+                const code = activationCode.trim();
+                const confirmation = confirmationCode.trim();
+                // Cleared before the dialog opens rather than after the send.
+                // The code is a one-time credential and leaving it in a field
+                // invites a second click that spends an order which no longer
+                // exists.
+                setActivationCode("");
+                setConfirmationCode("");
+                request(
+                  "download_esim_profile",
+                  {
+                    modem_imei: imei,
+                    activation_code: code,
+                    ...(confirmation === "" ? {} : { confirmation_code: confirmation }),
+                  },
+                  `${t("esim.dlStart", locale)} — ${imei}`,
+                  t("esim.dlStart", locale),
+                );
+              }}
+            >
+              {t("esim.dlStart", locale)}
+            </Button>
+          </ButtonRow>
+          {downloadPending ? <FormHint>{t("esim.dlBusy", locale)}</FormHint> : null}
+          {failedDownload ? (
+            <FormError>
+              {t("esim.dlFailed", locale)}: {failedDownload.result?.reason ?? ""}
+            </FormError>
+          ) : null}
+          {downloads.length === 0 ? (
+            <CardEmpty title={t("esim.dlNone", locale)} />
+          ) : (
+            downloads.map(({ download, completedAt }) => (
+              <DownloadSection
+                key={`${download.eid}-${download.transactionId}`}
+                download={download}
+                completedAt={completedAt}
+                locale={locale}
+              />
+            ))
+          )}
+        </div>
+      </Card>
+
+      {pending ? (
+        <ConfirmDialog
+          open
+          title={pending.title}
+          consequence={pending.consequence}
+          confirmLabel={pending.confirmLabel}
+          labels={{
+            question: t("confirm.question", locale),
+            proceed: t("confirm.proceed", locale),
+            cancel: t("confirm.cancel", locale),
+          }}
+          busy={busy}
+          onConfirm={proceed}
+          onCancel={cancelPending}
+        />
       ) : null}
-      {downloads.length === 0 ? (
-        <p className="faint">{t("esim.dlNone", locale)}</p>
+    </>
+  );
+}
+
+/**
+ * Whether the chip agrees that the switch happened.
+ *
+ * 🔴 **The command reporting success is the weakest thing on this page**, and
+ * on this endpoint it is weaker than that: `/api/esim/switch` answers `ok` in
+ * cases where the profile did not change, which the vowifi board is fixing at
+ * the edge (T080). This card must not touch that, so what it owes is a console
+ * that does not repeat the claim.
+ *
+ * So there is no "switched" state here. There is what was asked for, and then
+ * whether **a read of the chip taken after the switch** agrees — the timestamp
+ * comparison is the whole point, because the reading that was already on
+ * screen when the button was pressed says nothing about it.
+ *
+ * The read-back is not fired automatically. Every command on this page is a
+ * command to real hardware, and a console that sends one the operator did not
+ * ask for is a console that decides when to talk to a module. The button is
+ * right here instead.
+ */
+function SwitchVerdict({
+  verdict,
+  locale,
+}: {
+  verdict: NonNullable<ReturnType<typeof esimSwitchVerdict>>;
+  locale: Locale;
+}) {
+  const tone =
+    verdict.state === "confirmed" ? "ok" : verdict.state === "contradicted" ? "bad" : "warn";
+  const sentence =
+    verdict.state === "confirmed"
+      ? t("esim.switchConfirmed", locale)
+      : verdict.state === "contradicted"
+        ? t("esim.switchContradicted", locale, { state: verdict.observed ?? "" })
+        : t("esim.switchUnverified", locale);
+  return (
+    <div className={PAGE.section}>
+      <div className={TABLE.cellInline}>
+        <Badge tone={tone}>{t("esim.verifySwitch", locale)}</Badge>
+        <span className={PAGE.mono}>
+          {t("esim.switchAsked", locale, { iccid: verdict.targetIccid })}
+        </span>
+        {verdict.readAt === null ? null : (
+          <span className={PAGE.faint}>
+            {t("esim.switchReadAt", locale)}{" "}
+            {new Date(verdict.readAt).toISOString().replace("T", " ").slice(0, 19)}
+          </span>
+        )}
+      </div>
+      {verdict.state === "confirmed" ? (
+        <FormHint>{sentence}</FormHint>
       ) : (
-        downloads.map(({ download, completedAt }) => (
-          <DownloadSection
-            key={`${download.eid}-${download.transactionId}`}
-            download={download}
-            completedAt={completedAt}
-            locale={locale}
-          />
-        ))
+        <FormError>{sentence}</FormError>
       )}
     </div>
   );
@@ -539,78 +763,63 @@ function AuthenticationSection({
     [t("esim.checkCiKey", locale), authentication.ciKeyAcceptedByChip],
   ];
   return (
-    <section className="stack">
-      <h4 className="section-title mono">
-        {t("esim.aSmdp", locale)} {authentication.smdpAddress} · {authentication.eid}
-      </h4>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{t("esim.colField", locale)}</th>
-              <th>{t("esim.colValue", locale)}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {authenticationFields(authentication, locale).map(([field, value]) => (
-              <tr key={field}>
-                <td>{field}</td>
-                <td className="mono">{value}</td>
-              </tr>
-            ))}
-            <tr>
-              <td>{t("esim.authAt", locale)}</td>
-              <td className="mono faint">
-                {completedAt
-                  ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
-                  : "—"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+    <div className={PAGE.section}>
+      <h3 className={PAGE.sectionTitle}>
+        {t("esim.aSmdp", locale)}{" "}
+        <span className={PAGE.mono}>
+          {authentication.smdpAddress} · {authentication.eid}
+        </span>
+      </h3>
+      <SpecTable>
+        <TableBody>
+          {authenticationFields(authentication, locale).map(([field, value]) => (
+            <SpecRow key={field} term={field} mono>
+              {value}
+            </SpecRow>
+          ))}
+          <SpecRow term={t("esim.authAt", locale)} mono>
+            <span className={TABLE.cellFaint}>
+              {completedAt
+                ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
+                : "—"}
+            </span>
+          </SpecRow>
+        </TableBody>
+      </SpecTable>
 
-      <h4 className="section-title">{t("esim.checksTitle", locale)}</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {checks.map(([label, passed]) => (
-              <tr key={label}>
-                <td>{label}</td>
-                <td>
-                  <span className={`badge ${passed ? "badge-ok" : "badge-bad"}`}>
-                    {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <h3 className={PAGE.sectionTitle}>{t("esim.checksTitle", locale)}</h3>
+      <SpecTable>
+        <TableBody>
+          {checks.map(([label, passed]) => (
+            <SpecRow key={label} term={label}>
+              <Badge tone={passed ? "ok" : "bad"}>
+                {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
+              </Badge>
+            </SpecRow>
+          ))}
+        </TableBody>
+      </SpecTable>
 
-      <h4 className="section-title">{t("esim.aAnchors", locale)}</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {authentication.trustAnchors.map((anchor) => (
-              <tr key={anchor.label}>
-                <td className="mono">{anchor.label}</td>
-                <td className="mono">{anchor.keyId}</td>
-                <td className="mono faint">{anchor.notAfter}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <h3 className={PAGE.sectionTitle}>{t("esim.aAnchors", locale)}</h3>
+      <SpecTable>
+        <TableBody>
+          {authentication.trustAnchors.map((anchor) => (
+            <SpecRow key={anchor.label} term={anchor.label} mono>
+              {anchor.keyId}
+              <span className={TABLE.cellFaint}> {anchor.notAfter}</span>
+            </SpecRow>
+          ))}
+        </TableBody>
+      </SpecTable>
 
       {authentication.profileDownloaded ? null : (
-        <p className="faint">
+        <p className={PAGE.note}>
           <strong>
             {t("esim.authStopped", locale, { why: authentication.stoppedAfter ?? "" })}
           </strong>
         </p>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -741,104 +950,91 @@ function DownloadSection({
     [t("esim.checkCiKey", locale), download.ciKeyAcceptedByChip],
   ];
   return (
-    <section className="stack">
-      <h4 className="section-title mono">
-        {download.eid} · {download.imei}
-      </h4>
+    <div className={PAGE.section}>
+      <h3 className={PAGE.sectionTitle}>
+        <span className={PAGE.mono}>
+          {download.eid} · {download.imei}
+        </span>
+      </h3>
       {download.refusedPolicyRules.length > 0 ? (
-        <p className="error">
+        <FormError>
           <strong>
             {t("esim.dlRefused", locale, { rules: download.refusedPolicyRules.join(", ") })}
           </strong>
-        </p>
+        </FormError>
       ) : null}
       {download.installationError ? (
-        <p className="error">
+        <FormError>
           {t("esim.dlError", locale)}: {download.installationError}
           {download.failedBppCommand ? ` (${download.failedBppCommand})` : ""}
-        </p>
+        </FormError>
       ) : null}
       {download.notificationDeliveryError ? (
-        <p className="error">{download.notificationDeliveryError}</p>
+        <FormError>{download.notificationDeliveryError}</FormError>
       ) : null}
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{t("esim.colField", locale)}</th>
-              <th>{t("esim.colValue", locale)}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([field, value]) => (
-              <tr key={field}>
-                <td>{field}</td>
-                <td className="mono">{value ?? "—"}</td>
-              </tr>
-            ))}
-            <tr>
-              <td>{t("esim.authAt", locale)}</td>
-              <td className="mono faint">
-                {completedAt
-                  ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
-                  : "—"}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <SpecTable>
+        <TableBody>
+          {rows.map(([field, value]) => (
+            <SpecRow key={field} term={field} mono>
+              {value ?? "—"}
+            </SpecRow>
+          ))}
+          <SpecRow term={t("esim.authAt", locale)} mono>
+            <span className={TABLE.cellFaint}>
+              {completedAt
+                ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
+                : "—"}
+            </span>
+          </SpecRow>
+        </TableBody>
+      </SpecTable>
 
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {checks.map(([label, passed]) => (
-              <tr key={label}>
-                <td>{label}</td>
-                <td>
-                  <span className={`badge ${passed ? "badge-ok" : "badge-bad"}`}>
-                    {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <SpecTable>
+        <TableBody>
+          {checks.map(([label, passed]) => (
+            <SpecRow key={label} term={label}>
+              <Badge tone={passed ? "ok" : "bad"}>
+                {passed ? t("esim.checkYes", locale) : t("esim.checkNo", locale)}
+              </Badge>
+            </SpecRow>
+          ))}
+        </TableBody>
+      </SpecTable>
 
-      <h4 className="section-title">{t("esim.dlProfilesAfter", locale)}</h4>
+      <h3 className={PAGE.sectionTitle}>{t("esim.dlProfilesAfter", locale)}</h3>
       {after === null || after.profiles.length === 0 ? (
-        <p className="faint">—</p>
+        <p className={PAGE.note}>—</p>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("esim.colIccid", locale)}</th>
-                <th>{t("esim.colNickname", locale)}</th>
-                <th>{t("esim.colState", locale)}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {after.profiles.map((profile) => (
-                <tr key={profile.iccid}>
-                  <td className="mono">{profile.iccid}</td>
-                  <td>{profile.label}</td>
-                  <td>
-                    <StateBadge state={profile.enabled ? "enabled" : "disabled"} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHead>
+            <TableRow head>
+              <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
+              <TableHeaderCell>{t("esim.colNickname", locale)}</TableHeaderCell>
+              <TableHeaderCell>{t("esim.colState", locale)}</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {after.profiles.map((profile) => (
+              <TableRow key={profile.iccid}>
+                <TableCell mono>{profile.iccid}</TableCell>
+                <TableCell>{profile.label}</TableCell>
+                <TableCell>
+                  <Badge tone={toneForProfileState(profile.enabled ? "enabled" : "disabled")}>
+                    {profile.enabled ? "enabled" : "disabled"}
+                  </Badge>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
 
       {download.stoppedAfter ? (
-        <p className="faint">
+        <p className={PAGE.note}>
           <strong>{t("esim.dlStopped", locale, { why: download.stoppedAfter })}</strong>
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }
 
@@ -862,16 +1058,6 @@ function latestDownloads(
     }
   }
   return [...seen.values()];
-}
-
-function StateBadge({ state }: { state: string }) {
-  const tone =
-    state === "enabled"
-      ? "badge-ok"
-      : state === "deleted"
-        ? "badge-bad"
-        : "badge-idle";
-  return <span className={`badge ${tone}`}>{state}</span>;
 }
 
 /**
@@ -953,4 +1139,3 @@ function bytesOrNull(value: number | null, locale: Locale): string | null {
 function listOrNull(values: string[]): string | null {
   return values.length === 0 ? null : values.join(", ");
 }
-

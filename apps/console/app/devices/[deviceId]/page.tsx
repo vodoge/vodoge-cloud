@@ -1,9 +1,21 @@
 import Link from "next/link";
 import { DeviceAdmin } from "@/components/device-admin";
-import { DeviceConsole, type DeviceLabelKey } from "@/components/device-console";
+import {
+  DeviceConsole,
+  DeviceDiagnostics,
+  type DeviceLabelKey,
+} from "@/components/device-console";
 import { EsimPanel } from "@/components/esim-panel";
 import { Badge, StateBadge } from "@/components/ui/badge";
-import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import {
+  Card as CardShell,
+  CardContent,
+  CardEmpty,
+  CardHeader,
+  CardNote,
+  CardPanel as Card,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   SpecRow,
   SpecTable,
@@ -27,7 +39,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { DEVICE_TABS, PAGE, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
+import { CARD, DEVICE_TABS, PAGE, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
 
 /**
  * One device, and everything that can be done to it.
@@ -51,22 +63,21 @@ import { DEVICE_TABS, PAGE, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens
  * panels. A shared list is what stops the second one from arriving with a
  * fifth tab or a different spelling.
  *
- * ## The seam, for the card that fills the other two
+ * ## What is on which tab, and why
  *
- * `panelFor()` below is the only place that decides what a tab shows. The
- * console and eSIM branches each render today's component unchanged inside a
- * card; filling them is editing those two branches and the two components,
- * and needs nothing from the skeleton. Two things are deliberately left where
- * they are rather than moved:
+ * `panelFor()` below is the only place that decides what a tab shows, and the
+ * split is by what a control *does* rather than by which component it happens
+ * to live in. Both of the seams T010 left are closed here:
  *
- * - **The two `READ_ONLY` commands and the command log** are inside
- *   `device-console.tsx`, which this card may not edit. They belong in the
- *   diagnostics panel by subject, and moving them means splitting that
- *   component — which is the next card's file and the next card's decision.
- *   The branch is a one-line change when it happens.
- * - **Renaming and deleting the device** is on the overview panel, where the
- *   admin card has always been. It is the only write this card owns, and its
- *   confirmation — typing the device's name — is untouched.
+ * - **The two `READ_ONLY` commands and the command log** were in the console
+ *   panel because that is the file they are written in. Both only read — a
+ *   diagnostic report and an ES10c profile listing — so they are on the
+ *   diagnostics tab with the other readings.
+ * - **Renaming and removing the device** was on the overview tab, under the
+ *   first table an operator sees. Removing a device deletes its whole journal,
+ *   every message and every command it ever ran, so it is in the danger zone
+ *   on the console tab. Its confirmation — typing the device's name verbatim,
+ *   the strongest guard in this console — is untouched.
  *
  * ## What the tab strip does not change
  *
@@ -111,40 +122,34 @@ export default async function DevicePage({
   function panelFor(tab: (typeof DEVICE_TABS)[number]["id"]) {
     switch (tab) {
       case "overview":
-        return <OverviewPanel deviceId={deviceId} device={device} modems={own} locale={locale} />;
+        return <OverviewPanel device={device} modems={own} locale={locale} />;
       case "diagnostics":
-        return <DiagnosticsPanel device={device} modems={own} locale={locale} />;
-      case "console":
-        // T011 fills this one. The locale as well as the labels: the labels
-        // cover every string the page can resolve for this component; the
-        // read-only notice is the one it cannot, because whether the session
-        // may write is only known after mount. Looked up against a client-side
-        // default, that sentence went out in Chinese on every request.
         return (
-          <Card title={t("device.console", locale)} note={t("device.consoleNote", locale)}>
-            <DeviceConsole
-              deviceId={deviceId}
-              modems={own}
-              labels={deviceLabels(locale)}
-              locale={locale}
-            />
-          </Card>
+          <DiagnosticsPanel
+            deviceId={deviceId}
+            device={device}
+            modems={own}
+            locale={locale}
+          />
         );
+      case "console":
+        return <ConsolePanel deviceId={deviceId} device={device} modems={own} locale={locale} />;
       case "esim":
-        // T011 fills this one. The locale itself, not a nine-string subset of
-        // the catalogue. The subset was the bug: the panel drew about a hundred
-        // strings and this list named nine of them, so the other ninety-odd
-        // came from a locale the component only learned after hydration and the
-        // server sent them in the default language on every request.
+        // The locale itself, not a nine-string subset of the catalogue. The
+        // subset was the bug: the panel drew about a hundred strings and this
+        // list named nine of them, so the other ninety-odd came from a locale
+        // the component only learned after hydration and the server sent them
+        // in the default language on every request.
+        //
+        // No wrapping card: the panel draws four of its own, one per section,
+        // and a card inside a card is how a heading stops meaning anything.
         return (
-          <Card title={t("esim.title", locale)} note={t("esim.note", locale)}>
-            <EsimPanel
-              deviceId={deviceId}
-              profiles={esim}
-              modems={own.map((modem) => ({ imei: modem.imei }))}
-              locale={locale}
-            />
-          </Card>
+          <EsimPanel
+            deviceId={deviceId}
+            profiles={esim}
+            modems={own.map((modem) => ({ imei: modem.imei }))}
+            locale={locale}
+          />
         );
     }
   }
@@ -196,22 +201,26 @@ export default async function DevicePage({
 }
 
 /**
- * What the device is: its modules, and the two controls that change the device
- * itself.
+ * What the device is: its modules, and nothing that can be pressed.
  *
  * The module table is three columns here rather than the five it had, because
  * the two readings that were dropped — signal and LTE quality — are a
  * measurement rather than an identity, and they are the whole of the
  * diagnostics panel. At 390px five columns of IMEI, ICCID and dBm are a
  * sideways scroll on the first thing an operator sees.
+ *
+ * 🔴 The rename-and-remove card left this tab. T010 put it here because it was
+ * where the admin card had always been, and flagged the contradiction: removing
+ * a device deletes its entire journal, every message and every command, and it
+ * was sitting under the first table an operator sees. It is in the danger zone
+ * on the console tab now, beside the other things that cannot be undone.
+ * `device-admin.tsx` itself is untouched by that move.
  */
 function OverviewPanel({
-  deviceId,
   device,
   modems,
   locale,
 }: {
-  deviceId: string;
   device: DeviceRow | undefined;
   modems: ModemRow[];
   locale: Locale;
@@ -263,20 +272,71 @@ function OverviewPanel({
         )}
       </Card>
 
-      <Card title={t("device.admin", locale)} note={t("device.adminNote", locale)}>
-        <DeviceAdmin
-          deviceId={deviceId}
-          name={device?.name ?? deviceId}
-          labels={{
-            name: t("device.name", locale),
-            rename: t("device.rename", locale),
-            delete: t("device.delete", locale),
-            deleteNote: t("device.deleteNote", locale),
-            confirmDelete: t("device.confirmDelete", locale),
-            failed: t("device.adminFailed", locale),
-          }}
-        />
-      </Card>
+    </>
+  );
+}
+
+/**
+ * Everything this page can *do*, and the zone where doing it cannot be undone.
+ *
+ * The console panel draws its own cards — a module picker, the AT box, USSD,
+ * network and USB, the danger zone, and the log — so this branch adds one
+ * thing: the device's own name and its removal, which is the most destructive
+ * control in this console and was sitting on the overview tab beside a table.
+ *
+ * 🔴 It is drawn from the composed card parts rather than `CardPanel` for one
+ * reason: the danger zone is a wash behind the header and a red title, and
+ * `CardPanel` has nowhere to put a class on its header. **A red border was the
+ * first answer and it would not have rendered** — `CARD.root` asks for a
+ * border width and computes to `none 0px` on this build, which is the whole of
+ * `BORDER_WIDTH_WITHOUT_A_STYLE`, and shipping markup that reviews as a warning
+ * and paints nothing is the exact defect this card was sent to fix on the
+ * USB-net button.
+ *
+ * `device-admin.tsx` itself is untouched: T010 migrated it and its
+ * confirmation — typing the device's name verbatim, the strongest guard in
+ * this console — is not this card's to weaken.
+ */
+function ConsolePanel({
+  deviceId,
+  device,
+  modems,
+  locale,
+}: {
+  deviceId: string;
+  device: DeviceRow | undefined;
+  modems: ModemRow[];
+  locale: Locale;
+}) {
+  return (
+    <>
+      <DeviceConsole
+        deviceId={deviceId}
+        modems={modems}
+        labels={deviceLabels(locale)}
+        locale={locale}
+      />
+
+      <CardShell>
+        <CardHeader className={CARD.dangerHeader}>
+          <CardTitle className={CARD.dangerTitle}>{t("device.admin", locale)}</CardTitle>
+          <CardNote>{t("device.adminNote", locale)}</CardNote>
+        </CardHeader>
+        <CardContent>
+          <DeviceAdmin
+            deviceId={deviceId}
+            name={device?.name ?? deviceId}
+            labels={{
+              name: t("device.name", locale),
+              rename: t("device.rename", locale),
+              delete: t("device.delete", locale),
+              deleteNote: t("device.deleteNote", locale),
+              confirmDelete: t("device.confirmDelete", locale),
+              failed: t("device.adminFailed", locale),
+            }}
+          />
+        </CardContent>
+      </CardShell>
     </>
   );
 }
@@ -289,10 +349,12 @@ function OverviewPanel({
  * another's.
  */
 function DiagnosticsPanel({
+  deviceId,
   device,
   modems,
   locale,
 }: {
+  deviceId: string;
   device: DeviceRow | undefined;
   modems: ModemRow[];
   locale: Locale;
@@ -361,6 +423,20 @@ function DiagnosticsPanel({
           </Table>
         )}
       </Card>
+
+      {/*
+        The seam T010 left, closed. The two `READ_ONLY` commands and the log
+        they answer in live in `device-console.tsx`, which that card's own
+        `stop_if` forbade it from touching — so the diagnostics tab was built
+        with the readings and without the two buttons that produce them. Both
+        of these only read: a diagnostic report, and an ES10c profile listing.
+      */}
+      <DeviceDiagnostics
+        deviceId={deviceId}
+        modems={modems}
+        labels={deviceLabels(locale)}
+        locale={locale}
+      />
     </>
   );
 }
@@ -473,6 +549,7 @@ function formatBytes(bytes: number): string {
  */
 const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
   modem: "device.modem",
+  modemNote: "device.modemNote",
   noModems: "device.noModems",
   noCommands: "device.noCommands",
   waiting: "device.waiting",
@@ -480,7 +557,14 @@ const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
   run: "device.run",
   send: "device.send",
   cancel: "device.cancel",
+  console: "device.console",
+  consoleNote: "device.consoleNote",
+  diagTitle: "device.diagTitle",
+  diagNote: "device.diagNote",
   atCommand: "device.atCommand",
+  atNote: "device.atNote",
+  atGuarded: "device.atGuarded",
+  ussdNote: "device.ussdNote",
   ussdCode: "device.ussdCode",
   ussdSession: "device.ussdSession",
   ussdSessionModem: "device.ussdSessionModem",
@@ -495,14 +579,20 @@ const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
   ussdStageNetworkTimeout: "device.ussdStageNetworkTimeout",
   ussdStageOther: "device.ussdStageOther",
   selectOperator: "device.selectOperator",
+  networkTitle: "device.networkTitle",
+  networkNote: "device.networkNote",
   pin: "device.pin",
   automatic: "device.automatic",
   radioOn: "device.radioOn",
   dataOn: "device.dataOn",
+  danger: "device.danger",
+  dangerNote: "device.dangerNote",
+  recovery: "device.recovery",
+  recoveryNote: "device.recoveryNote",
+  logTitle: "device.logTitle",
+  logNote: "device.logNote",
   usbnetMode: "device.usbnetMode",
   usbnetWarning: "device.usbnetWarning",
-  confirmUsbnet: "device.confirmUsbnet",
-  confirmDisruptive: "device.confirmDisruptive",
   modem_report: "cmd.modem_report",
   list_esim_profiles: "cmd.list_esim_profiles",
   restart_modem: "cmd.restart_modem",

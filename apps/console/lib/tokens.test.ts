@@ -10,15 +10,19 @@ import tailwindConfig from "../tailwind.config.ts";
 import { cn } from "./cn.ts";
 import * as TOKENS from "./tokens.ts";
 import {
+  AT_COMMAND_GUARDS,
   BUTTON,
+  CARD,
   CLASSES_NEEDING_AN_ANCESTOR,
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
   CONFIRM_LABEL_KEYS,
+  DEVICE_COMMAND_GUARDS,
   DEVICE_TABS,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
+  LOG,
   MIGRATED_SOURCES,
   NAV_GROUPS,
   NON_UTILITY_CLASSES,
@@ -49,16 +53,21 @@ import {
   UI_PRIMITIVES,
   UNMIGRATED_SOURCES,
   assertConsequence,
+  atCommandGuard,
   badgeClass,
   buttonClass,
   consequenceProblem,
+  deviceCommandGuard,
   deviceTab,
   deviceTabHref,
+  esimSwitchVerdict,
   navState,
   rootTokenValues,
   secretInputProps,
   tableCellClass,
   themeOverrideValues,
+  toneForCommandStatus,
+  toneForProfileState,
   toneForState,
 } from "./tokens.ts";
 
@@ -216,8 +225,17 @@ type Literal = { readonly start: number; readonly text: string };
  * `${…}` skipped as well, or every interpolation reads as a broken class name.
  */
 function scan(source: string): { masked: string; code: string; literals: Literal[] } {
-  const masked = [...source];
-  const code = [...source];
+  // 🔴 `split("")`, never `[...source]`. Every index this function is handed or
+  // hands out — `indexOf`, a regex match index, `source.length` — counts UTF-16
+  // units, and spreading a string splits it by *code points*. One emoji in a
+  // comment therefore made the two working arrays a element shorter from that
+  // point on, and every blank after it landed one character early: the closing
+  // quote of a string was erased while the first character of its contents was
+  // kept. Six `.tsx` files already carry one of these in a comment, so this was
+  // live, and it is the kind of defect that shows up as a brace count rather
+  // than as anything readable.
+  const masked = source.split("");
+  const code = source.split("");
   const literals: Literal[] = [];
   const blank = (target: string[], from: number, to: number) => {
     for (let i = from; i < to; i++) if (target[i] !== "\n") target[i] = " ";
@@ -444,6 +462,12 @@ const NOT_A_RECIPE = new Set([
   "SAFE_AREA",
   "NAV_GROUPS",
   "DEVICE_TABS",
+  // The guard tables: command kinds, AT command shapes, regexes and the
+  // message keys that say what each one costs. Every string in them is a
+  // sentence or an identifier, and walking them as class lists would report
+  // `AT+CFUN=N,1` as a class that generates no CSS.
+  "AT_COMMAND_GUARDS",
+  "DEVICE_COMMAND_GUARDS",
   "MIGRATED_SOURCES",
   "UNMIGRATED_SOURCES",
   "LEGACY_UTILITY_COLLISIONS",
@@ -1413,8 +1437,9 @@ test("the consequence rule accepts the two that work and refuses the two that do
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
 
-  // Refused: a question with nothing behind it. These are the live strings.
-  for (const key of ["device.confirmDisruptive", "proxy.confirmRemove"]) {
+  // Refused: a question with nothing behind it. `proxy.confirmRemove` is still
+  // live and is read from the catalogue.
+  for (const key of ["proxy.confirmRemove"]) {
     for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
       assert.ok(
         consequenceProblem(catalogue[key]),
@@ -1422,6 +1447,29 @@ test("the consequence rule accepts the two that work and refuses the two that do
       );
     }
   }
+
+  // 🔴 `device.confirmDisruptive` is *not* read from the catalogue any more,
+  // because T011 deleted it: one sentence shared by seven commands, naming
+  // none of them, in front of one that can strand a module at `+CFUN: 7`. Its
+  // two strings are kept here verbatim as the counterexample they always were.
+  // Reading a deleted key would have thrown on `undefined` rather than made a
+  // point, and dropping the case would have left the rule with nothing real to
+  // refuse — which is how a rule that rejects everything passes its own test.
+  for (const retired of [
+    "这会让模组脱网，确定继续？",
+    "This takes the module off the network. Continue?",
+  ]) {
+    assert.ok(
+      consequenceProblem(retired),
+      `the sentence T011 retired would pass as a consequence now: ${retired}`,
+    );
+  }
+  const live = { ...zh, ...en } as Record<string, unknown>;
+  assert.equal(
+    live["device.confirmDisruptive"],
+    undefined,
+    "device.confirmDisruptive is back in a catalogue; seven commands are sharing one sentence again",
+  );
 
   // Accepted: the two that do the job, with the question they had to smuggle
   // in taken off the end — which is what having a dialog with a place for the
@@ -2129,7 +2177,12 @@ test("the device page is drawn by the shared components, at the point of use", (
   assert.equal(uses(/<Table\b/g), 2, "the module list and the radio readings");
   assert.equal(uses(/<SpecTable\b/g), 1, "the host block, which has no header row");
   assert.equal(uses(/<SpecRow\b/g), 4, "public IP, CPU, memory, reported-at");
-  assert.equal(uses(/<Card\b/g), 6);
+  // Three, not six. The console and eSIM panels draw their own cards — one per
+  // section — because a card holding four headings and eight tables is the
+  // arrangement the tab strip was built to break up, and a card inside a card
+  // is how a heading stops meaning anything.
+  assert.equal(uses(/<Card\b/g), 3, "modules, host vitals, radio readings");
+  assert.equal(uses(/<CardShell\b/g), 1, "the danger-zone card, composed so its header can be red");
   assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
 
   // Preflight is off, so a bare `<table>` is not merely a second
@@ -2276,6 +2329,585 @@ test("deleting a device still means typing its name", () => {
   assert.match(code, /<Button\b[^>]*variant="risk"/, "the destructive control lost its colour");
   const legacy = classListsIn(readSource("components/device-admin.tsx"));
   assert.deepEqual(legacy, [], "a class here cannot be checked against the build");
+});
+
+/* ── Every command on this page says what it will do ─────────────────────
+ *
+ * The device page is where every dangerous command this console can send
+ * lives, and until T011 what stood in front of them was decided by *which loop
+ * drew the button*: `DISRUPTIVE.map` put one shared `window.confirm` behind
+ * seven commands, and everything not in that array went out unasked. That is
+ * how the free-text AT box — `AT+CFUN=0` typed by hand — reached a module with
+ * nothing in the way, and it is why T021's twenty-three-row survey of dangerous
+ * actions did not have a row for it: there was no control to survey, only an
+ * input.
+ *
+ * So the decision is data now (`DEVICE_COMMAND_GUARDS`, `AT_COMMAND_GUARDS`),
+ * and these are the checks that keep it wired to the two components. Each one
+ * has been shown red against the specific defect it claims to catch; the
+ * mutations are listed in `notes/T011-device-console-esim-danger.md`.
+ */
+
+const CONSOLE_SOURCE = "components/device-console.tsx";
+const ESIM_SOURCE = "components/esim-panel.tsx";
+
+/**
+ * Every `attribute={…}` expression in a file, comments already gone.
+ *
+ * The point is *where a name appears*, not whether it appears. A file can keep
+ * its dialog, its copy and its consequence and still have somebody wire a
+ * button straight to the request; every guard that reads the file as a whole
+ * stays green through that. T004 was bitten by exactly this shape — an
+ * assertion that matched a definition rather than a use.
+ */
+function handlerExpressions(source: string, attribute: string): string[] {
+  const { masked, code } = scan(source);
+  const out: string[] = [];
+  for (const match of masked.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*`, "g"))) {
+    const at = match.index + match[0].length;
+    if (masked[at] !== "{") continue;
+    const close = closingBracket(masked, at);
+    if (close === -1) continue;
+    out.push(code.slice(at, close + 1));
+  }
+  return out;
+}
+
+/**
+ * The body of `function name(…) { … }`, or of `const name = … => { … }`.
+ *
+ * ⚠️ The parameter list has to be stepped over rather than searched past, and
+ * the first version of this did not: every component in these two files takes a
+ * destructured object, so "the first `{` after the name" was
+ * `{ busy, labels, onRun }` and every assertion under it was reading a
+ * parameter list. It failed loudly rather than passing, which is the only
+ * reason it was noticed.
+ */
+function bodyOfFunction(source: string, name: string): string | null {
+  const { masked, code } = scan(source);
+  const declared = new RegExp(`\\b(?:function\\s+${name}\\s*\\(|const\\s+${name}\\s*=)`);
+  const at = masked.search(declared);
+  if (at === -1) return null;
+
+  let open: number;
+  if (/function/.test(masked.slice(at, at + 9 + name.length))) {
+    const params = masked.indexOf("(", at);
+    const afterParams = closingBracket(masked, params);
+    if (afterParams === -1) return null;
+    open = masked.indexOf("{", afterParams);
+  } else {
+    // `const x = useCallback((a, b) => { … }, [deps])`: the arrow is what
+    // separates the parameters from the body, and a default value like
+    // `extra = {}` is an `=` rather than an `=>`.
+    const arrow = masked.indexOf("=>", at);
+    if (arrow === -1) return null;
+    open = masked.indexOf("{", arrow);
+  }
+  if (open === -1) return null;
+  const close = closingBracket(masked, open);
+  return close === -1 ? null : code.slice(open, close + 1);
+}
+
+/** The string literals inside `const NAME = [ … ]`. */
+function stringArray(source: string, name: string): string[] {
+  const { masked, literals } = scan(source);
+  const at = masked.search(new RegExp(`\\bconst\\s+${name}\\s*=`));
+  if (at === -1) return [];
+  const open = masked.indexOf("[", at);
+  if (open === -1) return [];
+  const close = closingBracket(masked, open);
+  return literals
+    .filter((literal) => literal.start > open && literal.start < close)
+    .map((literal) => literal.text);
+}
+
+/** Every command kind the two panels can put on the wire. */
+function issuedKinds(): Set<string> {
+  const kinds = new Set<string>();
+  for (const relative of [CONSOLE_SOURCE, ESIM_SOURCE]) {
+    const code = codeOnly(readSource(relative));
+    for (const match of code.matchAll(/\b(?:request|onRun|runNow)\(\s*"([a-z_]+)"/g)) {
+      kinds.add(match[1]);
+    }
+  }
+  // The two loops, whose kinds are in an array rather than at the call site.
+  const console_ = readSource(CONSOLE_SOURCE);
+  for (const name of ["READ_ONLY", "DISRUPTIVE"]) {
+    for (const kind of stringArray(console_, name)) kinds.add(kind);
+  }
+  return kinds;
+}
+
+test("every command either states a consequence or says why it does not", () => {
+  const listed = Object.keys(DEVICE_COMMAND_GUARDS).sort();
+  const issued = [...issuedKinds()].sort();
+
+  // Derived from the source rather than from a list beside the list it is
+  // checking: if the extractor stops finding call sites, everything below is
+  // vacuously true.
+  assert.ok(issued.length >= 15, `only ${issued.length} command kinds found; the extractor broke`);
+  assert.deepEqual(
+    listed,
+    issued,
+    "a command a panel can send has no entry in DEVICE_COMMAND_GUARDS, or an entry names one no panel sends",
+  );
+
+  const problems: string[] = [];
+  for (const [kind, variants] of Object.entries(DEVICE_COMMAND_GUARDS)) {
+    assert.ok(variants.length > 0, `${kind} has no variants at all`);
+    // The last one is the fallback, and without it `deviceCommandGuard` would
+    // fall through to its fail-closed branch for an ordinary payload.
+    assert.deepEqual(
+      Object.keys(variants[variants.length - 1].when),
+      [],
+      `${kind}'s last variant has conditions, so some payloads match nothing`,
+    );
+    for (const variant of variants) {
+      // An unguarded command has to carry its reason. This is the half that
+      // keeps the table honest: a guard in front of a harmless command trains
+      // the reflex that defeats every other guard, so refusing to add one has
+      // to be as visible as adding one.
+      if (variant.why.trim().length < 20) problems.push(`${kind}: no reason given`);
+      if (variant.consequence === null) continue;
+      if (!(CONFIRM_CONSEQUENCE_KEYS as readonly string[]).includes(variant.consequence)) {
+        problems.push(`${kind}: ${variant.consequence} is not on CONFIRM_CONSEQUENCE_KEYS`);
+      }
+    }
+  }
+  for (const guard of AT_COMMAND_GUARDS) {
+    if (!(CONFIRM_CONSEQUENCE_KEYS as readonly string[]).includes(guard.consequence)) {
+      problems.push(`${guard.id}: ${guard.consequence} is not on CONFIRM_CONSEQUENCE_KEYS`);
+    }
+  }
+  assert.deepEqual(problems, [], "a guard points at a sentence nothing checks in both languages");
+});
+
+/**
+ * The seven that shared one sentence have seven sentences.
+ *
+ * `device.confirmDisruptive` — "This takes the module off the network.
+ * Continue?" — stood in front of all of these, and it was wrong about two of
+ * them: `scan_operators` does not take the module off the network, it takes
+ * the radio away for three minutes and gives it back; `rotate_ip` tears the
+ * data bearer down and rebuilds it. And for `restart_modem` it was not so much
+ * wrong as absent: the thing worth saying is `+CFUN: 7`.
+ */
+test("each disruptive command has its own consequence, and restart names +CFUN: 7", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const disruptive = stringArray(readSource(CONSOLE_SOURCE), "DISRUPTIVE");
+  assert.equal(disruptive.length, 7, "the danger zone is seven commands");
+
+  const keys = disruptive.map((kind) => {
+    const guard = deviceCommandGuard(kind, { enabled: false });
+    assert.ok(guard.consequence, `${kind} asks nothing before it runs`);
+    return guard.consequence as string;
+  });
+  assert.equal(new Set(keys).size, 7, "two of the seven share a sentence again");
+
+  // And it has to be about *this* command. A per-command key holding the same
+  // paragraph seven times would pass everything above.
+  for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+    const texts = keys.map((key) => String(catalogue[key]));
+    assert.equal(new Set(texts).size, 7, `${language}: seven keys, fewer than seven sentences`);
+  }
+
+  const restart = deviceCommandGuard("restart_modem", {}).consequence as string;
+  for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+    assert.match(
+      String(catalogue[restart]),
+      /\+CFUN: 7/,
+      `${language}: the one consequence that has to name the stranded state does not`,
+    );
+  }
+});
+
+/**
+ * The free-text AT box, which had no guard at all until this card.
+ *
+ * Both directions, because a table that trips on everything is the same defect
+ * as a table that trips on nothing: `AT+COPS=?` is slow and reversible and is
+ * deliberately absent, `AT+CRSM=176,…` is what the agent itself sends on every
+ * report, and `AT+CFUN=1` is the recovery. A dialog in front of any of those
+ * teaches an operator to confirm without reading, which is how the eight that
+ * are here stop working.
+ */
+test("the AT box guards the commands that cannot be undone, and only those", () => {
+  const guarded: [string, string][] = [
+    ['AT+QCFG="usbnet",1', "usbnet"],
+    ["at+qcfg = \"usbnet\" , 0", "usbnet"],
+    ["AT+CFUN=1,1", "cfun-reset"],
+    ["AT+CFUN=0,1", "cfun-reset"],
+    ["AT+CFUN=0", "cfun-off"],
+    ["  at+cfun=4  ", "cfun-off"],
+    ["AT+CFUN=7", "cfun-off"],
+    ["AT+COPS=1,2,\"46001\"", "cops-manual"],
+    ["AT+COPS=2", "cops-manual"],
+    ["AT+CRSM=214,28589,0,0,4", "crsm-write"],
+    ["AT+CRSM=219,28421", "crsm-write"],
+    ["AT+CSIM=14,\"00A4040400\"", "csim"],
+    ["AT+CCHO=\"A0000005591010FFFFFFFF8900000100\"", "logical-channel"],
+    ["AT+CGLA=1,10,\"80CA9F7F00\"", "logical-channel"],
+    ["AT+CCHC=1", "logical-channel"],
+    ["AT+QPRTPARA=1", "nvram"],
+  ];
+  for (const [command, id] of guarded) {
+    const guard = atCommandGuard(command);
+    assert.equal(guard?.id, id, `${command} trips ${guard?.id ?? "nothing"}`);
+  }
+
+  const waved: string[] = [
+    "AT+CSQ",
+    "AT",
+    "AT+COPS?",
+    // 🔴 The sweep. It was in the edge panel's table for one card and was taken
+    // back out: it is slow, not irreversible — the modem returns by itself with
+    // nothing to undo. Guarding it is what trains the reflex.
+    "AT+COPS=?",
+    // The recovery from the two guarded CFUN forms.
+    "AT+CFUN=1",
+    "AT+COPS=0",
+    // The read the agent itself sends on every report.
+    "AT+CRSM=176,28589,0,0,4",
+    "AT+CRSM=192,28421",
+    "AT+CGDCONT?",
+    "AT+QNWINFO",
+  ];
+  for (const command of waved) {
+    assert.equal(atCommandGuard(command), null, `${command} is guarded and should not be`);
+  }
+
+  // Every entry is reachable and distinct, so an unreachable one — shadowed by
+  // a broader pattern above it — is a failing test rather than dead copy.
+  const ids = AT_COMMAND_GUARDS.map((guard) => guard.id);
+  assert.equal(new Set(ids).size, ids.length, "two AT guards share an id");
+  const tripped = new Set(guarded.map(([, id]) => id));
+  assert.deepEqual(
+    ids.filter((id) => !tripped.has(id)),
+    [],
+    "an AT guard no sample reaches: it may be shadowed by the pattern above it",
+  );
+});
+
+/**
+ * The panels are wired to that table, at the point of use.
+ *
+ * Four claims, and every one of them has been a false green somewhere on this
+ * board before:
+ *
+ * 1. the dispatcher really asks `deviceCommandGuard`;
+ * 2. the function that performs the request is reachable from `onConfirm` and
+ *    from nothing that renders — no handler, no prop;
+ * 3. the AT box consults `atCommandGuard` rather than only importing it;
+ * 4. `window.confirm` is gone from both files, because one string is what made
+ *    seven commands share a sentence in the first place.
+ */
+test("both panels reach the gateway only through the guard and the dialog", () => {
+  for (const relative of [CONSOLE_SOURCE, ESIM_SOURCE]) {
+    const source = readSource(relative);
+    const code = codeOnly(source);
+
+    assert.ok(code.includes("<ConfirmDialog"), `${relative} renders no confirmation dialog`);
+    assert.ok(
+      !/window\.confirm\(/.test(code),
+      `${relative} is back on window.confirm, which can only show one string`,
+    );
+
+    const dispatcher = bodyOfFunction(source, "request");
+    assert.ok(dispatcher, `${relative} has no request dispatcher`);
+    assert.match(
+      dispatcher as string,
+      /deviceCommandGuard\(/,
+      `${relative}: the dispatcher no longer asks what stands in front of the command`,
+    );
+
+    // The write itself. It has to be the thing that talks to the gateway, or
+    // naming it proves nothing about the request.
+    const write = bodyOfFunction(source, "runNow");
+    assert.ok(write, `${relative} has no runNow`);
+    assert.match(write as string, /fetch\(/, `${relative}: runNow no longer performs the request`);
+    assert.match(write as string, /method:\s*"POST"/, `${relative}: runNow stopped posting`);
+
+    // And it is unreachable from anything a finger can touch.
+    const handlers = [
+      ...handlerExpressions(source, "onClick"),
+      ...handlerExpressions(source, "onSubmit"),
+      ...handlerExpressions(source, "onRun"),
+    ];
+    assert.ok(handlers.length > 0, `${relative}: no handlers found; this check reads nothing`);
+    const direct = handlers.filter((expression) => /\brunNow\b/.test(expression));
+    assert.deepEqual(
+      direct,
+      [],
+      `${relative}: a control calls the write directly, so the dialog is decoration`,
+    );
+
+    // `device-console.tsx` exports two panels and each mounts its own dialog,
+    // so this is a lower bound — but every one of them has to be wired to the
+    // one function that reads the pending action and sends it.
+    const confirmed = handlerExpressions(source, "onConfirm");
+    assert.ok(confirmed.length > 0, `${relative}: nothing is wired to onConfirm`);
+    assert.deepEqual(
+      confirmed.filter((expression) => !/\bproceed\b/.test(expression)),
+      [],
+      `${relative}: a dialog confirms into something other than the pending action`,
+    );
+  }
+
+  // The AT box, which is the whole reason this card exists.
+  const atBox = bodyOfFunction(readSource(CONSOLE_SOURCE), "AtConsole");
+  assert.ok(atBox, "AtConsole is gone");
+  assert.match(
+    atBox as string,
+    /atCommandGuard\(command\)/,
+    "the AT box no longer asks whether what was typed is guarded",
+  );
+  assert.match(
+    atBox as string,
+    /AT_COMMAND_GUARDS\.map/,
+    "the guarded shapes are no longer drawn from the table, so a new one would be invisible",
+  );
+});
+
+/**
+ * The USB-net switch: a guard that only sometimes applied, twice over.
+ *
+ * The confirmation was conditional on the mode not being rmnet, and so was the
+ * red — and the red never rendered at all, because `className="risk"` is
+ * declared only as `.button-row button.risk` and `.row-actions button.risk`
+ * and this button sits in an inline form. A written guard that does not render
+ * is worse than none: it is on the checklist.
+ */
+test("the usbnet switch asks every time, and its red is a variant rather than a class", () => {
+  const source = readSource(CONSOLE_SOURCE);
+  const body = bodyOfFunction(source, "UsbnetControls");
+  assert.ok(body, "UsbnetControls is gone");
+
+  // Both modes are confirmed, and with different sentences: rmnet keeps the
+  // QMI port and finds its own way back, and saying so is what stops the other
+  // dialog reading like boilerplate.
+  const rmnet = deviceCommandGuard("set_usbnet_mode", { usbnet_mode: "rmnet" });
+  const other = deviceCommandGuard("set_usbnet_mode", { usbnet_mode: "ecm" });
+  assert.ok(rmnet.consequence, "switching to rmnet asks nothing");
+  assert.ok(other.consequence, "switching away from rmnet asks nothing");
+  assert.notEqual(rmnet.consequence, other.consequence, "both modes share one sentence");
+
+  assert.match(
+    body as string,
+    /<Button[^>]*variant="risk"/,
+    "the submit lost the red that finally renders",
+  );
+  assert.ok(
+    !/variant=\{[^}]*\?/.test(body as string),
+    "the variant is conditional again, so the warning colour is only sometimes there",
+  );
+  assert.deepEqual(classListsIn(source), [], "a class here cannot be checked against the build");
+});
+
+/**
+ * A switch is not done because the command said so.
+ *
+ * `/api/esim/switch` answers `ok` in cases where the profile did not change —
+ * the vowifi board is fixing that at the edge (T080) and this card may not
+ * touch it, so what it owes is a console that does not repeat the claim. The
+ * timestamp comparison is the whole mechanism: the reading that was already on
+ * screen when the button was pressed says nothing about the switch.
+ */
+test("the eSIM switch is reported from a read taken after it, never from ok", () => {
+  const switched = {
+    kind: "switch_esim_profile",
+    status: "succeeded",
+    completed_at: 1000,
+    payload: { modem_imei: "869123456789012", target_iccid: "8986041234567890123" },
+  };
+  const profile = (state: string, collectedAt: number) => ({
+    iccid: "8986041234567890123",
+    state,
+    collectedAt,
+  });
+
+  assert.equal(esimSwitchVerdict([], []), null, "nothing switched is not the same as fine");
+
+  // A command that only *reported* success, with no read after it.
+  assert.equal(esimSwitchVerdict([switched], [])?.state, "unverified");
+
+  // 🔴 A reading collected *before* the switch is the one that was already on
+  // screen, and it proves nothing. This is the case a naive "is it enabled
+  // now" would get wrong, and it is the only interesting one.
+  assert.equal(
+    esimSwitchVerdict([switched], [profile("enabled", 999)])?.state,
+    "unverified",
+    "a reading older than the switch is being used as evidence for it",
+  );
+
+  const confirmed = esimSwitchVerdict([switched], [profile("enabled", 1001)]);
+  assert.equal(confirmed?.state, "confirmed");
+  assert.equal(confirmed?.readAt, 1001);
+  assert.equal(confirmed?.targetIccid, "8986041234567890123");
+
+  const contradicted = esimSwitchVerdict([switched], [profile("disabled", 1001)]);
+  assert.equal(contradicted?.state, "contradicted");
+  assert.equal(contradicted?.observed, "disabled");
+
+  // The newest read wins, in both directions.
+  assert.equal(
+    esimSwitchVerdict([switched], [profile("enabled", 1001), profile("disabled", 1002)])?.state,
+    "contradicted",
+  );
+  // A failed switch is not a switch.
+  assert.equal(
+    esimSwitchVerdict([{ ...switched, status: "failed" }], [profile("enabled", 1001)]),
+    null,
+  );
+  // Another profile's row says nothing about this one.
+  assert.equal(
+    esimSwitchVerdict([switched], [{ ...profile("enabled", 1001), iccid: "8986049999999999999" }])
+      ?.state,
+    "unverified",
+  );
+
+  // And the panel draws it, at the point of use.
+  const code = codeOnly(readSource(ESIM_SOURCE));
+  assert.match(code, /esimSwitchVerdict\(commands,/, "the panel no longer computes the verdict");
+  assert.match(code, /<SwitchVerdict\b/, "the verdict is computed and not shown");
+});
+
+/**
+ * The guards that were already right are still right.
+ *
+ * T021 §2 listed which of the twenty-three writes on this page already had
+ * something in front of them, and a migration is exactly the kind of change
+ * that quietly loses one. Checked against the table rather than against the
+ * markup, so the answer does not depend on how a button is drawn.
+ */
+test("nothing that was guarded before this card is unguarded after it", () => {
+  const stillGuarded: [string, Record<string, unknown>][] = [
+    ["restart_modem", {}],
+    ["reset_modem_usb", {}],
+    ["scan_operators", {}],
+    ["rotate_ip", {}],
+    ["set_radio", { enabled: false }],
+    ["set_data_network", { enabled: false }],
+    ["reregister_network", {}],
+    ["set_usbnet_mode", { usbnet_mode: "ecm" }],
+    ["switch_esim_profile", {}],
+    ["download_esim_profile", {}],
+    // The four T030 found with nothing in front of them at all.
+    ["select_operator", { mode: "manual" }],
+    ["send_ussd", { stage: "start" }],
+    ["send_ussd", { stage: "continue" }],
+    ["run_at_command", { command: "AT+CFUN=0" }],
+  ];
+  for (const [kind, payload] of stillGuarded) {
+    assert.ok(
+      deviceCommandGuard(kind, payload).consequence,
+      `${kind} ${JSON.stringify(payload)} now runs without asking`,
+    );
+  }
+
+  // And the deliberate exceptions stay exceptions, with their reasons on file.
+  const stillOpen: [string, Record<string, unknown>][] = [
+    ["modem_report", {}],
+    ["list_esim_profiles", {}],
+    ["read_esim_info", {}],
+    ["refresh_modems", {}],
+    ["set_radio", { enabled: true }],
+    ["set_data_network", { enabled: true }],
+    ["select_operator", { mode: "automatic" }],
+    ["send_ussd", { stage: "cancel" }],
+    ["run_at_command", { command: "AT+CSQ" }],
+  ];
+  for (const [kind, payload] of stillOpen) {
+    const guard = deviceCommandGuard(kind, payload);
+    assert.equal(
+      guard.consequence,
+      null,
+      `${kind} ${JSON.stringify(payload)} now asks, and a question in front of a safe command ` +
+        "teaches the reflex that defeats the others",
+    );
+    assert.ok(guard.why.length > 20, `${kind} is unguarded with no reason on file`);
+  }
+
+  // Fail closed. A kind nobody wrote an entry for is the failure the whole
+  // table exists to stop, and it must not be the one that goes straight out.
+  assert.ok(
+    deviceCommandGuard("a_command_nobody_listed", {}).consequence,
+    "an unlisted command sends without asking",
+  );
+});
+
+/**
+ * The danger zone is drawn with properties this build actually sets.
+ *
+ * 🔴 A red border was the obvious answer and it would not have rendered:
+ * `CARD.root` asks for a border width and computes to `none 0px` here, which
+ * is the whole of `BORDER_WIDTH_WITHOUT_A_STYLE`. Shipping markup that reviews
+ * as a warning and paints nothing is the exact defect this card was sent to fix
+ * on the USB-net button, so the check is that the zone uses no border at all
+ * and that what it does use generates CSS.
+ */
+test("the danger zone says so without a border, and the buttons in it are red", async () => {
+  const classes = [CARD.dangerHeader, CARD.dangerTitle, LOG.entry]
+    .join(" ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const generated = await generatedClasses([...classes, "p-s4"]);
+  assert.deepEqual(
+    classes.filter((name) => !generated.has(name)),
+    [],
+    "the danger zone or the log entry asks for a class the build does not produce",
+  );
+  assert.ok(
+    !classes.some((name) => /^-?border(-|$)/.test(name)),
+    "a border here computes to 0px on this build: BORDER_WIDTH_WITHOUT_A_STYLE",
+  );
+
+  const zone = bodyOfFunction(readSource(CONSOLE_SOURCE), "DangerZone");
+  assert.ok(zone, "the danger zone is gone");
+  assert.match(zone as string, /CARD\.dangerHeader/, "the zone no longer reads as one");
+  assert.match(zone as string, /DISRUPTIVE\.map/, "the seven are drawn from somewhere else now");
+  assert.match(
+    zone as string,
+    /variant="risk"/,
+    "the seven lost the colour that says which half of this card they are in",
+  );
+  // The way back is in the same card and is not one of them. It used to be two
+  // plain buttons *inside* the row of seven, which is the arrangement that made
+  // a dangerous action and its undo look like eight peers.
+  assert.match(zone as string, /variant="ghost"/, "the recovery buttons look dangerous again");
+
+  // And the page puts the device's removal in the same zone rather than under
+  // the first table an operator sees.
+  const page = codeOnly(readSource(DEVICE_PAGE));
+  assert.match(page, /CARD\.dangerHeader/, "removing a device is outside the danger zone again");
+  assert.match(page, /<DeviceAdmin\b/, "the admin controls are not rendered at all");
+});
+
+/**
+ * Two status vocabularies, two tables.
+ *
+ * `failed` is a device state and also a command status, and `pending` is
+ * neither — one map answering both questions is how a device that has never
+ * checked in ends up wearing the colour of a command that timed out.
+ */
+test("a command status and a profile state get their own colours", () => {
+  assert.equal(toneForCommandStatus("succeeded"), "ok");
+  assert.equal(toneForCommandStatus("failed"), "bad");
+  assert.equal(toneForCommandStatus("expired"), "bad");
+  assert.equal(toneForCommandStatus("pending"), "warn");
+  assert.equal(toneForCommandStatus("SUCCEEDED"), "ok", "the gateway's casing is not a colour");
+  // Whatever a newer console or a newer edge recorded. Guessing a colour for a
+  // word this build does not know is worse than not colouring it.
+  assert.equal(toneForCommandStatus("quarantined"), "neutral");
+
+  assert.equal(toneForProfileState("enabled"), "ok");
+  assert.equal(toneForProfileState("deleted"), "bad");
+  assert.equal(toneForProfileState("disabled"), "neutral", "inventory is not news");
+  assert.equal(toneForProfileState("whatever"), "neutral");
+
+  // The two are genuinely different, or there was no reason for two.
+  assert.notEqual(toneForCommandStatus("failed"), toneForProfileState("failed"));
 });
 
 /* ── The helpers ─────────────────────────────────────────────────────── */
