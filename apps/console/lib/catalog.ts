@@ -593,25 +593,145 @@ export async function fetchRules(
   return arrayOf(body.rules).filter(isRule);
 }
 
-export async function fetchAudit(
+/**
+ * What one load of the audit log turned out to be.
+ *
+ * Four outcomes, not two. `/audit` shipped with `events: AuditRow[] = []` and a
+ * `loadError` flag, and that pair cannot say the thing that was actually
+ * happening: the gateway answered 200 with real events, every one of them was
+ * dropped by the parser, and the page drew "Nothing recorded yet" — the same
+ * picture a tenant with a genuinely empty log gets. Nothing threw, so the error
+ * branch never ran, and the console spent an unknown number of days telling
+ * operators their audit trail was empty while the gateway held it.
+ *
+ * `unreadable` is the state that had nowhere to live. It is not cosmetic: an
+ * empty audit log and an audit log this console cannot read call for opposite
+ * responses from whoever is looking at it.
+ */
+export type AuditLoad =
+  | { status: "ok"; events: readonly AuditRow[] }
+  | { status: "empty" }
+  | { status: "unreadable"; received: number }
+  | { status: "failed" };
+
+/**
+ * The audit log, as one of four outcomes.
+ *
+ * The fetch is caught here rather than in the page so that the page has no
+ * logic in it at all: `app/**.tsx` cannot be run by a test in this app, so
+ * anything decided there is decided where nothing can check it.
+ */
+export async function loadAudit(
   host: string,
   token: string | undefined,
   fetchImpl: typeof fetch = fetch,
-): Promise<AuditRow[]> {
-  const body = await getCatalog(host, "/v1/audit", token, fetchImpl);
-  return arrayOf(body.events).filter(isAuditEvent);
+): Promise<AuditLoad> {
+  let body: Record<string, unknown>;
+  try {
+    body = await getCatalog(host, "/v1/audit", token, fetchImpl);
+  } catch {
+    return { status: "failed" };
+  }
+  const received = arrayOf(body.events);
+  const events = received
+    .map(parseAuditEvent)
+    .filter((row): row is AuditRow => row !== null);
+  if (events.length > 0) return { status: "ok", events };
+  // Rows arrived and none survived the parser. Reporting that as "empty" is
+  // the bug this type exists to make unrepresentable.
+  if (received.length > 0) return { status: "unreadable", received: received.length };
+  return { status: "empty" };
+}
+
+/**
+ * One audit row, in either of the two shapes the gateway has been seen to send.
+ *
+ * `apps/gateway/internal/audit/log.go` declares `Event` with no struct tags, so
+ * `encoding/json` marshals it under the Go field names and `/v1/audit` answers
+ * `{"Actor":…,"Action":…,"Target":…}`. Every sibling endpoint's struct is
+ * tagged, which is why this is the only page it happened to. Reading both cases
+ * is deliberate rather than a workaround: putting tags on that struct changes
+ * the wire format of a shipped endpoint, and this console has to keep working
+ * across the deploy where it does — before, during and after.
+ */
+export function parseAuditEvent(value: unknown): AuditRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const action = eitherCase(row, "action");
+  if (action === null) return null;
+  return {
+    actor: eitherCase(row, "actor") ?? "",
+    action,
+    target: eitherCase(row, "target") ?? "",
+  };
+}
+
+/** `actor` or `Actor`. Only the first letter differs; Go leaves the rest. */
+function eitherCase(row: Record<string, unknown>, name: string): string | null {
+  const goName = name.charAt(0).toUpperCase() + name.slice(1);
+  return asString(row[name]) ?? asString(row[goName]);
+}
+
+/**
+ * What the audit page draws, decided here rather than in the `.tsx`.
+ *
+ * The invariant this exists to hold: `rows` is non-empty exactly when
+ * `placeholder` is null. The renderer therefore branches on `placeholder`, and
+ * there is no arrangement of it that shows the empty-state copy over a failed
+ * or unreadable load — which is precisely what the page used to do, printing
+ * "Could not load audit events." above a card reading "Nothing recorded yet".
+ */
+export type AuditScreen = {
+  readonly rows: readonly AuditRow[];
+  /** The line above the card. Null when nothing went wrong. */
+  readonly errorKey: string | null;
+  /** The card's contents when there is no table to draw. */
+  readonly placeholder: {
+    readonly titleKey: string;
+    readonly descriptionKey: string;
+    readonly vars?: Record<string, number>;
+  } | null;
+};
+
+export function auditScreen(load: AuditLoad): AuditScreen {
+  switch (load.status) {
+    case "ok":
+      return { rows: load.events, errorKey: null, placeholder: null };
+    case "empty":
+      return {
+        rows: [],
+        errorKey: null,
+        placeholder: {
+          titleKey: "empty.audit.title",
+          descriptionKey: "empty.audit.desc",
+        },
+      };
+    case "unreadable":
+      return {
+        rows: [],
+        errorKey: "audit.unreadableError",
+        placeholder: {
+          titleKey: "empty.audit.unreadableTitle",
+          descriptionKey: "empty.audit.unreadableDesc",
+          vars: { count: load.received },
+        },
+      };
+    case "failed":
+      return {
+        rows: [],
+        errorKey: "audit.loadError",
+        placeholder: {
+          titleKey: "empty.audit.failedTitle",
+          descriptionKey: "empty.audit.failedDesc",
+        },
+      };
+  }
 }
 
 function isRule(value: unknown): value is RuleRow {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
   return typeof row.id === "string" && typeof row.name === "string";
-}
-
-function isAuditEvent(value: unknown): value is AuditRow {
-  if (!value || typeof value !== "object") return false;
-  const row = value as Record<string, unknown>;
-  return typeof row.action === "string";
 }
 
 export async function fetchDevices(

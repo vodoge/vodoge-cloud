@@ -8,7 +8,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
-import { fetchAudit, type AuditRow } from "@/lib/catalog";
+import { auditScreen, loadAudit } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
@@ -19,9 +19,17 @@ import { PAGE } from "@/lib/tokens";
  *
  * It was chosen for being the least interesting one: read-only, three columns,
  * no forms and no destructive controls, so what it demonstrates is the pattern
- * rather than a design. The fetch, the error handling and the empty case are
- * unchanged from the hand-styled version — this card changes how the page
- * looks, not what it does.
+ * rather than a design.
+ *
+ * Every decision this page makes is made in `lib/catalog.ts`, including the
+ * fetch failing. That is not tidiness: no `.tsx` in this app can be run by a
+ * test — there is no jsdom, no testing-library, no vitest, no jest — so a
+ * `try/catch` written here is a rule nothing can check. This page held one, and
+ * what it could not say is how the page came to be wrong for as long as it was:
+ * the gateway answered with events, the parser dropped all of them, nothing
+ * threw, and "Nothing recorded yet" was drawn over a full audit log. `rows` and
+ * `placeholder` are now mutually exclusive by construction, so a load that
+ * failed and a tenant with no history cannot render as the same screen.
  *
  * `locale` is resolved on the server and used directly. It is deliberately not
  * read from a cookie in an effect: this console has shipped that bug twice,
@@ -33,13 +41,7 @@ export default async function AuditPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
-  let events: AuditRow[] = [];
-  let loadError = false;
-  try {
-    events = await fetchAudit(host, token);
-  } catch {
-    loadError = true;
-  }
+  const screen = auditScreen(await loadAudit(host, token));
 
   return (
     <>
@@ -49,13 +51,19 @@ export default async function AuditPage() {
           <p className={PAGE.description}>{t("audit.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className={PAGE.error}>{t("audit.loadError", locale)}</p> : null}
+      {screen.errorKey ? (
+        <p className={PAGE.error}>{t(screen.errorKey, locale)}</p>
+      ) : null}
 
       <Card>
-        {events.length === 0 ? (
+        {screen.placeholder ? (
           <CardEmpty
-            title={t("empty.audit.title", locale)}
-            description={t("empty.audit.desc", locale)}
+            title={t(screen.placeholder.titleKey, locale, screen.placeholder.vars)}
+            description={t(
+              screen.placeholder.descriptionKey,
+              locale,
+              screen.placeholder.vars,
+            )}
           />
         ) : (
           <Table>
@@ -67,7 +75,7 @@ export default async function AuditPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {events.map((event, index) => (
+              {screen.rows.map((event, index) => (
                 <TableRow key={`${event.action}:${index}`}>
                   <TableCell mono>{event.actor || "—"}</TableCell>
                   <TableCell>

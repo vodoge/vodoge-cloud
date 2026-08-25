@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  fetchAudit,
+  auditScreen,
+  loadAudit,
+  parseAuditEvent,
   fetchContacts,
   fetchDevices,
   fetchRules,
@@ -212,7 +214,7 @@ test("rules and audit carry the session like everything else", async () => {
   }) as unknown as typeof fetch;
 
   await fetchRules("a.vodoge.com", "tok-a", fetchImpl);
-  await fetchAudit("a.vodoge.com", "tok-a", fetchImpl);
+  await loadAudit("a.vodoge.com", "tok-a", fetchImpl);
   assert.equal(seen.length, 2);
   for (const headers of seen) {
     assert.equal(headers.authorization, "Bearer tok-a");
@@ -240,7 +242,160 @@ test("malformed rule and audit rows are dropped rather than rendered", async () 
     )) as unknown as typeof fetch;
 
   assert.equal((await fetchRules("a.vodoge.com", "t", fetchImpl)).length, 1);
-  assert.equal((await fetchAudit("a.vodoge.com", "t", fetchImpl)).length, 1);
+  assert.deepEqual(await loadAudit("a.vodoge.com", "t", fetchImpl), {
+    status: "ok",
+    events: [{ actor: "a", action: "auth.login", target: "" }],
+  });
+});
+
+/**
+ * The body below is the one `/v1/audit` really answers with, byte for byte from
+ * a live tenant: `apps/gateway/internal/audit/log.go` declares `Event` with no
+ * struct tags, so `encoding/json` uses the Go field names. The console asked
+ * for `row.action`, got `undefined`, dropped every row, and drew "Nothing
+ * recorded yet" over a populated audit log without anything throwing.
+ *
+ * Deleting either half of `eitherCase` turns this red.
+ */
+test("audit rows arrive with Go field names and are read, not dropped", async () => {
+  const fetchImpl = (async () =>
+    new Response(
+      '{"events":[{"Actor":"97747a3e-0000-0000-0000-000000000000",' +
+        '"Action":"proxy.instances_export_refused",' +
+        '"Target":"read-only account","Detail":{}}]}',
+      { status: 200 },
+    )) as unknown as typeof fetch;
+
+  const load = await loadAudit("a.vodoge.com", "t", fetchImpl);
+  assert.deepEqual(load, {
+    status: "ok",
+    events: [
+      {
+        actor: "97747a3e-0000-0000-0000-000000000000",
+        action: "proxy.instances_export_refused",
+        target: "read-only account",
+      },
+    ],
+  });
+});
+
+test("the tagged shape keeps working, so the gateway may be fixed either way", () => {
+  assert.deepEqual(parseAuditEvent({ actor: "a", action: "auth.login", target: "b" }), {
+    actor: "a",
+    action: "auth.login",
+    target: "b",
+  });
+  // A row with no action under either spelling is not an audit row.
+  assert.equal(parseAuditEvent({ Actor: "a", Target: "b" }), null);
+  assert.equal(parseAuditEvent("x"), null);
+  assert.equal(parseAuditEvent(null), null);
+});
+
+/**
+ * The point of the whole card: four loads, four screens, no two alike.
+ *
+ * The page used to hold `events: AuditRow[] = []` and a `loadError` boolean,
+ * and it printed the empty-state copy under *both* of the failing ones. A
+ * reader could not tell "this tenant has done nothing" from "this console
+ * could not read the answer" — and it was the second one that was true.
+ */
+test("an empty audit log and a failed load are different screens", () => {
+  const empty = auditScreen({ status: "empty" });
+  const failed = auditScreen({ status: "failed" });
+  const unreadable = auditScreen({ status: "unreadable", received: 3 });
+  const ok = auditScreen({
+    status: "ok",
+    events: [{ actor: "a", action: "auth.login", target: "b" }],
+  });
+
+  // Nothing is wrong, so there is no error line and no placeholder.
+  assert.equal(ok.errorKey, null);
+  assert.equal(ok.placeholder, null);
+  assert.equal(ok.rows.length, 1);
+
+  // An empty log is not a failure: no error line, and it says what would be
+  // here rather than that something broke.
+  assert.equal(empty.errorKey, null);
+  assert.equal(empty.placeholder?.titleKey, "empty.audit.title");
+
+  // Both failures say so above the card *and* inside it.
+  assert.equal(failed.errorKey, "audit.loadError");
+  assert.equal(failed.placeholder?.titleKey, "empty.audit.failedTitle");
+  assert.equal(unreadable.errorKey, "audit.unreadableError");
+  assert.equal(unreadable.placeholder?.titleKey, "empty.audit.unreadableTitle");
+  // How many were thrown away, because "some" and "four hundred" are different
+  // conversations with whoever owns the gateway.
+  assert.deepEqual(unreadable.placeholder?.vars, { count: 3 });
+
+  // Every one of the four is a screen of its own.
+  const drawn = [ok, empty, failed, unreadable].map((screen) =>
+    JSON.stringify([screen.errorKey, screen.placeholder, screen.rows.length]),
+  );
+  assert.equal(new Set(drawn).size, 4);
+});
+
+/** And the invariant the renderer leans on: rows or placeholder, never both. */
+test("a screen either has rows or has a placeholder", () => {
+  for (const load of [
+    { status: "empty" },
+    { status: "failed" },
+    { status: "unreadable", received: 1 },
+    { status: "ok", events: [{ actor: "a", action: "auth.login", target: "" }] },
+  ] as const) {
+    const screen = auditScreen(load);
+    assert.equal(
+      screen.rows.length > 0,
+      screen.placeholder === null,
+      `${load.status} can draw an empty table or a placeholder over rows`,
+    );
+  }
+});
+
+/**
+ * A parser that drops everything must not report an empty log.
+ *
+ * This is the state the old code could not represent at all, and its absence is
+ * why the bug survived: `fetchAudit` returned `[]` for "nothing happened" and
+ * for "nothing parsed", and the page had no way to tell them apart.
+ */
+test("events that all fail to parse are unreadable, not empty", async () => {
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ events: [{ who: "a" }, { what: "b" }, 7] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  assert.deepEqual(await loadAudit("a.vodoge.com", "t", fetchImpl), {
+    status: "unreadable",
+    received: 3,
+  });
+});
+
+test("a tenant with no audit history is empty, not unreadable", async () => {
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ events: [] }), { status: 200 })) as unknown as typeof fetch;
+  assert.deepEqual(await loadAudit("a.vodoge.com", "t", fetchImpl), { status: "empty" });
+});
+
+/**
+ * A rejected session is a failure, not an empty log.
+ *
+ * `getCatalog` throws `UnauthorizedError` on 401/403 and a plain `Error` on
+ * anything else that is not ok; both have to come out as `failed` rather than
+ * as an empty audit trail shown to a signed-out operator.
+ */
+test("a refused or unreachable gateway is a failed load, not an empty one", async () => {
+  for (const status of [401, 403, 404, 500]) {
+    const fetchImpl = (async () =>
+      new Response("no", { status })) as unknown as typeof fetch;
+    assert.deepEqual(
+      await loadAudit("a.vodoge.com", "t", fetchImpl),
+      { status: "failed" },
+      `HTTP ${status} should not read as an empty audit log`,
+    );
+  }
+  const thrower = (async () => {
+    throw new TypeError("fetch failed");
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await loadAudit("a.vodoge.com", "t", thrower), { status: "failed" });
 });
 
 // The thread list is a closed object literal, same as parseDevice: a field the
