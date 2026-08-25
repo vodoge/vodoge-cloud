@@ -225,15 +225,14 @@ type Literal = { readonly start: number; readonly text: string };
  * `${…}` skipped as well, or every interpolation reads as a broken class name.
  */
 function scan(source: string): { masked: string; code: string; literals: Literal[] } {
-  // 🔴 `split("")`, never `[...source]`. Every index this function is handed or
-  // hands out — `indexOf`, a regex match index, `source.length` — counts UTF-16
-  // units, and spreading a string splits it by *code points*. One emoji in a
-  // comment therefore made the two working arrays a element shorter from that
-  // point on, and every blank after it landed one character early: the closing
-  // quote of a string was erased while the first character of its contents was
-  // kept. Six `.tsx` files already carry one of these in a comment, so this was
-  // live, and it is the kind of defect that shows up as a brace count rather
-  // than as anything readable.
+  // 🔴 `split("")`, never `[...source]`. The spread iterates code *points*, so
+  // one astral character — a 🔴 in a comment, and this file is full of them —
+  // makes the array one element shorter than the string from that point on,
+  // while every offset used below comes from `indexOf`, `slice` and `.length`,
+  // which count code *units*. Everything after the first emoji is then blanked
+  // one character to the left: the `/` of a `{/* … */}` survives and the `}`
+  // that closes it does not. It cost this card two failing guards with symptoms
+  // — an empty class list, unbalanced braces — that pointed nowhere near it.
   const masked = source.split("");
   const code = source.split("");
   const literals: Literal[] = [];
