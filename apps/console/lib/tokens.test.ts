@@ -4,38 +4,56 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import postcss from "postcss";
+import defaultTheme from "tailwindcss/defaultTheme.js";
 import tailwindcss from "tailwindcss";
 import tailwindConfig from "../tailwind.config.ts";
 import { cn } from "./cn.ts";
 import * as TOKENS from "./tokens.ts";
 import {
+  BUTTON,
+  CLASSES_NEEDING_AN_ANCESTOR,
+  CLASSES_WITH_NO_STYLESHEET,
+  CONFIRM_CONSEQUENCE_KEYS,
+  CONFIRM_LABEL_KEYS,
   FORBIDDEN_IN_MIGRATED_SOURCES,
   FORM,
   LEGACY_UTILITY_COLLISIONS,
   MIGRATED_SOURCES,
   NAV_GROUPS,
   NON_UTILITY_CLASSES,
+  REDACTED_SECRET,
   SAFE_AREA,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
+  TAILWIND_BORDER_WIDTH,
   TAILWIND_BOX_SHADOW,
   TAILWIND_COLORS,
+  TAILWIND_FLEX,
   TAILWIND_FONT_FAMILY,
   TAILWIND_FONT_SIZE,
   TAILWIND_GRID_TEMPLATE_COLUMNS,
+  TAILWIND_INSET,
   TAILWIND_LETTER_SPACING,
   TAILWIND_LINE_HEIGHT,
+  TAILWIND_MAX_HEIGHT,
   TAILWIND_MAX_WIDTH,
+  TAILWIND_MIN_HEIGHT,
   TAILWIND_OPACITY,
+  TAILWIND_RING_OFFSET_WIDTH,
+  TAILWIND_RING_WIDTH,
   TAILWIND_SPACING,
   TAILWIND_WIDTH,
   TAILWIND_Z_INDEX,
+  UI_PRIMITIVES,
   UNMIGRATED_SOURCES,
+  assertConsequence,
   badgeClass,
   buttonClass,
+  consequenceProblem,
   navState,
   rootTokenValues,
+  secretInputProps,
   tableCellClass,
   themeOverrideValues,
   toneForState,
@@ -280,7 +298,22 @@ function closingBracket(masked: string, open: number): number {
  * who hit it. So literals nested inside a call or an object literal are left
  * alone, and `cn` is named explicitly because it is the one call whose
  * arguments are always classes.
+ *
+ * The one other thing at depth zero that is not a class is the *condition* of
+ * a ternary: `className={d === "inbound" ? "msg msg-in" : "msg msg-out"}`
+ * (`conversation.tsx:90`) puts `"inbound"` right beside two real class lists.
+ * It was reported as a class that generates no CSS the first time a check
+ * asked about an unmigrated file, which is the same false alarm as `ghost` and
+ * would have been switched off the same way. A comparison operand is never a
+ * class list, so skipping it costs nothing and both arms are still read.
  */
+
+/** `x === "inbound"` — the literal is an operand, not a class list. */
+function isComparisonOperand(masked: string, start: number): boolean {
+  const before = masked.slice(0, start).trimEnd();
+  return before.endsWith("==") || before.endsWith("!=");
+}
+
 function classListsIn(source: string): string[] {
   const { masked, literals } = scan(source);
   const byStart = new Map(literals.map((literal) => [literal.start, literal.text]));
@@ -299,7 +332,9 @@ function classListsIn(source: string): string[] {
     for (let i = at + 1; i < close; i++) {
       if ("({[".includes(masked[i])) depth += 1;
       else if (")}]".includes(masked[i])) depth -= 1;
-      else if (depth === 0 && byStart.has(i)) lists.push(byStart.get(i) as string);
+      else if (depth === 0 && byStart.has(i) && !isComparisonOperand(masked, i)) {
+        lists.push(byStart.get(i) as string);
+      }
     }
   }
 
@@ -307,7 +342,9 @@ function classListsIn(source: string): string[] {
     const open = match.index + match[0].length - 1;
     const close = closingBracket(masked, open);
     for (const literal of literals) {
-      if (literal.start > open && literal.start < close) lists.push(literal.text);
+      if (literal.start > open && literal.start < close && !isComparisonOperand(masked, literal.start)) {
+        lists.push(literal.text);
+      }
     }
   }
   return lists;
@@ -393,6 +430,13 @@ const NOT_A_RECIPE = new Set([
   "TAILWIND_Z_INDEX",
   "TAILWIND_WIDTH",
   "TAILWIND_GRID_TEMPLATE_COLUMNS",
+  "TAILWIND_MIN_HEIGHT",
+  "TAILWIND_MAX_HEIGHT",
+  "TAILWIND_BORDER_WIDTH",
+  "TAILWIND_RING_WIDTH",
+  "TAILWIND_RING_OFFSET_WIDTH",
+  "TAILWIND_INSET",
+  "TAILWIND_FLEX",
   // Not classes: an inline style, nav data, and the migration ledger.
   "SAFE_AREA",
   "NAV_GROUPS",
@@ -401,6 +445,15 @@ const NOT_A_RECIPE = new Set([
   "LEGACY_UTILITY_COLLISIONS",
   "FORBIDDEN_IN_MIGRATED_SOURCES",
   "NON_UTILITY_CLASSES",
+  // The primitive registry: file names, export names and recipe names.
+  "UI_PRIMITIVES",
+  // Dead-class ledgers, and the copy rules for a confirmation.
+  "CLASSES_WITH_NO_STYLESHEET",
+  "CLASSES_NEEDING_AN_ANCESTOR",
+  "CONFIRM_CONSEQUENCE_KEYS",
+  "CONFIRM_LABEL_KEYS",
+  "CONFIRM_MIN_CONSEQUENCE",
+  "REDACTED_SECRET",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -859,6 +912,136 @@ test("every .tsx is on exactly one side of the migration ledger", () => {
   );
 });
 
+/* ── The primitives are sealed ───────────────────────────────────────────
+ *
+ * This card's job was to make `components/ui/*` something the seven page
+ * migrations consume rather than edit. The tests above make a new `.tsx` be
+ * *classified*; none of them make a new primitive be *covered*. A component
+ * added to the migrated list that reads its classes from a recipe passes every
+ * one of them and is still a component no test knows the name of — so deleting
+ * its export, or leaving the recipe it was built for unreferenced, is silent.
+ * That is C2/C3 from the pattern review, one level up.
+ */
+
+test("every file under components/ui is registered as a primitive", () => {
+  const found = readdirSync(join(root, "components", "ui"))
+    .filter((name) => name.endsWith(".tsx"))
+    .map((name) => `components/ui/${name}`)
+    .sort();
+  assert.deepEqual(
+    Object.keys(UI_PRIMITIVES).sort(),
+    found,
+    "a primitive was added or removed without UI_PRIMITIVES being told: it is unchecked",
+  );
+
+  for (const relative of found) {
+    assert.ok(
+      (MIGRATED_SOURCES as readonly string[]).includes(relative),
+      `${relative} is a shared component drawn by the old stylesheet`,
+    );
+  }
+});
+
+test("every primitive still exports what it says, drawn by the recipes it names", () => {
+  const recipes = new Set(recipeNames());
+  const table = TOKENS as unknown as Record<string, unknown>;
+  const missingExports: string[] = [];
+  const notRecipes: string[] = [];
+  const notHelpers: string[] = [];
+  const unused: string[] = [];
+  const uncovered: string[] = [];
+
+  for (const [relative, entry] of Object.entries(UI_PRIMITIVES)) {
+    const code = codeOnly(readSource(relative));
+
+    for (const name of entry.exports) {
+      // Declared here, not merely mentioned. `export function X`, or the
+      // `export const X =` a re-export uses.
+      const declared = new RegExp(`export\\s+(async\\s+)?(function|const)\\s+${name}\\b`);
+      if (!declared.test(code)) missingExports.push(`${relative}: ${name}`);
+    }
+
+    for (const name of entry.recipes) {
+      if (!recipes.has(name)) notRecipes.push(`${relative}: ${name}`);
+      // A member access, so naming the recipe in a comment is not enough —
+      // and comments are already stripped, which is the belt to that brace.
+      if (!new RegExp(`\\b${name}\\.`).test(code)) unused.push(`${relative}: ${name}`);
+    }
+    for (const name of entry.helpers) {
+      if (typeof table[name] !== "function") notHelpers.push(`${relative}: ${name}`);
+      // A call, for the same reason: an import outlives everything it was for.
+      if (!new RegExp(`\\b${name}\\s*\\(`).test(code)) unused.push(`${relative}: ${name}`);
+    }
+
+    // Neither list may be empty. A primitive that reads nothing from the
+    // design system is a primitive drawing with something else.
+    if (entry.recipes.length === 0 && entry.helpers.length === 0) uncovered.push(relative);
+  }
+
+  assert.deepEqual(missingExports, [], "a primitive stopped exporting something a page imports");
+  assert.deepEqual(notRecipes, [], "a primitive names a recipe lib/tokens.ts does not walk");
+  assert.deepEqual(notHelpers, [], "a primitive names a helper lib/tokens.ts does not export");
+  assert.deepEqual(unused, [], "registered to a component that never reads it");
+  assert.deepEqual(uncovered, [], "a primitive that takes nothing from lib/tokens.ts");
+});
+
+/**
+ * The ten pages that import the old barrel keep compiling untouched.
+ *
+ * `components/ui.tsx` is now a compatibility layer over `components/ui/*`, and
+ * the thing that must not change is its surface: ten pages, spread across six
+ * of the seven remaining migration cards, import from it, and only one of those
+ * cards is allowed to edit it. `tsc --noEmit` is the real proof that the prop
+ * signatures still fit — this is the cheaper one that says the *names* are
+ * still there, and it fails with the name of the page that would break.
+ */
+test("the old ui barrel still exports every name its ten importers ask for", () => {
+  const barrel = codeOnly(readSource("components/ui.tsx"));
+  const importers: string[] = [];
+  const missing: string[] = [];
+
+  for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
+    if (relative === "components/ui.tsx") continue;
+    const code = codeOnly(readSource(relative));
+    const imported = /import\s*\{([^}]*)\}\s*from\s*"@\/components\/ui"/.exec(code);
+    if (!imported) continue;
+    importers.push(relative);
+    for (const name of imported[1].split(",").map((part) => part.trim()).filter(Boolean)) {
+      const declared = new RegExp(`export\\s+(function|const)\\s+${name}\\b`);
+      if (!declared.test(barrel)) missing.push(`${relative} imports ${name}`);
+    }
+  }
+
+  assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
+  assert.equal(importers.length, 10, `${importers.length} pages import the barrel, not ten`);
+});
+
+/**
+ * One empty state, one badge, one stat card. Not three.
+ *
+ * `CardEmpty` lives in `components/ui/card.tsx` and `EmptyState` used to be a
+ * second implementation in the barrel; opening a third file for it — which was
+ * the plan — would have turned two that disagree into three. The rule is that
+ * the barrel may *delegate* but may not *draw*, and a component that draws is
+ * one that writes markup. Checked structurally rather than by counting names,
+ * because "no `<span>` of its own in this file" is what a second implementation
+ * would need and cannot avoid.
+ */
+test("the compatibility layer delegates and never draws", () => {
+  const { code } = scan(readSource("components/ui.tsx"));
+  const drawn = (code.match(/<[a-z][a-z0-9]*[\s/>]/g) ?? []).filter(
+    (tag) => !tag.startsWith("</"),
+  );
+  assert.deepEqual(
+    drawn,
+    [],
+    "the barrel is drawing its own markup again: that is a second implementation",
+  );
+  for (const source of ["@/components/ui/card", "@/components/ui/badge"]) {
+    assert.ok(code.includes(source), `the barrel no longer delegates to ${source}`);
+  }
+});
+
 test("a file on the unmigrated list is really still unmigrated", () => {
   const legacyNames = legacyClassNames();
   const done: string[] = [];
@@ -908,6 +1091,13 @@ test("the drift-prone Tailwind scales are replaced rather than extended", () => 
     zIndex: TAILWIND_Z_INDEX,
     width: TAILWIND_WIDTH,
     gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
+    minHeight: TAILWIND_MIN_HEIGHT,
+    maxHeight: TAILWIND_MAX_HEIGHT,
+    borderWidth: TAILWIND_BORDER_WIDTH,
+    ringWidth: TAILWIND_RING_WIDTH,
+    ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
+    inset: TAILWIND_INSET,
+    flex: TAILWIND_FLEX,
   };
   for (const [scale, table] of Object.entries(replaced)) {
     assert.equal(theme[scale], table, `theme.${scale} is not the table from lib/tokens.ts`);
@@ -927,6 +1117,526 @@ test("a class from a scale this repo does not control produces no CSS", async ()
   for (const name of kept) {
     assert.ok(generated.has(name), `${name} stopped generating — a recipe just lost a declaration`);
   }
+});
+
+/**
+ * The six the operator asked for on 2026-08-25, and the two traps in them.
+ *
+ * `min-h-96 border-4 ring-8 inset-3 flex-1` all produced CSS before this, from
+ * numbers nobody here had chosen — the same hole `max-w-md` came through,
+ * reopened on five more axes.
+ *
+ * The `kept` half is the half that matters. `flex` and `inset` were both
+ * measured as unused before this card and both measurements were wrong:
+ * `flex-1` is in `STAT.root` and `SHELL.main`, and `top-0` reads the `inset`
+ * scale and holds up two sticky headers. Replacing either with an empty table
+ * would have collapsed a layout with every test still green, because nothing
+ * asserts that a class which vanishes used to exist. This does.
+ */
+test("the five scales the operator named, and maxHeight, are closed", async () => {
+  const gone = [
+    "min-h-96",
+    "border-4",
+    "border-8",
+    "ring-8",
+    "ring-offset-8",
+    "inset-3",
+    "top-3",
+    "flex-initial",
+    "max-h-96",
+  ];
+  const kept = [
+    // The exact classes the recipes carry today. Each one is a layout that
+    // breaks silently if the scale it comes from loses its entry.
+    "min-h-touch",
+    "min-h-s6",
+    "min-h-dvh",
+    "border-0",
+    "border-b-2",
+    "ring-2",
+    "ring-offset-2",
+    "top-0",
+    "inset-0",
+    "flex-1",
+    "max-h-panel",
+    // And the display utilities, which are a different scale entirely and are
+    // what "use flex, never grid" is built on. Tightening `flex` must not
+    // touch them.
+    "flex",
+    "flex-col",
+    "flex-wrap",
+    "sm:flex-row",
+  ];
+  const generated = await generatedClasses([...gone, ...kept]);
+  assert.deepEqual(
+    gone.filter((name) => generated.has(name)),
+    [],
+    "an off-scale utility still generates CSS on an axis the operator asked to close",
+  );
+  for (const name of kept) {
+    assert.ok(generated.has(name), `${name} stopped generating — a live layout just lost a rule`);
+  }
+});
+
+/**
+ * Tailwind scales still on their defaults, and therefore still open.
+ *
+ * 🔴 This lives here, and not in `lib/tokens.ts`, on purpose. That file is
+ * Tailwind *content* — the build scans it for class names — and four of these
+ * names are also bare utilities: `blur`, `grayscale`, `invert` and `sepia`.
+ * Put there, they produced four real filter rules in the stylesheet the console
+ * ships, from a list of identifiers. That was found by diffing the built CSS,
+ * not by reading, and `tailwind.config.ts` records the same accident happening
+ * to this file when the content glob was `./lib/**`. Test files are not
+ * content.
+ *
+ * Nothing below is used by any recipe. Replacing them would be closing doors
+ * nobody has walked through, and each closed door is another table to keep.
+ */
+const STILL_DEFAULT_SCALES = [
+  "animation",
+  "aria",
+  "aspectRatio",
+  "backgroundImage",
+  "backgroundPosition",
+  "backgroundSize",
+  "blur",
+  "brightness",
+  "columns",
+  "container",
+  "content",
+  "contrast",
+  "cursor",
+  "data",
+  "dropShadow",
+  "flexGrow",
+  "flexShrink",
+  // `font-semibold` and `font-medium` come from here. The default is nine
+  // named weights rather than a number line, so there is no value to invent.
+  "fontWeight",
+  "gradientColorStopPositions",
+  "grayscale",
+  "gridAutoColumns",
+  "gridAutoRows",
+  "gridColumn",
+  "gridColumnEnd",
+  "gridColumnStart",
+  "gridRow",
+  "gridRowEnd",
+  "gridRowStart",
+  "gridTemplateRows",
+  "hueRotate",
+  "invert",
+  "keyframes",
+  "lineClamp",
+  "listStyleImage",
+  "listStyleType",
+  "objectPosition",
+  "order",
+  "outlineOffset",
+  "outlineWidth",
+  "rotate",
+  "saturate",
+  "scale",
+  // `sm:` is the one breakpoint this console uses, and it is Tailwind's.
+  "screens",
+  "sepia",
+  "skew",
+  "strokeWidth",
+  "supports",
+  "textDecorationThickness",
+  "textUnderlineOffset",
+  "transformOrigin",
+  "transitionDelay",
+  "transitionDuration",
+  "transitionProperty",
+  "transitionTimingFunction",
+  "willChange",
+];
+
+/**
+ * Which axes can still drift, as a list rather than as a memory.
+ *
+ * Seven scales were replaced, then six more, and both times the question "what
+ * is left?" was answered by reading Tailwind's source by hand. This asks
+ * Tailwind. Every scale in its default theme has to be either replaced in
+ * `tailwind.config.ts` or named above, so a scale cannot be quietly overlooked
+ * a third time and the remaining holes are countable.
+ *
+ * Only scales whose default is a literal are considered. Half of Tailwind's
+ * theme is written as `theme => theme.colors` or `theme => theme.spacing` —
+ * `padding`, `gap`, `height`, `size`, `backgroundColor` and forty others — and
+ * those were closed the moment `colors` and `spacing` were replaced. Listing
+ * them as open holes would be the opposite of true.
+ */
+test("every independent Tailwind scale is either replaced or listed as still open", () => {
+  const theme = tailwindConfig.theme as Record<string, unknown>;
+  const independent = Object.entries(defaultTheme as Record<string, unknown>)
+    .filter(([, value]) => typeof value !== "function")
+    .map(([name]) => name);
+  assert.ok(independent.length > 50, "the default theme could not be read");
+
+  const listed = new Set<string>(STILL_DEFAULT_SCALES);
+  const unaccounted = independent.filter((name) => !(name in theme) && !listed.has(name));
+  assert.deepEqual(
+    unaccounted,
+    [],
+    "a Tailwind scale is on its defaults and nobody has said so: a page can invent a value on it",
+  );
+
+  const stale = [...listed].filter((name) => name in theme);
+  assert.deepEqual(stale, [], "STILL_DEFAULT_SCALES names a scale that is in fact replaced");
+});
+
+/* ── Classes that were never going to render ─────────────────────────────
+ *
+ * A class name in a `.tsx` looks like styling whether or not anything defines
+ * it, and in this console two of them never have. This is the only check in
+ * the file that reads *unmigrated* sources as well, because that is where they
+ * are — and finding them is not the point. Freezing the list is: a page card
+ * that fixes one has to shorten it, and a page card that invents a new one
+ * fails immediately instead of shipping markup that reviews perfectly and
+ * renders as nothing.
+ */
+
+test("a class in any .tsx is defined by the build or by the old stylesheet", async () => {
+  const asked = new Set<string>();
+  for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
+    for (const name of classesIn(classListsIn(readSource(relative)))) asked.add(name);
+  }
+  // Low, and correctly so: the migrated files hold no class literals at all —
+  // a guard above enforces that — so everything counted here comes from the
+  // pages still on the old stylesheet.
+  assert.ok(asked.size > 30, `only ${asked.size} classes found — the extractor is broken`);
+
+  const generated = await generatedClasses([...asked, "p-s4"]);
+  const legacy = legacyClassNames();
+  const allowed = new Set<string>(NON_UTILITY_CLASSES);
+  const dead = [...asked]
+    .filter((name) => !generated.has(name) && !legacy.has(name) && !allowed.has(name))
+    .sort();
+
+  assert.deepEqual(
+    dead,
+    [...CLASSES_WITH_NO_STYLESHEET].sort(),
+    "a class nothing defines: it has never rendered, and nobody would see that in review",
+  );
+});
+
+/**
+ * `.risk` is not a rule, and the button that needed it most never got it.
+ *
+ * The stylesheet declares it only as `.button-row button.risk` and
+ * `.row-actions button.risk`, so it colours a button in those two containers
+ * and does nothing anywhere else. `device-console.tsx:663` — the USB-net mode
+ * switch, which takes a module out of the device list — sits in an
+ * `<form className="inline-form">`, and its warning colour has never once been
+ * drawn. A written guard that does not render is worse than none: it is on the
+ * checklist.
+ *
+ * Both halves are derived rather than remembered. The stylesheet is read for
+ * the claim, and the replacement is put to the real Tailwind build standing on
+ * its own, with no ancestor at all.
+ */
+test("a class that needs an ancestor has a variant that does not", async () => {
+  const layer = legacyLayer();
+  for (const name of CLASSES_NEEDING_AN_ANCESTOR) {
+    const heads = [...layer.matchAll(/([^{}]+)\{/g)].map((match) => match[1]);
+    const selectors = heads
+      .flatMap((head) => head.split(","))
+      .map((selector) => selector.trim())
+      .filter((selector) => new RegExp(`\\.${name}\\b`).test(selector));
+    assert.ok(selectors.length > 0, `.${name} is not in the stylesheet at all any more`);
+    for (const selector of selectors) {
+      assert.notEqual(
+        selector,
+        `.${name}`,
+        `.${name} is a rule of its own now — take it off CLASSES_NEEDING_AN_ANCESTOR`,
+      );
+    }
+  }
+
+  // And the way out has to render. `buttonClass` takes no ancestor and no
+  // container; this is the whole difference between the variant and the class.
+  const classes = buttonClass({ variant: "risk" }).split(/\s+/).filter(Boolean);
+  const generated = await generatedClasses(classes);
+  const silent = classes.filter((name) => !generated.has(name));
+  assert.deepEqual(silent, [], "the risk variant produces no CSS, so it is the same defect again");
+  assert.ok(BUTTON.variant.risk.includes("text-bad"), "a risk button has to read as one");
+  assert.notEqual(
+    BUTTON.variant.risk,
+    BUTTON.variant.danger,
+    "outlined in a row of eight, filled for the one button that carries it out",
+  );
+});
+
+/* ── A confirmation says what will happen ────────────────────────────────
+ *
+ * Seven commands share `device.confirmDisruptive` — one sentence that names
+ * none of them — and one of the seven can leave a module in `+CFUN: 7` that
+ * nobody can reach to power-cycle. The card that splits it into seven is not
+ * this one, so what this one owes is a dialog that cannot be handed an empty
+ * consequence.
+ */
+
+/**
+ * The rule bites on the real catalogue, and is not merely strict.
+ *
+ * A rule that rejected everything would pass an "it rejects the bad ones"
+ * test. Both directions are checked against strings from `messages/*.json`:
+ * the two confirmations that state a consequence have to be accepted, and the
+ * two that ask a bare question have to be refused, in both languages.
+ */
+test("the consequence rule accepts the two that work and refuses the two that do not", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  // Refused: a question with nothing behind it. These are the live strings.
+  for (const key of ["device.confirmDisruptive", "proxy.confirmRemove"]) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      assert.ok(
+        consequenceProblem(catalogue[key]),
+        `${language} ${key} would pass as a consequence, and it states none`,
+      );
+    }
+  }
+
+  // Accepted: the two that do the job, with the question they had to smuggle
+  // in taken off the end — which is what having a dialog with a place for the
+  // consequence means.
+  const worked = [
+    ["device.confirmUsbnet", /(确定继续？|Continue\?)$/],
+    ["esim.dlWarn", /(继续\?|Continue\?)$/],
+  ] as const;
+  for (const [key, question] of worked) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      const statement = String(catalogue[key]).replace(question, "").trim();
+      assert.equal(
+        consequenceProblem(statement),
+        null,
+        `${language} ${key} is one of the two that work and the rule turned it down`,
+      );
+    }
+  }
+
+  // Empty is the one it exists for.
+  assert.ok(consequenceProblem(""));
+  assert.ok(consequenceProblem("   "));
+  assert.throws(() => assertConsequence(""), /consequence/);
+  assert.throws(() => assertConsequence("Remove this permanently?"), /question/);
+  assert.equal(assertConsequence("  This deletes the profile from the eUICC.  "), "This deletes the profile from the eUICC.");
+});
+
+test("every consequence key resolves, in both languages, and states a consequence", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  assert.ok(CONFIRM_CONSEQUENCE_KEYS.length > 0, "an empty list checks nothing");
+  const problems: string[] = [];
+  for (const key of [...CONFIRM_CONSEQUENCE_KEYS]) {
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      const text = catalogue[key];
+      if (typeof text !== "string") {
+        problems.push(`${language} ${key} is missing`);
+        continue;
+      }
+      const problem = consequenceProblem(text);
+      if (problem) problems.push(`${language} ${key}: ${problem}`);
+    }
+  }
+  assert.deepEqual(problems, [], "a confirmation is about to ask a question with nothing behind it");
+
+  const missingLabels = CONFIRM_LABEL_KEYS.filter(
+    (key) => typeof zh[key] !== "string" || typeof en[key] !== "string",
+  );
+  assert.deepEqual(missingLabels, [], "the dialog's own chrome is not in both catalogues");
+});
+
+/**
+ * The prop cannot be left off, and the check cannot be skipped.
+ *
+ * A type is the first half — an optional `consequence` is a `consequence` that
+ * gets omitted, and the card writing the seven confirmations is not this one.
+ * The call to `assertConsequence` is the second, and it has to be on the path
+ * that renders: putting it in an effect, or behind a flag, would make it a
+ * check that runs everywhere except where being wrong matters.
+ */
+test("the confirmation dialog cannot be given a consequence it does not have", () => {
+  const source = readSource("components/ui/confirm-dialog.tsx");
+  const code = codeOnly(source);
+
+  assert.match(code, /\n\s*consequence:\s*string;/, "consequence is no longer a required string");
+  assert.ok(
+    !/consequence\?\s*:/.test(code),
+    "consequence became optional, which is the same as not having it",
+  );
+  assert.match(code, /assertConsequence\(consequence\)/, "the consequence is no longer checked");
+
+  // On the render path. Every brace opened after `return (` closes before the
+  // element that shows the consequence, so the check cannot have been moved
+  // into a `useEffect` or behind a development-only branch.
+  const { masked } = scan(source);
+  const assertAt = masked.indexOf("assertConsequence(consequence)");
+  const returnAt = masked.lastIndexOf("return (");
+  assert.ok(assertAt !== -1 && returnAt > assertAt, "the check no longer runs before the render");
+  for (const effect of masked.matchAll(/useEffect\s*\(/g)) {
+    const close = closingBracket(masked, masked.indexOf("(", effect.index));
+    assert.ok(assertAt < effect.index || assertAt > close, "the check was moved into an effect");
+  }
+});
+
+/* ── A stored secret ─────────────────────────────────────────────────────── */
+
+/**
+ * Four more password fields are about to be migrated across three cards.
+ *
+ * The semantics already exist in `settings-form.tsx:161-172`: an already-stored
+ * secret shows an *empty* box whose placeholder is the redaction marker, so
+ * typing replaces it and leaving it keeps it. The failure this guards against
+ * is the obvious-looking alternative — putting the marker in `value` — which
+ * submits eight bullet characters and saves them as the new password the first
+ * time someone saves the form without touching that field.
+ */
+test("a stored secret shows an empty box, never the marker as its value", () => {
+  const stored = secretInputProps(REDACTED_SECRET);
+  assert.equal(stored.value, "", "the redaction marker would be submitted as the new secret");
+  assert.equal(stored.placeholder, REDACTED_SECRET, "nothing says a secret is already held");
+  assert.equal(stored.stored, true);
+
+  const typed = secretInputProps("hunter2");
+  assert.equal(typed.value, "hunter2");
+  assert.equal(typed.placeholder, "", "a placeholder here would look like a stored secret");
+  assert.equal(typed.stored, false);
+
+  // An empty field is a field the operator has not filled in, not a stored one.
+  assert.equal(secretInputProps("").stored, false);
+  assert.equal(secretInputProps(undefined).value, "");
+  assert.equal(secretInputProps(null).value, "");
+
+  for (const value of [REDACTED_SECRET, "hunter2", "", undefined]) {
+    const props = secretInputProps(value);
+    assert.equal(props.type, "password", "a secret field that is not a password field");
+    // Never `current-password`: browsers offer to fill that one, and this box
+    // is for a new value.
+    assert.equal(props.autoComplete, "new-password");
+    assert.equal(props.spellCheck, false);
+  }
+});
+
+/**
+ * There is no channel count in the primitives, and there must not be.
+ *
+ * "The seven notification channels" cannot be found in any `.tsx`: the fields
+ * arrive from the gateway at runtime as a `Field[]`, and `kind === "secret"` is
+ * the server's answer. A primitive that knew how many there were would be
+ * wrong the first time a channel is added, and it would be wrong quietly.
+ */
+test("the secret input knows about one value and not about how many there are", () => {
+  const code = codeOnly(readSource("components/ui/secret-input.tsx"));
+  assert.ok(!/\b\d+\b/.test(code), "a number in the secret input is a count of something");
+  assert.match(code, /secretInputProps\(value\)/, "the behaviour is no longer read from lib/");
+  assert.ok(!/REDACTED|••/.test(code), "the marker is defined in lib/tokens.ts, not copied here");
+});
+
+/**
+ * Nothing ships a rule that nothing asks for.
+ *
+ * Tailwind's scanner reads *text*, not code. A class name written in a comment,
+ * or a list of identifiers that happen to be utility names, becomes a real rule
+ * in the stylesheet the console downloads. `tailwind.config.ts` already records
+ * this happening once — a test that had to write `p-[13px]` and `dark:bg-bad`
+ * down in order to reject them put both into the shipped CSS, "dead rules that
+ * look exactly like the thing being guarded against, in the artefact an audit
+ * would read".
+ *
+ * It happened again while this card was being written, and the same way. A list
+ * of Tailwind scale names in `lib/tokens.ts` contains `blur`, `grayscale`,
+ * `invert` and `sepia`, all four of which are bare utilities, and a prose note
+ * explaining that the `flex` *scale* is not the `flex-row` *utility* emitted
+ * `.flex-row`. Five dead rules, from two comments and one array of identifiers.
+ * It was found by diffing the built CSS against the previous build, which is
+ * not something anyone will do again by hand.
+ *
+ * So the build is asked directly: every class it generates has to be one some
+ * file actually puts in a `className`, or be on the ledger below. The fix for a
+ * new one is almost always to not write the name — "the direction utilities"
+ * rather than naming one — which is the right change anyway, because the rule
+ * was never wanted.
+ */
+
+/**
+ * Rules in the shipped stylesheet that no `className` asks for, and why.
+ *
+ * This cannot be empty, and pretending otherwise would make the test a
+ * nuisance that gets deleted. Prose about a design system contains the words
+ * "table", "inline", "block", "collapse", "filter", "outline", "ring",
+ * "shrink" and "visible", and Tailwind ships a bare utility named after every
+ * one of them. Three more come from the *documentation of the escape hatch* —
+ * `sm:grid`, `max-sm:grid` and `sr-only` are named in `LEGACY_UTILITY_COLLISIONS`
+ * and asserted to generate by the test above, so they are wanted.
+ *
+ * Every entry was already shipping before this card. Five more were added
+ * during it and removed again — four filter utilities from an array of scale
+ * names and one direction utility from a sentence explaining the difference
+ * between a scale and a utility of the same name.
+ *
+ * The list may shrink. It may not grow without somebody saying why here.
+ */
+const RULES_SHIPPED_UNASKED = [
+  // Ordinary English in the recipes' own comments.
+  "block",
+  "collapse",
+  "filter",
+  "inline",
+  "outline",
+  "ring",
+  "shrink",
+  "table",
+  "visible",
+  // The same thing in files this card cannot edit: `invisible` from
+  // `components/esim-panel.tsx:918`, `static` from `app/manifest.ts:4`.
+  "invisible",
+  "static",
+  // Wanted: the documented way to lay something out in a grid before the
+  // legacy layer is deleted, plus the collision name that is safe to use.
+  "max-sm:grid",
+  "sm:grid",
+  "sr-only",
+];
+
+test("the stylesheet contains no rule that no file asks for", async () => {
+  const asked = new Set<string>(allUsedClasses());
+  for (const relative of UNMIGRATED_SOURCES) {
+    for (const name of classesIn(classListsIn(readSource(relative)))) asked.add(name);
+  }
+
+  // The real content globs, so this is the stylesheet that ships.
+  const result = await postcss([
+    tailwindcss({
+      ...tailwindConfig,
+      content: [
+        join(root, "app/**/*.{ts,tsx}"),
+        join(root, "components/**/*.{ts,tsx}"),
+        join(root, "lib/tokens.ts"),
+      ],
+    }),
+  ]).process("@tailwind utilities;", { from: undefined });
+
+  const shipped = new Set<string>();
+  result.root.walkRules((rule) => {
+    for (const selector of rule.selectors) {
+      for (const name of classNamesInSelector(selector)) shipped.add(name);
+    }
+  });
+  assert.ok(shipped.size > 50, `only ${shipped.size} rules built — the build is not running`);
+
+  const unasked = [...shipped].filter((name) => !asked.has(name)).sort();
+  assert.deepEqual(
+    unasked,
+    [...RULES_SHIPPED_UNASKED].sort(),
+    "a rule is in the stylesheet the console downloads and no file uses it: " +
+      "a utility name was written in prose or in a list of identifiers, and Tailwind reads text",
+  );
 });
 
 /* ── The shell ───────────────────────────────────────────────────────── */

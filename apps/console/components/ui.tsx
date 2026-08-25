@@ -1,12 +1,52 @@
+import {
+  CardEmpty,
+  CardPanel,
+  StatCard as UiStatCard,
+} from "@/components/ui/card";
+import { StateBadge as UiStateBadge } from "@/components/ui/badge";
+
 /**
- * Layout primitives.
+ * The old layout barrel, now a compatibility layer over `components/ui/*`.
  *
- * These exist so a new feature is a card dropped into a grid rather than a
- * fresh arrangement of divs. Keeping them here also keeps the class names in
- * one place: a page that invents its own card is the first step back to every
- * page looking different.
+ * ## What this file was, and why it was the most dangerous file on the board
+ *
+ * It held four hand-written components — a prop-shaped `Card`, `StatCard`,
+ * `EmptyState` and `StateBadge` — drawn with classes from the legacy
+ * stylesheet. **Ten pages import from it, and all ten belong to the seven page
+ * migrations that are meant to run in parallel**, while the file itself was on
+ * exactly one of those cards' file lists. The other six would have found their
+ * pages importing a card they were not allowed to change, whose API is not the
+ * API of the `Card` they were told to migrate to.
+ *
+ * Six cards each inventing a translation of the same four props, in parallel,
+ * is six answers. The translation is written once instead — `CardPanel` in
+ * `components/ui/card.tsx` — and this file hands it out under the old names.
+ *
+ * ## What a caller sees
+ *
+ * Nothing. Every prop signature below is the one it had, so the ten importing
+ * pages compile and render without a line changing, and `tsc` is what proves
+ * it rather than a reviewer reading ten files. What they get is the design
+ * system's card instead of the stylesheet's — which is the point, since the
+ * goal is measured by no page depending on the old stylesheet.
+ *
+ * ## The one implementation rule
+ *
+ * `EmptyState` is a wrapper over `CardEmpty` rather than a second empty state,
+ * and `StatCard` and `StateBadge` are re-exports rather than copies. There is
+ * one of each in this console. Opening a third file for an empty state — which
+ * was the plan until the review — would have turned "two implementations that
+ * disagree" into three.
  */
 
+/**
+ * The prop-shaped card, unchanged for its callers.
+ *
+ * `className` still passes through, which is what keeps `card-span-all`
+ * working on the six pages that use it: that class is grid placement from the
+ * old stylesheet, and it belongs to the page's layout rather than to the card.
+ * It stops being needed when the page around it is migrated.
+ */
 export function Card({
   title,
   note,
@@ -24,73 +64,42 @@ export function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className={className ? `card ${className}` : "card"}>
-      {title ? (
-        <header className="card-head">
-          <h2 className="card-title">{title}</h2>
-          {note ? <span className="card-note">{note}</span> : null}
-          {actions ? <div className="card-actions">{actions}</div> : null}
-        </header>
-      ) : null}
-      {bodyless ? children : <div className="card-body">{children}</div>}
-    </section>
+    <CardPanel title={title} note={note} actions={actions} bodyless={bodyless} className={className}>
+      {children}
+    </CardPanel>
   );
 }
 
 /**
  * One number per card.
  *
- * `tone` is only for values that carry a judgement. Colouring a neutral count
- * spends the reader's attention on something that does not need it.
+ * A re-export: the new one takes the same four props and adds `className`.
+ * Nothing imports this today — `app/page.tsx` already reaches for the one in
+ * `components/ui/card.tsx` — but it is kept so that this barrel's surface is
+ * the surface it has always had, and removing it stays a decision somebody
+ * makes on purpose.
  */
-export function StatCard({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: number | string;
-  hint?: string;
-  tone?: "ok" | "warn" | "bad";
-}) {
-  return (
-    <section className="card">
-      <div className="stat">
-        <span className="stat-label">{label}</span>
-        <span className={tone ? `stat-value is-${tone}` : "stat-value"}>{value}</span>
-        {hint ? <span className="stat-hint">{hint}</span> : null}
-      </div>
-    </section>
-  );
-}
+export const StatCard = UiStatCard;
 
 /**
  * Says what would be here, not just that nothing is.
  *
- * "No rows" leaves the reader unsure whether the page is empty or broken.
+ * "No rows" leaves the reader unsure whether the page is empty or broken,
+ * which on a fleet console is the difference between "nothing happened" and
+ * "we are not seeing what happened". The prop is `desc` here and `description`
+ * on `CardEmpty`; renaming it is the whole of this wrapper, and doing it here
+ * is what keeps eight pages from each doing it themselves.
  */
 export function EmptyState({ title, desc }: { title: string; desc?: string }) {
-  return (
-    <div className="empty">
-      <span className="empty-title">{title}</span>
-      {desc ? <span className="empty-desc">{desc}</span> : null}
-    </div>
-  );
+  return <CardEmpty title={title} description={desc} />;
 }
 
-const TONE_BY_STATE: Record<string, string> = {
-  online: "badge-ok",
-  registered: "badge-ok",
-  offline: "badge-idle",
-  busy: "badge-warn",
-  searching: "badge-warn",
-  denied: "badge-bad",
-  error: "badge-bad",
-};
-
-/** Status pill. Unknown states fall back to neutral rather than guessing. */
-export function StateBadge({ state, label }: { state: string; label?: string }) {
-  const tone = TONE_BY_STATE[state.toLowerCase()] ?? "badge-idle";
-  return <span className={`badge ${tone}`}>{label ?? state}</span>;
-}
+/**
+ * Status pill. Unknown states fall back to neutral rather than guessing.
+ *
+ * A re-export. The tone table moved to `toneForState` in `lib/tokens.ts`,
+ * where a test can read it — the copy that used to live here mapped the same
+ * seven states to legacy class names, and two tables of the same seven states
+ * is how `warn` ends up two different colours.
+ */
+export const StateBadge = UiStateBadge;

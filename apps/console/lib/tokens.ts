@@ -278,16 +278,20 @@ export const TAILWIND_OPACITY = {
 } as const;
 
 /**
- * Three layers, because a console with a `z-50` in it has already lost.
+ * Four layers, because a console with a `z-50` in it has already lost.
  *
  * 20 is the sticky header, and it matches `.shell-header` in the legacy
- * stylesheet so the two chromes cannot fight during the migration.
+ * stylesheet so the two chromes cannot fight during the migration. 30 is the
+ * confirmation dialog, and it exists because 20 is not enough: a modal that
+ * asks "this strands a module you cannot reach physically, continue?" has to
+ * sit above the header, or the header sits on top of the question.
  */
 export const TAILWIND_Z_INDEX = {
   auto: "auto",
   "0": "0",
   "10": "10",
   "20": "20",
+  "30": "30",
 } as const;
 
 /** Spacing plus the two keywords. No fractions: a `w-7/12` is a magic number. */
@@ -313,6 +317,140 @@ export const TAILWIND_GRID_TEMPLATE_COLUMNS = {
   "5": "repeat(5, minmax(0, 1fr))",
   "6": "repeat(6, minmax(0, 1fr))",
 } as const;
+
+/* ── The five scales the operator asked for on 2026-08-25 ────────────────
+ *
+ * The seven replaced above closed the `max-w-md leading-7 opacity-75 z-50`
+ * hole. Five more were still on Tailwind's defaults, so `min-h-96 border-4
+ * ring-8 inset-3 flex-1` all produced CSS out of numbers nobody here chose,
+ * and — exactly as before — no test could see it. Six are replaced below;
+ * `maxHeight` is the sixth, because the payload block this card adds is the
+ * first recipe that needs one and it would otherwise arrive as `max-h-96`.
+ *
+ * 🔴 **Two of these carry a trap, and measuring beat guessing on both.**
+ *
+ * `flex` was measured as unused before this card. It is not: `STAT.root` and
+ * `SHELL.main` both carry `flex-1`, which comes from the `flex` shorthand scale
+ * and *not* from the display or direction utilities that share the word (those
+ * are `display` and `flexDirection`, which nothing here touches). Replacing
+ * `flex` with an empty table would have collapsed the stat row and stopped the
+ * shell's main column filling the viewport — a layout break with a green suite,
+ * since nothing asserts that a class which vanishes used to exist.
+ *
+ * `inset` was measured as unused too, on the `inset-*` prefix. But `top-*`,
+ * `right-*`, `bottom-*` and `left-*` all read the same scale, and `top-0`
+ * holds up both sticky headers — `TABLE.headerCell` and `SHELL.header`. Both
+ * keep their `0`.
+ *
+ * Each table below therefore holds exactly what the recipes use today, at the
+ * values Tailwind's defaults gave them, so nothing rendered changed.
+ */
+
+/**
+ * Spacing, plus the viewport unit the shell and the centred pages stand on.
+ *
+ * Tailwind's default `minHeight` folds in the whole spacing scale, so this has
+ * to as well or `min-h-touch` — every control a finger has to hit — stops
+ * generating.
+ */
+export const TAILWIND_MIN_HEIGHT = {
+  "0": "0px",
+  full: "100%",
+  /** `dvh`, not `vh`: mobile Safari's toolbars make `100vh` taller than the screen. */
+  dvh: "100dvh",
+  ...refs(SPACE_TOKENS),
+  ...refs(SIZE_TOKENS),
+} as const;
+
+/**
+ * One height: how tall a block of verbatim output may get before it scrolls.
+ *
+ * 22rem is what `.output` in the legacy stylesheet has always used, so the
+ * three payload blocks keep their size. It is a scroll threshold rather than a
+ * measure, which is why it is not in `TAILWIND_MAX_WIDTH`.
+ */
+export const TAILWIND_MAX_HEIGHT = {
+  none: "none",
+  full: "100%",
+  dvh: "100dvh",
+  panel: "22rem",
+} as const;
+
+/**
+ * One rule, no rule, and the tab underline.
+ *
+ * `2` earns its place: an underlined tab is how the device page's four tabs say
+ * which one is showing, and a 1px rule under a tab is not visible next to the
+ * 1px rule under the tab list. `border-4` and `border-8` produce nothing now.
+ */
+export const TAILWIND_BORDER_WIDTH = {
+  DEFAULT: "1px",
+  "0": "0px",
+  "2": "2px",
+} as const;
+
+/** The focus ring, and nothing else. `ring-8` is a glow, not a focus state. */
+export const TAILWIND_RING_WIDTH = {
+  DEFAULT: "3px",
+  "0": "0px",
+  "2": "2px",
+} as const;
+
+/** The gap between a control and its focus ring, so the ring reads as separate. */
+export const TAILWIND_RING_OFFSET_WIDTH = {
+  "0": "0px",
+  "2": "2px",
+} as const;
+
+/**
+ * `0` only: an element pinned to an edge, or stretched across all four.
+ *
+ * Read by `inset-*`, `top-*`, `right-*`, `bottom-*` and `left-*` alike. Every
+ * offset this console needs is either "against the edge" (`top-0` on the two
+ * sticky headers, `inset-0` on the dialog's scrim) or handled by flow. A
+ * `top-3` would be a nudge nobody can explain a year later.
+ */
+export const TAILWIND_INSET = {
+  "0": "0px",
+  auto: "auto",
+} as const;
+
+/**
+ * `flex-1` and the two ways of refusing it.
+ *
+ * ⚠️ This is the `flex` *shorthand* scale. It is not the display utility of
+ * the same name, and not the direction utilities either — those come from
+ * `display` and `flexDirection`, which nothing here touches. The pattern this
+ * design system settled on ("flex, never grid", see
+ * `LEGACY_UTILITY_COLLISIONS`) is unaffected by anything in this table.
+ */
+export const TAILWIND_FLEX = {
+  "1": "1 1 0%",
+  auto: "1 1 auto",
+  none: "none",
+} as const;
+
+/**
+ * Which Tailwind scales are still on their defaults is asserted in
+ * `lib/tokens.test.ts`, against Tailwind's own default theme.
+ *
+ * 🔴 The *list* deliberately lives in the test file rather than here, and the
+ * reason is a trap this file already warns about once. `lib/tokens.ts` is
+ * Tailwind **content** — the build scans it for class names, which is the whole
+ * reason the recipes work — and four of Tailwind's scale names are also bare
+ * utilities in the filter family. Writing them here put four real, dead rules
+ * into the stylesheet the console ships, from an array of identifiers. It was
+ * found by diffing the built CSS against the previous build, not by reading.
+ * `tailwind.config.ts` records the same accident happening to
+ * `lib/tokens.test.ts` back when the content glob was `./lib/**`; a test file
+ * is not content, so the list is safe there.
+ *
+ * "The shipped stylesheet contains no rule that no file asks for" is a test of
+ * its own now, so the next one of these is a failure rather than a discovery.
+ * Note what that test cannot do: prose about a design system uses the words
+ * "table", "inline", "block" and "visible", and every one of those is also a
+ * utility. Its ledger is what separates a word from a mistake.
+ */
 
 /* ── Class recipes ───────────────────────────────────────────────────────
  *
@@ -357,6 +495,24 @@ export const CARD = {
   emptyTitle: "font-semibold text-fg",
   /** Says what would be here. "No rows" leaves the reader unsure it is not broken. */
   emptyDescription: "max-w-measure text-sm",
+  /**
+   * A card header that folds the card.
+   *
+   * The settings page renders seven notification channels from a runtime
+   * `Field[]`, each with a host, a port, a credential and a recipient, one
+   * after another — which is the single biggest reason that page is hard to
+   * read. Its card says "group or fold them", and grouping is `CardPanel` per
+   * group; folding had nothing, which would have meant that card editing a
+   * shared component while six others were in flight.
+   *
+   * `<details>`, so it works with JavaScript off and needs no state. The
+   * stylesheet styles neither `details` nor `summary`, so nothing here is
+   * fighting the legacy layer. `list-none` removes the disclosure triangle's
+   * default marker; the caller supplies its own affordance in the summary.
+   */
+  disclosureSummary:
+    "flex cursor-pointer list-none items-center gap-s2 border-b border-line px-s4 py-s3 text-sm font-semibold text-fg",
+  disclosureMarker: "ml-auto text-xs font-normal text-fg-faint",
 } as const;
 
 /**
@@ -407,6 +563,43 @@ export const TABLE = {
   cell: "px-s4 py-s3 text-left align-top",
   cellMono: "font-mono text-xs tabular-nums",
   cellFaint: "text-fg-faint",
+  /**
+   * A column that is context rather than the answer, hidden below `sm`.
+   *
+   * **This is the narrow-screen table decision, and it is made here rather
+   * than on the first page card, so that the six page cards after it do not
+   * each have to modify `table.tsx`.**
+   *
+   * The table scrolls sideways inside its card (`wrapper`), and a column marked
+   * secondary drops off the phone entirely. What was rejected, and why:
+   *
+   * - **Card-ification** — turning each row into a labelled block using the
+   *   header text — fails on five of this console's twenty-six tables, which
+   *   have *no* `<th>` at all (`app/devices/[deviceId]` key/value,
+   *   `app/settings`, and three in `esim-panel`). A pattern that silently does
+   *   nothing on a fifth of the tables is not a pattern.
+   * - **Squeezing every column in** — the widest table here is nine columns of
+   *   ICCIDs and UUIDs (`app/devices/page.tsx`). At 390px that is 43px a
+   *   column; the values are 19 characters of monospace.
+   *
+   * Both cells of a column carry it, header and body alike, which is what
+   * makes it work on a table with no header row.
+   */
+  cellSecondary: "hidden sm:table-cell",
+  /**
+   * The other table shape: a two-column field/value specification.
+   *
+   * Four tables here are `<th>`-less pairs of a name and a reading — the eSIM
+   * panel's three, and the device page's host details. Giving those the data
+   * grid's uniform padding and sticky header treats a definition list as a
+   * result set. The term column shrinks to its content and the detail column
+   * takes the rest, so there is no width to invent.
+   */
+  spec: "w-full border-collapse text-sm",
+  specRow: "border-b border-line last:border-0",
+  specTerm:
+    "whitespace-nowrap px-s4 py-s2 text-left align-top text-xs font-semibold uppercase tracking-wider text-fg-faint",
+  specDetail: "w-full px-s4 py-s2 align-top text-sm text-fg",
 } as const;
 
 export const BUTTON = {
@@ -419,8 +612,26 @@ export const BUTTON = {
     /**
      * Colour is a hint, never the safeguard. The confirmation is. This fleet
      * has commands that strand a module operators cannot reach physically.
+     *
+     * Filled, and therefore for the one button that carries out the destructive
+     * act — the confirm button in the dialog. A row of eight filled red buttons
+     * is a row in which nothing stands out.
      */
     danger: "bg-bad text-white hover:opacity-90",
+    /**
+     * The outlined red the legacy `.risk` class meant, standing on its own.
+     *
+     * 🔴 `.risk` has never been a rule. The stylesheet only ever declares it
+     * as `.button-row button.risk` and `.row-actions button.risk`
+     * (`globals.css:851` and `:946`), so a `.risk` button anywhere else has
+     * been rendering in the ordinary colour the whole time —
+     * `device-console.tsx:663`, the USB-net mode switch, sits in an
+     * `<form className="inline-form">` and its warning colour has never once
+     * appeared. A variant needs no ancestor, which is the point of moving it
+     * here; `tokens.test.ts` derives the "only ever a descendant selector"
+     * claim from the stylesheet rather than trusting this comment.
+     */
+    risk: "border-bad bg-transparent text-bad hover:bg-bad-wash",
   },
   size: {
     md: "min-h-touch px-s4 text-sm",
@@ -588,6 +799,17 @@ export const FORM = {
   select:
     "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-accent disabled:opacity-50",
   /**
+   * A `select` inside a table cell rather than inside a field.
+   *
+   * One of the nine selects in this console lives in a row — the per-card
+   * routing choice at `card-policies.tsx:100` — and a full-width, full-height
+   * control there widens a five-column table by whatever the widest option is.
+   * `w-auto` puts it back to its content, and the height comes down to match
+   * the small buttons the other cells in that row carry. It stays above 32px,
+   * which is the smallest thing the legacy stylesheet asks a finger to hit.
+   */
+  selectCompact: "min-h-s6 w-auto px-s2 text-xs",
+  /**
    * Padded on all four sides rather than only the sides, because the text
    * starts at the top rather than being centred on one line. Height comes from
    * the caller's `rows`, which is a count of lines and therefore survives a
@@ -596,6 +818,127 @@ export const FORM = {
   textarea:
     "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
   error: "m-0 text-sm text-bad",
+  /** Not an error. `.hint` in the old stylesheet: a note under a control. */
+  hint: "m-0 text-sm text-fg-muted",
+  /**
+   * A checkbox and its label on one line.
+   *
+   * 🔴 The checkbox needs its *own* size, and this is not cosmetic. Today a
+   * checkbox escapes `input { width: 100% }` (`globals.css:613-622`) only
+   * because `.field-inline input` (`:920`) pins it to 1rem — and `.field-inline`
+   * is itself in the layer that gets deleted. The day `@layer legacy` goes,
+   * both of this console's checkboxes (`card-policies.tsx:89` inside a table
+   * cell, `settings-form.tsx:153`) stretch to fill their container unless the
+   * size is stated here.
+   */
+  inlineLabel: "flex items-center gap-s2 text-sm font-medium text-fg",
+  /**
+   * `min-h-s4` as well as `size-s4`, and it is not redundant.
+   *
+   * The legacy rule is `input, select, textarea { min-height: var(--touch) }`
+   * (`globals.css:613-622`), and `min-height` beats `height` no matter which
+   * layer either comes from. Measured at 390px with only `size-s4`, the
+   * checkbox rendered **16px wide and 44px tall** — a stretched box in a table
+   * cell, which is the same defect as the `width: 100%` one, on the other axis.
+   * Found by measuring, not by reading.
+   */
+  checkbox: "size-s4 min-h-s4 shrink-0 cursor-pointer accent-accent disabled:opacity-50",
+  /**
+   * A field and its own submit, side by side — sixteen of these across four
+   * components, five in `device-console.tsx` alone, and no recipe until now.
+   *
+   * `items-end` so the button's baseline lines up with the input rather than
+   * with the label above it.
+   */
+  inline: "flex flex-wrap items-end gap-s3",
+  /**
+   * The field inside an inline form: the whole row on a phone, the remainder
+   * of the row above `sm`.
+   *
+   * The legacy rule was `.inline-form .grow { flex: 1 1 16rem }`, which cannot
+   * be written here — `grow` is one of the class names that collides with the
+   * old stylesheet, and 16rem is not on any scale. Saying it as a breakpoint
+   * instead is both expressible and better: below `sm` the button wraps under
+   * a full-width field rather than being squeezed beside it.
+   */
+  inlineField: "w-full sm:w-auto sm:flex-1",
+} as const;
+
+/**
+ * A row of buttons that wraps instead of stretching the column.
+ *
+ * Twenty sites across six components, and T021 named it the main source of
+ * horizontal overflow — the device detail page renders three of these at once.
+ * `rowActions` is the same arrangement inside a table cell; it is a separate
+ * name because the buttons in it are `size="sm"` and because the seven tables
+ * that have one need to be findable.
+ */
+export const BUTTON_ROW = {
+  root: "flex flex-wrap items-center gap-s2",
+  rowActions: "flex flex-wrap items-center gap-s2",
+} as const;
+
+/**
+ * Verbatim output: a diagnostic's reading, a command's JSON, a journal payload.
+ *
+ * Scrolls inside its own box in both directions rather than stretching the
+ * page — `/journal`'s payloads have no width limit and neither does an AT
+ * transcript. `m-0` is load-bearing: preflight is off, so the browser's own
+ * `pre { margin: 1em 0 }` is still live and the old `.output` had to override
+ * it too.
+ */
+export const OUTPUT = {
+  root: "m-0 mt-s2 max-h-panel overflow-auto rounded bg-bg p-s3 font-mono text-xs text-fg",
+} as const;
+
+/**
+ * Tabs, which no card owned.
+ *
+ * T010 is told to build a four-tab skeleton for the device page and T011 to
+ * fill the other two, and neither card's file list contains a tabs component —
+ * so both would have written one, in different files, and the second would
+ * have had to redo the first. That is the parallelism this card exists to
+ * protect, so the component lands here whether or not the eight-primitive list
+ * mentioned it.
+ *
+ * One recipe for both elements. A tab that changes the URL is an `<a>`, which
+ * keeps a server-rendered page a server component and keeps a tab
+ * deep-linkable; a tab that switches a pane inside an already-client component
+ * is a `<button>`. `border-x-0 border-t-0` is not decoration: preflight is off
+ * and the legacy layer gives every bare `button` a 1px border on all four
+ * sides.
+ */
+export const TABS = {
+  list: "flex flex-wrap items-center gap-x-s4 border-b border-line",
+  tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
+  /** The underline, not a fill: a filled tab competes with the primary button. */
+  tabCurrent: "border-accent text-fg",
+  panel: "pt-s4",
+} as const;
+
+/**
+ * The confirmation dialog, and the reason it is a component at all.
+ *
+ * Every confirmation in this console today is `window.confirm()`, which can
+ * only show one string. That is why `device.confirmDisruptive` — one sentence,
+ * shared by seven commands, naming none of them — is what stands between an
+ * operator and `restart_modem`, which can strand a module in `+CFUN: 7` that
+ * nobody can reach to power-cycle. A dialog with a *place* for the consequence
+ * is what makes writing one down cheaper than not.
+ *
+ * `z-30` because the header is sticky at `z-20`.
+ */
+export const CONFIRM = {
+  overlay: "fixed inset-0 z-30 flex items-center justify-center p-s4",
+  /** Its own element rather than a tint on the overlay: `var()` takes no alpha. */
+  scrim: "absolute inset-0 bg-bg opacity-90",
+  panel:
+    "relative flex w-full max-w-measure flex-col gap-s4 rounded-lg border border-line bg-surface p-s5 shadow-lg",
+  title: "m-0 text-base font-semibold text-fg",
+  /** The paragraph that says what will happen. Never empty — see `assertConsequence`. */
+  consequence: "m-0 text-sm text-fg-muted",
+  question: "m-0 text-sm font-semibold text-fg",
+  actions: "flex flex-wrap justify-end gap-s2",
 } as const;
 
 /* ── The two PWA affordances ─────────────────────────────────────────────
@@ -772,6 +1115,151 @@ export function toneForState(state: string): BadgeTone {
   return TONE_BY_STATE[state.toLowerCase()] ?? "neutral";
 }
 
+/* ── A confirmation has to say what will happen ──────────────────────────
+ *
+ * T030 read every confirmation in this console. Two of them state a
+ * consequence. `messages/zh.json:179` `device.confirmUsbnet` says the module
+ * re-enumerates, loses its QMI port, leaves the device list, and how to get it
+ * back; `:431` `esim.dlWarn` says the write cannot be undone, that it installs
+ * without enabling, and that a ppr1/ppr2 profile will be refused. Everything
+ * else is a question with nothing behind it: `device.confirmDisruptive` is one
+ * sentence shared by seven commands and names none of them, and
+ * `proxy.confirmRemove` is "Remove this permanently?" for two different kinds
+ * of object.
+ *
+ * The rules below are the shape of the two that work, made into a check. The
+ * dialog owns the question, so the caller can only supply the statement — which
+ * is why "asks a question" is a rejection rather than an oversight. `T011` is
+ * the card that splits `confirmDisruptive` into seven; this is what stops it
+ * handing in seven copies of the sentence it started with.
+ */
+
+/**
+ * Short enough that a real consequence clears it, long enough that the two
+ * strings this console actually ships do not.
+ *
+ * It is a floor against the observed failure mode — a seven-character question
+ * — and not a measure of quality. The rules that carry the real weight are
+ * "not a question" and "at least one complete statement"; a length alone would
+ * be satisfied by padding, and is written down here so nobody mistakes it for
+ * the whole test.
+ */
+export const CONFIRM_MIN_CONSEQUENCE = 16;
+
+const SENTENCE_END = /[.。!！;；]/;
+const QUESTION_END = /[?？]\s*$/;
+
+/**
+ * Why this text cannot be used as a consequence, or `null` if it can.
+ *
+ * Returns a reason rather than a boolean because the reason is what tells the
+ * next person what to write instead.
+ */
+export function consequenceProblem(consequence: string): string | null {
+  const text = consequence.trim();
+  if (text === "") return "a confirmation with no consequence is a speed bump";
+  if (QUESTION_END.test(text)) {
+    return "this is the question, and the dialog asks that itself; say what will happen";
+  }
+  if (!SENTENCE_END.test(text)) {
+    return "not one complete sentence — name the object and say what happens to it";
+  }
+  if (text.length < CONFIRM_MIN_CONSEQUENCE) {
+    return `${text.length} characters cannot say which thing this is or what it does`;
+  }
+  return null;
+}
+
+/**
+ * The same rule, as a throw.
+ *
+ * `ConfirmDialog` calls this while rendering, so a confirmation with nothing
+ * behind it fails loudly at the point of use instead of quietly asking a bare
+ * question. That is the right way round for this fleet: a dialog that crashes
+ * gets fixed, and a dialog that says "Continue?" over `restart_modem` gets
+ * clicked.
+ */
+export function assertConsequence(consequence: string): string {
+  const problem = consequenceProblem(consequence);
+  if (problem) throw new Error(`ConfirmDialog: ${problem} — got ${JSON.stringify(consequence)}`);
+  return consequence.trim();
+}
+
+/**
+ * Message keys used as a consequence, checked in both catalogues.
+ *
+ * Page cards append to this. `tokens.test.ts` runs every key here through
+ * `consequenceProblem` in `zh` *and* `en`, so a consequence written in one
+ * language and skipped in the other is a failing test rather than an English
+ * dialog that asks a naked question.
+ *
+ * It starts with the one key this console already has that is a consequence
+ * rather than a question: `device.usbnetWarning`, the paragraph the USB-net
+ * control shows above its own button. T011 attaches it to that control's
+ * confirmation and adds the seven it has to write.
+ */
+export const CONFIRM_CONSEQUENCE_KEYS = ["device.usbnetWarning"] as const;
+
+/** The dialog's own chrome, so every confirmation asks in the same words. */
+export const CONFIRM_LABEL_KEYS = [
+  "confirm.question",
+  "confirm.proceed",
+  "confirm.cancel",
+] as const;
+
+/* ── Secrets that are already stored ─────────────────────────────────────── */
+
+/**
+ * What the gateway sends in place of a stored credential, and what it takes
+ * back to mean "leave it alone".
+ *
+ * The console never holds a real credential; it would otherwise be in the
+ * page's HTML on every visit.
+ */
+export const REDACTED_SECRET = "••••••••";
+
+export type SecretInputProps = {
+  readonly type: "password";
+  readonly value: string;
+  readonly placeholder: string;
+  readonly autoComplete: "new-password";
+  readonly spellCheck: false;
+  /** Whether the gateway is holding one. For the caller's own wording, not for the box. */
+  readonly stored: boolean;
+};
+
+/**
+ * The stored-secret behaviour `settings-form.tsx:161-172` already has, as data.
+ *
+ * "A secret that is already stored shows an empty box with the placeholder as
+ * its hint: typing replaces it, leaving it keeps it." Four more password fields
+ * are about to be migrated across three cards, and each of them getting to
+ * decide what an already-stored secret looks like is how one of them ends up
+ * echoing `••••••••` into the value — which then gets *saved* as the new
+ * password the first time someone submits the form without touching it.
+ *
+ * ⚠️ There is no count here, and there must not be. The seven notification
+ * channels people talk about are not in any `.tsx`: the fields arrive from the
+ * gateway as a runtime `Field[]` (`settings-form.tsx:64`), so a `secret` field
+ * is whatever the server says is one. This takes a value and answers about that
+ * value.
+ */
+export function secretInputProps(value: unknown): SecretInputProps {
+  const stored = value === REDACTED_SECRET;
+  return {
+    type: "password",
+    // Empty, never the placeholder text: a value of `••••••••` is what gets
+    // submitted, and submitting it would be saving eight bullets as the secret.
+    value: stored ? "" : String(value ?? ""),
+    placeholder: stored ? REDACTED_SECRET : "",
+    // Never `current-password`: browsers offer to fill that one, and this box
+    // is for a new value.
+    autoComplete: "new-password",
+    spellCheck: false,
+    stored,
+  };
+}
+
 /* ── Migration guards ────────────────────────────────────────────────────
  *
  * `app/globals.css` still carries the hand-written stylesheet the other
@@ -810,11 +1298,174 @@ export const MIGRATED_SOURCES = [
   "components/shell.tsx",
   "components/sign-out.tsx",
   "components/theme-toggle.tsx",
+  "components/ui.tsx",
   "components/ui/badge.tsx",
+  "components/ui/button-row.tsx",
   "components/ui/button.tsx",
   "components/ui/card.tsx",
+  "components/ui/confirm-dialog.tsx",
+  "components/ui/form.tsx",
+  "components/ui/output.tsx",
+  "components/ui/secret-input.tsx",
   "components/ui/table.tsx",
+  "components/ui/tabs.tsx",
 ] as const;
+
+/**
+ * Every file under `components/ui/`, what it exports, and which recipes it
+ * draws with.
+ *
+ * This is the answer to "a component was added and nothing checks it", which
+ * is the defect the pattern review found twice. The two ledgers above make a
+ * new `.tsx` be *classified*; they do not make it be *covered*. A new
+ * primitive that is put on the migrated list and reads its classes from a
+ * recipe passes everything already written and is still a component no test
+ * knows the name of — so deleting its export, or leaving the recipe it was
+ * built for unused, is silent.
+ *
+ * `tokens.test.ts` checks five things from this table: the directory listing
+ * equals these keys, every export named here is declared in that file, every
+ * recipe named here is an export of this file that is walked as a recipe,
+ * every helper named here is an exported function of this file, and every one
+ * of those names is actually *referenced* in that component's code — not
+ * merely imported, and not merely mentioned in a comment.
+ *
+ * `helpers` is a separate field because some components never touch a recipe
+ * object directly: `button.tsx` asks `buttonClass()` for the combination of
+ * base, variant and size, which is where the defaulting lives. Listing the
+ * recipe would have been a lie, and listing nothing would have left the file
+ * uncovered.
+ */
+export const UI_PRIMITIVES = {
+  "components/ui/badge.tsx": {
+    exports: ["Badge", "StateBadge"],
+    recipes: ["BADGE"],
+    helpers: ["badgeClass", "toneForState"],
+  },
+  "components/ui/button-row.tsx": {
+    exports: ["ButtonRow", "RowActions"],
+    recipes: ["BUTTON_ROW"],
+    helpers: [],
+  },
+  "components/ui/button.tsx": {
+    exports: ["Button"],
+    recipes: [],
+    helpers: ["buttonClass"],
+  },
+  "components/ui/card.tsx": {
+    exports: [
+      "Card",
+      "CardHeader",
+      "CardTitle",
+      "CardNote",
+      "CardActions",
+      "CardContent",
+      "CardPanel",
+      "CardDisclosure",
+      "StatRow",
+      "StatCard",
+      "CardEmpty",
+    ],
+    recipes: ["CARD", "STAT"],
+    helpers: [],
+  },
+  "components/ui/confirm-dialog.tsx": {
+    exports: ["ConfirmDialog"],
+    recipes: ["CONFIRM"],
+    helpers: ["assertConsequence"],
+  },
+  "components/ui/form.tsx": {
+    exports: [
+      "Form",
+      "InlineForm",
+      "Field",
+      "InlineField",
+      "Input",
+      "Select",
+      "Checkbox",
+      "FormError",
+      "FormHint",
+    ],
+    recipes: ["FORM"],
+    helpers: [],
+  },
+  "components/ui/output.tsx": {
+    exports: ["Output"],
+    recipes: ["OUTPUT"],
+    helpers: [],
+  },
+  "components/ui/secret-input.tsx": {
+    // No recipe of its own: it is an `Input` plus the stored-secret behaviour,
+    // and the behaviour is in `secretInputProps` where a test can reach it.
+    exports: ["SecretInput"],
+    recipes: [],
+    helpers: ["secretInputProps"],
+  },
+  "components/ui/table.tsx": {
+    exports: [
+      "Table",
+      "TableHead",
+      "TableBody",
+      "TableRow",
+      "TableHeaderCell",
+      "TableCell",
+      "SpecTable",
+      "SpecRow",
+    ],
+    recipes: ["TABLE"],
+    helpers: ["tableCellClass"],
+  },
+  "components/ui/tabs.tsx": {
+    exports: ["TabList", "Tab", "TabPanel"],
+    recipes: ["TABS"],
+    helpers: [],
+  },
+} as const;
+
+/**
+ * Class names a `.tsx` asks for that nothing anywhere defines.
+ *
+ * Not the legacy stylesheet, not the Tailwind build — nothing. They render as
+ * plain unstyled markup and always have.
+ *
+ * The list is frozen and `tokens.test.ts` asserts the *computed* set equals it,
+ * which cuts both ways: a card that fixes one has to shorten the list, and a
+ * card that invents a new dead class fails immediately rather than shipping
+ * markup that reviews perfectly and renders as nothing.
+ *
+ * - **`card-grid`** — `app/devices/[deviceId]/page.tsx:69`,
+ *   `app/proxy/page.tsx:63`, `app/settings/page.tsx:129`. The stylesheet has
+ *   `.grid` and `.grid-wide`; it has never had `.card-grid`. All three of
+ *   those pages are stacking their cards in ordinary block flow while their
+ *   markup says they are laying them out in a grid. **This one was not on any
+ *   survey** — it was found by running the check rather than by reading, which
+ *   is the only way any of these have ever been found.
+ * - **`panel`, `primary`** — `components/send-sms.tsx:34` and `:53`. The one
+ *   form in this console that sends a text message has been an unstyled block
+ *   with an unstyled button since it was written.
+ *
+ * All five sites are outside this card's file list: `card-grid` belongs to
+ * T010, T012 and T013, and `send-sms.tsx` to T014.
+ */
+export const CLASSES_WITH_NO_STYLESHEET = ["card-grid", "panel", "primary"] as const;
+
+/**
+ * Legacy class names that only ever appear under an ancestor.
+ *
+ * A subtler version of the list above, and the one that has actually cost
+ * something. `.risk` looks like a class. It is not: the stylesheet declares it
+ * only as `.button-row button.risk` (`globals.css:851`) and
+ * `.row-actions button.risk` (`:946`), so it colours a button in those two
+ * containers and does nothing at all anywhere else. `device-console.tsx:663`
+ * puts a `.risk` button inside `<form className="inline-form">` — a warning
+ * colour that has never once been drawn, on the control that takes a module
+ * off the device list.
+ *
+ * `tokens.test.ts` derives the claim from the stylesheet, so it is checked
+ * rather than remembered, and asserts the replacement — `BUTTON.variant.risk`
+ * — generates CSS standing on its own.
+ */
+export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
 
 /**
  * The other side of the same ledger: files still rendered by the old stylesheet.
@@ -850,7 +1501,6 @@ export const UNMIGRATED_SOURCES = [
   "components/proxy-manager.tsx",
   "components/send-sms.tsx",
   "components/settings-form.tsx",
-  "components/ui.tsx",
 ] as const;
 
 /**
