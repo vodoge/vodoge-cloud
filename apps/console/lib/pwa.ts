@@ -22,6 +22,159 @@
  * arrived.
  */
 
+import { COLOR_TOKENS } from "./tokens.ts";
+
+/* ── The manifest ────────────────────────────────────────────────────────
+ *
+ * The document itself is here rather than in `app/manifest.ts`, and the route
+ * is a two-line caller. That is the same rule the rest of this file follows —
+ * testable values in `lib/`, framework shell on top — and it is here because
+ * the alternative was tried and broke the suite:
+ *
+ * `node --test` resolves ES module specifiers itself and knows nothing about
+ * `tsconfig.json`'s `paths`. Only Next and `tsc` expand `@/`. So the moment
+ * `app/manifest.ts` grew one `import … from "@/lib/tokens"`, a test file that
+ * imported it died with `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'` —
+ * and it died at *import* time, which takes the whole file with it. Every one
+ * of this file's tests vanished at once and the run reported a single failure,
+ * so the pass count fell by 35 while the summary said "1 fail". Nothing under
+ * `lib/` may reach across into `app/`, for that reason.
+ *
+ * `app/manifest.ts` is checked by `lib/pwa.test.ts` — as text, not by
+ * importing it — to be a caller and nothing else.
+ */
+
+/**
+ * `purpose` is `any` or `maskable` and the distinction is not cosmetic: a
+ * launcher crops a maskable icon to its own shape, so an `any` icon promoted
+ * to maskable gets its edges cut off.
+ */
+export type ManifestIcon = {
+  readonly src: string;
+  readonly sizes: string;
+  readonly type: string;
+  readonly purpose: "any" | "maskable";
+};
+
+export type ManifestScreenshot = {
+  readonly src: string;
+  readonly sizes: string;
+  readonly type: string;
+  readonly form_factor: "narrow" | "wide";
+  readonly label: string;
+};
+
+export type ConsoleManifest = {
+  readonly id: string;
+  readonly name: string;
+  readonly short_name: string;
+  readonly description: string;
+  readonly start_url: string;
+  readonly scope: string;
+  readonly display: "standalone";
+  readonly orientation: "any";
+  readonly background_color: string;
+  readonly theme_color: string;
+  readonly categories: string[];
+  readonly icons: ManifestIcon[];
+  readonly screenshots: ManifestScreenshot[];
+};
+
+/**
+ * What `/manifest.webmanifest` serves.
+ *
+ * `display: standalone` is what makes an installed console open without browser
+ * chrome; `scope` keeps an installed window from wandering onto another
+ * tenant's subdomain, which would silently show a session it does not have.
+ *
+ * ## Why there are bitmaps as well as the SVG
+ *
+ * The console used to declare two SVGs and nothing else. An SVG icon is
+ * accepted by the manifest parser, so the file looked complete, and it is the
+ * wrong format for every path that actually installs anything:
+ *
+ * - **Android/WebAPK** rasterises the icon at install time and wants a real
+ *   `192` and `512`. Chrome's install criteria are written against pixel
+ *   sizes, and `sizes: "any"` on an SVG satisfies them only by accident of
+ *   parsing.
+ * - **`purpose: "maskable"`** exists so a launcher can crop the art to
+ *   whatever shape the device uses. The safe zone in `icon-maskable.svg` was
+ *   already correct — the art spans x=21..43 of a 64 viewBox — so what was
+ *   missing was never the drawing, only a bitmap of it.
+ * - **iOS ignores this document's icons completely** and reads
+ *   `apple-touch-icon`, which is declared in `app/layout.tsx` and must also be
+ *   a PNG.
+ *
+ * `lib/pwa.test.ts` decodes each PNG off disk: the declared `sizes` against the
+ * header, because a manifest that claims 512 and ships 192 is silently
+ * downgraded by the launcher and reads as correct from the JSON; and the
+ * pixels against the SVG they were rendered from, because a file can be exactly
+ * 192x192 and still be a crop of the top-left corner.
+ *
+ * ## The screenshots
+ *
+ * Chromium only shows the richer install dialog when there is at least one
+ * `narrow` and one `wide` screenshot; with none it falls back to a one-line
+ * bar. Both are checked in by this card, and how they were produced is written
+ * down in `docs/goals/vodoge-ui-refactor/notes/T016-pwa-install-offline.md` —
+ * they are rendered from this design system's own tokens with demo data, not
+ * captured from a tenant, because no real fleet's numbers belong in an install
+ * dialog and this card has no session to capture one with.
+ */
+export function consoleManifest(): ConsoleManifest {
+  return {
+    id: "/",
+    name: "VoDoge Console",
+    short_name: "VoDoge",
+    description: "Multi-tenant modem fleet console",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    orientation: "any",
+    // From the token table, not typed again. The splash screen an installed
+    // console shows before its first paint is drawn from these two, so a
+    // hand-copied pair means a launch that flashes the old palette.
+    background_color: COLOR_TOKENS.bg.dark,
+    theme_color: COLOR_TOKENS.bg.dark,
+    categories: ["business", "utilities"],
+    icons: [
+      { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      {
+        src: "/icon-maskable-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "maskable",
+      },
+      {
+        src: "/icon-maskable-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
+      },
+    ],
+    screenshots: [
+      {
+        src: "/screenshot-mobile.png",
+        // A 390px phone layout rasterised at 2x, so it stays sharp in the
+        // install dialog on the sort of screen that is going to show it.
+        sizes: "780x1688",
+        type: "image/png",
+        form_factor: "narrow",
+        label: "Fleet overview on a phone",
+      },
+      {
+        src: "/screenshot-wide.png",
+        sizes: "1280x800",
+        type: "image/png",
+        form_factor: "wide",
+        label: "Fleet overview on a desktop",
+      },
+    ],
+  };
+}
+
 /* ── Installing ──────────────────────────────────────────────────────────
  *
  * Two entirely different mechanisms wearing one word.

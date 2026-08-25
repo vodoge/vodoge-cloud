@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import manifest from "../app/manifest.ts";
+import { inflateSync } from "node:zlib";
 import { LOCALE_COOKIE } from "./i18n.ts";
 import {
   INSTALL_DISMISSED_KEY,
@@ -12,6 +12,7 @@ import {
   PROBE_PATH,
   STANDALONE_QUERIES,
   connectionView,
+  consoleManifest,
   createConnectionMonitor,
   detectPlatform,
   formatClock,
@@ -23,7 +24,7 @@ import {
   type ConnectionHost,
   type FetchLike,
 } from "./pwa.ts";
-import { PWA, SAFE_AREA } from "./tokens.ts";
+import { COLOR_TOKENS, PWA, SAFE_AREA } from "./tokens.ts";
 
 /**
  * The PWA checklist, as assertions.
@@ -40,6 +41,17 @@ import { PWA, SAFE_AREA } from "./tokens.ts";
  * files. This file had to be added to it; without that it would never run and
  * the pass count would not move, which reads exactly like "no new tests were
  * needed". T023 flagged that trap and it is real.
+ *
+ * ## Nothing here may import from `app/`
+ *
+ * `node --test` resolves module specifiers itself and does not read
+ * `tsconfig.json`, so the `@/` alias every file under `app/` uses is not a
+ * package it can find. An earlier revision imported `app/manifest.ts` for the
+ * manifest object; the moment that file gained one `@/lib/tokens` import the
+ * run failed with `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'` — at
+ * import time, so all 35 tests below disappeared at once and the summary said
+ * "1 fail" rather than "35 fewer". The manifest now lives in `lib/pwa.ts` and
+ * `app/manifest.ts` is checked as *text*, below.
  */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -495,8 +507,97 @@ function pngSize(bytes: Buffer): { width: number; height: number } {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
+/**
+ * Decode far enough to read a pixel, because the size on its own proves nothing.
+ *
+ * The build of these icons shipped a real defect that every size check passed:
+ * the headless browser will not lay a page out below about 466px, so the 192px
+ * icons and the 180px apple icon were rendered into a 466-wide viewport and
+ * cropped to their top-left corner — mostly blank, with a sliver of the V down
+ * one edge, and exactly 192x192. The 512 was fine, so looking at one of them
+ * proved nothing either. This is the check that catches it, and it doubles as
+ * the one that catches a palette change that forgets to regenerate the files.
+ */
+function pngPixels(bytes: Buffer): {
+  width: number;
+  height: number;
+  at(x: number, y: number): [number, number, number, number];
+} {
+  const { width, height } = pngSize(bytes);
+  const depth = bytes[24];
+  const colour = bytes[25];
+  const interlace = bytes[28];
+  assert.equal(depth, 8, "only 8-bit PNGs are read here");
+  assert.equal(interlace, 0, "interlaced PNG");
+  const bpp = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[colour];
+  assert.ok(bpp, `unsupported colour type ${colour}`);
+
+  const parts: Buffer[] = [];
+  let at = 8;
+  while (at < bytes.length) {
+    const length = bytes.readUInt32BE(at);
+    if (bytes.toString("ascii", at + 4, at + 8) === "IDAT") {
+      parts.push(bytes.subarray(at + 8, at + 8 + length));
+    }
+    at += 12 + length;
+  }
+
+  const raw = inflateSync(Buffer.concat(parts));
+  const stride = width * bpp;
+  const out = Buffer.alloc(stride * height);
+  const paeth = (a: number, b: number, c: number) => {
+    const p = a + b - c;
+    const pa = Math.abs(p - a);
+    const pb = Math.abs(p - b);
+    const pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  };
+  let read = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[read++];
+    const line = raw.subarray(read, read + stride);
+    read += stride;
+    const row = out.subarray(y * stride, (y + 1) * stride);
+    const prev = y > 0 ? out.subarray((y - 1) * stride, y * stride) : null;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? row[x - bpp] : 0;
+      const b = prev ? prev[x] : 0;
+      const c = prev && x >= bpp ? prev[x - bpp] : 0;
+      const v = line[x];
+      row[x] =
+        (filter === 0
+          ? v
+          : filter === 1
+            ? v + a
+            : filter === 2
+              ? v + b
+              : filter === 3
+                ? v + ((a + b) >> 1)
+                : v + paeth(a, b, c)) & 0xff;
+    }
+  }
+
+  return {
+    width,
+    height,
+    at(x, y) {
+      const i = y * stride + x * bpp;
+      if (bpp >= 3) return [out[i], out[i + 1], out[i + 2], bpp === 4 ? out[i + 3] : 255];
+      return [out[i], out[i], out[i], bpp === 2 ? out[i + 1] : 255];
+    },
+  };
+}
+
+const rgbOf = (hex: string): [number, number, number] => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+];
+const near = (got: readonly number[], want: readonly number[], slack: number) =>
+  want.every((v, i) => Math.abs(got[i] - v) <= slack);
+
 test("every icon the manifest declares exists at the size it claims", () => {
-  const icons = manifest().icons ?? [];
+  const icons = consoleManifest().icons;
   assert.ok(icons.length > 0);
   for (const icon of icons) {
     if (icon.type === "image/svg+xml") {
@@ -511,7 +612,7 @@ test("every icon the manifest declares exists at the size it claims", () => {
 });
 
 test("there is a real bitmap for both install paths, any and maskable", () => {
-  const icons = manifest().icons ?? [];
+  const icons = consoleManifest().icons;
   const png = icons.filter((icon) => icon.type === "image/png");
   for (const purpose of ["any", "maskable"] as const) {
     const sizes = png.filter((icon) => icon.purpose === purpose).map((icon) => icon.sizes).sort();
@@ -529,8 +630,104 @@ test("iOS gets a PNG, because it ignores this manifest and cannot read SVG", () 
   assert.match(layout, /apple:\s*\[[^\]]*apple-touch-icon\.png/);
 });
 
+/**
+ * Where the artwork sits inside its own viewBox, measured from the SVG each
+ * bitmap was rendered from.
+ *
+ * Writing the expected box down as numbers here would leave the SVGs free to be
+ * redrawn without the PNGs being regenerated — the same drift the size check
+ * exists to catch, one level up.
+ */
+function svgArtExtent(svg: string): { x: [number, number]; y: [number, number] } {
+  const box = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg);
+  assert.ok(box, "no viewBox to measure against");
+  const side = Number(box[1]);
+  assert.equal(Number(box[2]), side, "these icons are square");
+  const path = /\sd="([^"]+)"/.exec(svg);
+  assert.ok(path, "no path to measure");
+  const points = [...path[1].matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(
+    (match) => [Number(match[1]), Number(match[2])] as const,
+  );
+  assert.ok(points.length >= 3, "the mark has three points");
+  const stroke = /stroke-width="([\d.]+)"/.exec(svg);
+  assert.ok(stroke, "no stroke width");
+  // Round caps and joins, so the stroke reaches exactly half its width past the
+  // path in every direction.
+  const grow = Number(stroke[1]) / 2;
+  const span = (values: number[]): [number, number] => [
+    (Math.min(...values) - grow) / side,
+    (Math.max(...values) + grow) / side,
+  ];
+  return { x: span(points.map((p) => p[0])), y: span(points.map((p) => p[1])) };
+}
+
+/** Which SVG each bitmap is a rasterisation of. */
+const ICON_SOURCES: Record<string, string> = {
+  "icon-192.png": "icon.svg",
+  "icon-512.png": "icon.svg",
+  "apple-touch-icon.png": "icon.svg",
+  "icon-maskable-192.png": "icon-maskable.svg",
+  "icon-maskable-512.png": "icon-maskable.svg",
+};
+
+test("each icon is the whole drawing rather than a corner of it", () => {
+  const accent = rgbOf(COLOR_TOKENS.accent.dark);
+  const background = rgbOf(COLOR_TOKENS.bg.dark);
+
+  for (const [png, svg] of Object.entries(ICON_SOURCES)) {
+    const want = svgArtExtent(readPublic(svg).toString("utf8"));
+    const image = pngPixels(readPublic(png));
+
+    let minX = Infinity;
+    let maxX = -1;
+    let minY = Infinity;
+    let maxY = -1;
+    let hits = 0;
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const pixel = image.at(x, y);
+        // Slack, because the mark is antialiased against the background at
+        // every edge and only its interior is the flat token colour.
+        if (pixel[3] < 200 || !near(pixel, accent, 40)) continue;
+        hits++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    assert.ok(hits > 0, `${png} has no mark in it at all — it is a blank square`);
+
+    // Exact, not slack: this is flat fill, and a near miss here means the
+    // palette moved and these files were not regenerated with it.
+    assert.ok(
+      near(image.at(image.width >> 1, Math.round(image.height * 0.08)), background, 2),
+      `${png} is not on the token background — regenerate it after a palette change`,
+    );
+
+    // The defect this catches shipped and passed every size check: the
+    // headless browser these were rendered in will not lay out below about
+    // 466px, so the 192s and the 180 came back as the top-left corner of a
+    // 466-wide page — exactly 192x192, mostly empty, a sliver of the mark down
+    // one edge. The 512 was fine, so opening one of them proved nothing.
+    const edges: [string, number, number][] = [
+      ["left", minX / image.width, want.x[0]],
+      ["right", (maxX + 1) / image.width, want.x[1]],
+      ["top", minY / image.height, want.y[0]],
+      ["bottom", (maxY + 1) / image.height, want.y[1]],
+    ];
+    for (const [side, got, expected] of edges) {
+      assert.ok(
+        Math.abs(got - expected) <= 0.03,
+        `${png}: the mark's ${side} edge is at ${got.toFixed(3)} of the image, ` +
+          `but ${svg} puts it at ${expected.toFixed(3)}`,
+      );
+    }
+  }
+});
+
 test("the install dialog has a screenshot of each shape, at the declared size", () => {
-  const shots = manifest().screenshots ?? [];
+  const shots = consoleManifest().screenshots;
   const factors = shots.map((shot) => shot.form_factor).sort();
   // Chromium only shows the richer install dialog when it has both.
   assert.deepEqual(factors, ["narrow", "wide"]);
@@ -545,7 +742,7 @@ test("the install dialog has a screenshot of each shape, at the declared size", 
 });
 
 test("the manifest still asks for a standalone window with the app's own colours", () => {
-  const m = manifest();
+  const m = consoleManifest();
   assert.equal(m.display, "standalone");
   assert.equal(m.scope, "/");
   // Wandering onto another tenant's subdomain would show a session it has not
@@ -553,6 +750,40 @@ test("the manifest still asks for a standalone window with the app's own colours
   assert.equal(m.start_url, "/");
   assert.match(String(m.theme_color), /^#[0-9a-f]{6}$/i);
   assert.match(String(m.background_color), /^#[0-9a-f]{6}$/i);
+});
+
+test("the two chrome colours come from the token table, not a second copy", () => {
+  // Three places have to remember a palette change: globals.css, the phone
+  // status bar in app/layout.tsx, and this. The last two are the ones nobody
+  // looks at — one paints the splash screen an installed console shows before
+  // its first paint, the other the strip above it.
+  const m = consoleManifest();
+  assert.equal(m.theme_color, COLOR_TOKENS.bg.dark);
+  assert.equal(m.background_color, COLOR_TOKENS.bg.dark);
+  // Equality alone would still hold if the hex were typed back in, since it is
+  // the same string today — which is exactly the state this guards against, so
+  // the source has to say where the value came from.
+  const source = readText(join("lib", "pwa.ts"));
+  assert.match(source, /background_color: COLOR_TOKENS\.bg\.dark/);
+  assert.match(source, /theme_color: COLOR_TOKENS\.bg\.dark/);
+
+  const layout = readText(join("app", "layout.tsx"));
+  assert.match(layout, /color: COLOR_TOKENS\.bg\.dark/);
+  assert.match(layout, /color: COLOR_TOKENS\.bg\.light/);
+  assert.ok(!/#[0-9a-f]{6}/i.test(layout), "a hex colour was typed into app/layout.tsx again");
+});
+
+test("app/manifest.ts is only a caller, so no test has to reach into app/", () => {
+  const route = readText(join("app", "manifest.ts"));
+  // A call site rather than a definition: `consoleManifest` is declared in
+  // lib/pwa.ts, so nothing in this file can match that string except a use.
+  assert.match(route, /return consoleManifest\(\);/, "the manifest route stopped delegating");
+  // And it holds nothing of its own. The reason a field would move back here
+  // is to reach a token through `@/` — which is exactly what took the whole
+  // suite down, silently, once already.
+  for (const field of ["start_url", "icons", "screenshots", "theme_color"]) {
+    assert.ok(!route.includes(`${field}:`), `${field} moved back into app/manifest.ts`);
+  }
 });
 
 /* ── Safe area ───────────────────────────────────────────────────────── */

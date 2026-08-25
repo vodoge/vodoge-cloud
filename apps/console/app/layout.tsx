@@ -7,16 +7,23 @@ import { htmlLang, t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { TENANT_HEADER } from "@/lib/tenant";
 import { getTenantFromHeaders, sessionToken } from "@/lib/tenant-headers";
-import { SAFE_AREA } from "@/lib/tokens";
+import { COLOR_TOKENS, SAFE_AREA } from "@/lib/tokens";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
 
-/** Matches the app background so the phone status bar blends with the shell. */
+/**
+ * Matches the app background so the phone status bar blends with the shell.
+ *
+ * Read from the token table rather than typed again. These two hex values are
+ * the same `--bg` the stylesheet declares, and a hand-copied pair is a third
+ * place a palette change has to be remembered — the sort that gets found
+ * later, on a phone, as a status bar in last season's colour.
+ */
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0b0e14" },
-    { media: "(prefers-color-scheme: light)", color: "#f7f8fa" },
+    { media: "(prefers-color-scheme: dark)", color: COLOR_TOKENS.bg.dark },
+    { media: "(prefers-color-scheme: light)", color: COLOR_TOKENS.bg.light },
   ],
   width: "device-width",
   initialScale: 1,
