@@ -1096,6 +1096,104 @@ export const PWA = {
 } as const;
 
 /**
+ * The inbox, which is the one screen that is read on a phone.
+ *
+ * Two shapes live here. The thread list and the contact list are ordinary data
+ * grids and use `TABLE`; what they need from this recipe is the one cell whose
+ * content has no width at all — the body of the last message. The conversation
+ * is the other shape, and it is not a table: messages alternate sides, so the
+ * direction of a message is carried by where it sits as well as by its colour,
+ * which is what a monochrome screen and colour-blind vision get.
+ *
+ * The legacy stylesheet drew a bubble at `min(42rem, 82%)`. That is an
+ * arbitrary value twice over and this system rejects both halves, so the
+ * bubble is capped at the readable measure instead — which is the same answer
+ * the empty states and the confirmation panel already give, and it is the
+ * answer that does not need a number chosen for it.
+ */
+export const INBOX = {
+  /**
+   * The widest cell in this console with nothing bounding it.
+   *
+   * A thread's last message is arbitrary text in a four-column table read at
+   * 390px. Chinese wraps at any character, so the ordinary case is fine and
+   * looks like it needs nothing; a URL or an ICCID has no break opportunity at
+   * all and sets a min-content width the table has to honour.
+   *
+   * 🔴 The `overflow-wrap` utility is **not** enough and reads as though it is.
+   * `overflow-wrap: break-word` breaks a line that would otherwise overflow; it
+   * does not change the element's min-content size, and min-content is what a
+   * table cell and a flex item are sized from. Measured at 390px with only that
+   * one, a single activation URL made this table 737px inside a 343px wrapper.
+   * `word-break: break-all` is what lowers min-content to one character — the
+   * legacy stylesheet said `overflow-wrap: anywhere`, which is the same idea
+   * and has no utility of its own in Tailwind 3.
+   *
+   * It is here rather than on `TABLE` because most cells should *not* break a
+   * value an operator is comparing character by character.
+   */
+  lastBody: "break-all",
+  /** Which way the last message went, which is what says who is waiting. */
+  lastDirection: "text-fg-faint",
+  /** Unread is emphasised where the reader is already looking: the body. */
+  lastUnread: "font-semibold text-fg",
+  lastRead: "text-fg-faint",
+  /** The number under a named contact, and the number beside a named heading. */
+  peerUnder: "font-mono text-xs tabular-nums text-fg-faint",
+  /**
+   * The message count and the two badges that qualify it, in one cell.
+   *
+   * The old markup put `margin-left: var(--s2)` on each badge as an inline
+   * style, which is a gap that only exists on the second and third things in
+   * the cell and disappears when the badges wrap.
+   */
+  countCell: "flex flex-wrap items-center gap-s2",
+  backLink: "text-sm text-fg-muted no-underline hover:text-fg",
+  /** A heading that is a phone number rather than a name. */
+  titleMono: "font-mono",
+
+  /* ── One conversation ───────────────────────────────────────────────── */
+
+  /** The controls above the thread, then the thread. */
+  stack: "flex flex-col gap-s4",
+  list: "m-0 flex list-none flex-col gap-s3 p-0",
+  message: "max-w-measure rounded-lg border border-solid border-line p-s3",
+  /** Received: at the left, on the page's own surface. */
+  messageIn: "self-start rounded-bl bg-surface",
+  /** Sent: at the right, tinted with the accent. */
+  messageOut: "self-end rounded-br bg-accent-wash",
+  /**
+   * Breaking the word is for the same reason as `lastBody`, and it was measured
+   * here too: with only the `overflow-wrap` utility, the outbound bubble
+   * carrying a long URL rendered 384px wide inside a 311px column and hung 41px
+   * off the left edge of its own card. A flex item with `self-end` is sized
+   * `fit-content`, whose floor is min-content, and a zero min-width does not
+   * lower that floor — only a smaller min-content does.
+   */
+  body: "m-0 whitespace-pre-wrap break-all",
+  /**
+   * Hex is not text, and saying so is the point.
+   *
+   * Unexplained hex reads as a decoder that gave up, which is how four real
+   * decoding faults stayed hidden for weeks.
+   */
+  binaryNote: "m-0 mt-s1 text-xs italic text-fg-faint",
+  meta: "mt-s2 flex flex-wrap items-center gap-s2 text-xs",
+  metaTime: "font-mono text-xs tabular-nums text-fg-faint",
+  metaDetail: "text-fg-faint",
+
+  /* ── Sending ────────────────────────────────────────────────────────── */
+
+  /**
+   * The refusal to send from a device that carries a module which must not
+   * send. Loud on purpose: it is the difference between a message and a module.
+   */
+  blocked: "m-0 flex flex-col gap-s2 rounded border border-solid border-bad bg-bad-wash p-s3 text-sm text-bad",
+  blockedTitle: "font-semibold",
+  blockedBody: "m-0",
+} as const;
+
+/**
  * A setting with two or three states, as one control rather than a row of
  * competing buttons. Only the selected option is filled.
  */
@@ -1297,6 +1395,46 @@ export function toneForState(state: string): BadgeTone {
   return TONE_BY_STATE[state.toLowerCase()] ?? "neutral";
 }
 
+/**
+ * What happened to a sent message, as a colour.
+ *
+ * A second table rather than more rows on `TONE_BY_STATE`, because these are
+ * answers to a different question and one of them collides: a modem is `busy`
+ * and a message is `queued`, and both mean "wait", but a message that is
+ * `failed` and a modem that is in `error` are not the same kind of thing to a
+ * reader scanning a fleet.
+ *
+ * `sent` and `delivered` are both green and are still two states. `sent` is the
+ * module reporting that it took the message; `delivered` is the network
+ * reporting that the recipient got it, and it arrives separately and later.
+ * Colour cannot carry that difference, so the word beside it does.
+ *
+ * ⚠️ `toneForState` cannot be reused here and looked as if it could. It knows
+ * seven modem states, none of which are these, so every delivery badge would
+ * have come back neutral — a colour silently lost, which is the same defect the
+ * overview's bearer pill was fixed of.
+ */
+const TONE_BY_DELIVERY: Record<string, BadgeTone> = {
+  delivered: "ok",
+  sent: "ok",
+  failed: "bad",
+  undelivered: "bad",
+};
+
+/**
+ * `queued` is deliberately absent and falls through to the default.
+ *
+ * The table holds what the old ternary spelled out and nothing more: it named
+ * four states and gave everything else the warning colour, `queued` included.
+ * Adding a fifth row here saying `queued: "warn"` would read as a decision and
+ * change nothing, and the first person to add a sixth state would then have two
+ * places to look for what it is coloured.
+ */
+
+export function toneForDeliveryStatus(status: string): BadgeTone {
+  return TONE_BY_DELIVERY[status.toLowerCase()] ?? "warn";
+}
+
 /* ── A confirmation has to say what will happen ──────────────────────────
  *
  * T030 read every confirmation in this console. Two of them state a
@@ -1416,6 +1554,20 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "settings.confirmTest",
   "settings.confirmSave",
   "settings.confirmSaveSecrets",
+  /**
+   * The inbox's four, from T014. Three of these had no confirmation at all —
+   * a text message that costs money and cannot be recalled, and two server-side
+   * deletions that read like hiding something locally.
+   *
+   * `inbox.confirmDeleteThread` is the fourth and was already a confirmation.
+   * It is here because its Chinese text was fourteen characters ending in a
+   * question, which is exactly what `consequenceProblem` refuses: the dialog
+   * asks the question itself now, so the string had to become the answer.
+   */
+  "inbox.confirmSend",
+  "inbox.confirmDeleteMessage",
+  "inbox.confirmDeleteThread",
+  "inbox.confirmForgetContact",
 ] as const;
 
 /** The dialog's own chrome, so every confirmation asks in the same words. */
@@ -1557,9 +1709,85 @@ export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }
  * that does not exist yet is a failing test rather than a reminder — which is
  * the right way round: the card that writes the confirmation adds the line.
  */
+/**
+ * Only the inbox is listed. The other dangerous actions T030 found live in
+ * files this card could not edit, and a name added here for a function that
+ * does not exist yet is a failing test rather than a reminder — which is the
+ * right way round: the card that writes the confirmation adds the line.
+ */
 export const CONFIRMED_WRITES = {
   "components/card-policies.tsx": ["save", "removePolicy"],
+  "components/send-sms.tsx": ["sendMessage"],
+  "components/conversation.tsx": ["removeThread", "removeMessage", "forgetContact"],
 } as const;
+
+/* ── Modules this console will not send a message from ───────────────────
+ *
+ * Not a policy invented here, and — this is the part that keeps being got
+ * wrong — **not "SMS is broken on that stick"**.
+ *
+ * `867018069509705` stalls its own QMI interrupt endpoint on every MO submit:
+ * the USB/IP session is torn down and the module leaves the bus for tens of
+ * seconds. Both transports trigger it, and a full `AT+CFUN=1,1` does not clear
+ * it. `edge-bin/src/main.rs:537-560` is the primary record, and it says the
+ * opposite of what this board believed until T006 checked:
+ *
+ * > The submit itself is not undone by that -- the SIM's own MO reference
+ * > counter in `EF_SMSS` advanced by 34 over a day of sends the console
+ * > recorded as failures, and 10086 kept replying to them. Told "failed", an
+ * > operator resends and the recipient gets it twice.
+ *
+ * So the cost is not a lost message. It is a lost module, and the copy in
+ * `messages/*.json` has to say that: telling an operator the message cannot be
+ * sent is the exact lie that daemon comment exists to stop, and it produces
+ * duplicate messages at the far end.
+ *
+ * ⚠️ **Keyed by IMEI, and matched against a whole device.** The console's send
+ * takes a `device_id` and no module, so which module carries the message is
+ * decided at the edge — and with nothing to aim it, the edge takes the first
+ * entry out of its modem map. A device holding one of these is therefore a
+ * device this console cannot promise anything about, which is why the whole
+ * device is refused rather than one option in a picker this form does not have.
+ *
+ * ⚠️ **This does not belong in the design system**, and it is here because the
+ * card that had to write it could edit exactly one file under `lib/`. A `.tsx`
+ * cannot be tested in this app, so the alternative was not a better home; it
+ * was no test at all. Move it to its own module the moment a card owns one.
+ */
+
+/** IMEI → the message keys that say why, and what the cost really is. */
+export const SMS_BLOCKED_MODULES = {
+  "867018069509705": {
+    why: "inbox.smsBlockedWhy",
+    /** The correction: the message usually goes out. Never say it failed. */
+    cost: "inbox.smsBlockedCost",
+  },
+} as const;
+
+export type SmsBlockedModule = { readonly imei: string; readonly why: string; readonly cost: string };
+
+/**
+ * The modules on `deviceId` that this console will not send from.
+ *
+ * Empty means "nothing known against it", which is not the same as "checked".
+ * A caller that could not read the module list has to say so itself — see
+ * `inbox.smsModemsUnknown` — because an empty array here and an empty array
+ * from a failed read are the same value, and this console has already shipped
+ * that bug once on `/audit`.
+ */
+export function blockedSendModules(
+  modems: readonly { readonly deviceId: string; readonly imei: string }[],
+  deviceId: string,
+): SmsBlockedModule[] {
+  const table = SMS_BLOCKED_MODULES as Record<string, { why: string; cost: string }>;
+  const out: SmsBlockedModule[] = [];
+  for (const modem of modems) {
+    if (modem.deviceId !== deviceId) continue;
+    const entry = table[modem.imei];
+    if (entry) out.push({ imei: modem.imei, why: entry.why, cost: entry.cost });
+  }
+  return out;
+}
 
 /* ── Secrets that are already stored ─────────────────────────────────────── */
 
@@ -1639,23 +1867,27 @@ export function secretInputProps(value: unknown): SecretInputProps {
  */
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
-  "app/devices/page.tsx",
   "app/devices/[deviceId]/page.tsx",
+  "app/devices/page.tsx",
+  "app/inbox/[peer]/page.tsx",
+  "app/inbox/page.tsx",
   "app/layout.tsx",
   "app/login/page.tsx",
-  "app/not-found.tsx",
   "app/not-a-tenant/page.tsx",
+  "app/not-found.tsx",
   "app/page.tsx",
-  "components/card-policies.tsx",
-  "components/connection-status.tsx",
-  "components/device-admin.tsx",
   "app/proxy/page.tsx",
   "app/settings/page.tsx",
+  "components/card-policies.tsx",
+  "components/connection-status.tsx",
+  "components/conversation.tsx",
+  "components/device-admin.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
   "components/proxy-manager.tsx",
   "components/pwa.tsx",
+  "components/send-sms.tsx",
   "components/settings-form.tsx",
   "components/shell.tsx",
   "components/sign-out.tsx",
@@ -1849,19 +2081,24 @@ export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
  * markup would count as migration progress without any having happened.
  */
 export const UNMIGRATED_SOURCES = [
-  "app/inbox/[peer]/page.tsx",
-  "app/inbox/page.tsx",
   "app/journal/page.tsx",
   "app/rules/page.tsx",
   "app/schedule/page.tsx",
   "app/sessions/page.tsx",
   "app/unknown-tenant/page.tsx",
-  "components/conversation.tsx",
   "components/device-console.tsx",
   "components/esim-panel.tsx",
   "components/journal.tsx",
-  "components/send-sms.tsx",
-] as const;
+];
+
+/**
+ * Of those, the ones a migrated file may not use at all.
+ *
+ * Matched as whole class names, which is what makes `sm:grid` a way out and
+ * `grid` not one. `sr-only` is absent because the legacy rule and the utility
+ * say the same thing.
+ */
+export const FORBIDDEN_IN_MIGRATED_SOURCES = ["grid", "grow"] as const;
 
 /**
  * Class names that exist in *both* the legacy stylesheet and Tailwind.
@@ -1897,56 +2134,13 @@ export const UNMIGRATED_SOURCES = [
 export const LEGACY_UTILITY_COLLISIONS = ["grid", "grow", "sr-only"] as const;
 
 /**
- * Of those, the ones a migrated file may not use at all.
- *
- * Matched as whole class names, which is what makes `sm:grid` a way out and
- * `grid` not one. `sr-only` is absent because the legacy rule and the utility
- * say the same thing.
- */
-export const FORBIDDEN_IN_MIGRATED_SOURCES = ["grid", "grow"] as const;
-
-/**
  * Classes that legitimately generate no CSS.
  *
  * `group` and `peer` are markers Tailwind reads on other elements' variants.
  */
 export const NON_UTILITY_CLASSES = ["group", "peer"] as const;
 
-/* ── The settings form, as data ──────────────────────────────────────────
- *
- * ## Why any of this is in `lib/` rather than in the page
- *
- * `apps/console` cannot run a `.tsx` in a test, and the settings page is the
- * densest form in this console: one PUT per section, a body assembled from a
- * runtime field list, and a credential rule where getting it wrong saves eight
- * bullet characters as somebody's SMTP password. All of that used to live
- * inside `components/settings-form.tsx` and `app/settings/page.tsx`, where
- * nothing could reach it. Here a test can put the *actual* request body beside
- * the one the page sent before it was touched, which is the only way "the
- * behaviour did not change" is a claim rather than an assurance.
- *
- * ## ⚠️ No count lives here, and none may
- *
- * The "seven notification channels" this page is described by is not written
- * down anywhere, and must not be: the channels are derived from the field paths
- * below by `notificationChannels`, the gateway's sender registry is held equal
- * to its own settings list on that side, and a channel added there needs a row
- * in `NOTIFICATION_FIELDS` and two message keys and nothing else. The last
- * drift on this page started exactly the other way round — a hand-written list
- * of testable channels that had fallen behind the fields.
- *
- * ## Note for whoever splits this file
- *
- * This belongs in a `lib/settings.ts` of its own. It is here because
- * `package.json`'s test script is a hand-written list of files and the card
- * that wrote this was not allowed to edit it, so a new module would have been a
- * module whose tests never run — which is the failure mode the file header
- * warns about. Moving it out is safe as long as the move adds the new test file
- * to that list in the same commit.
- */
-
 export const SETTINGS_FIELD_KINDS = ["text", "secret", "number", "boolean", "list"] as const;
-
 export type SettingsFieldKind = (typeof SETTINGS_FIELD_KINDS)[number];
 
 /** One editable setting, addressed by the dotted path the gateway stores it at. */

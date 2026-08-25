@@ -30,6 +30,7 @@ import {
   SECURITY_FIELDS,
   SETTINGS_FIELD_KINDS,
   SMS_FIELDS,
+  SMS_BLOCKED_MODULES,
   STAT,
   TABLE,
   TAILWIND_BORDER_RADIUS,
@@ -56,6 +57,7 @@ import {
   UNMIGRATED_SOURCES,
   assertConsequence,
   badgeClass,
+  blockedSendModules,
   buttonClass,
   cardPolicyGuardFor,
   cardPolicyPatch,
@@ -481,6 +483,7 @@ const NOT_A_RECIPE = new Set([
   "CONFIRM_CONSEQUENCE_KEYS",
   "CONFIRM_LABEL_KEYS",
   "CONFIRM_MIN_CONSEQUENCE",
+  "CONFIRMED_WRITES",
   "REDACTED_SECRET",
   // Message keys and function names: which dialog an edit needs, and which
   // writes are only allowed to happen after somebody answered one.
@@ -492,6 +495,10 @@ const NOT_A_RECIPE = new Set([
   "NOTIFICATION_FIELDS",
   "SMS_FIELDS",
   "SECURITY_FIELDS",
+  // IMEIs and message keys, not classes. See the note above it in tokens.ts:
+  // it is in that file because the card that wrote it could edit one file
+  // under lib/, and it should move out the moment a card owns another.
+  "SMS_BLOCKED_MODULES",
 ]);
 
 /** Every export of `tokens.ts` that is treated as a bag of class lists. */
@@ -1072,9 +1079,7 @@ test("every primitive still exports what it says, drawn by the recipes it names"
  * *list*, two cards delete two different lines and git merges both deletions
  * correctly. The list reaching empty is what makes the barrel deletable.
  */
-const BARREL_IMPORTERS = [  "app/inbox/[peer]/page.tsx",
-  "app/inbox/page.tsx",
-  "app/journal/page.tsx",
+const BARREL_IMPORTERS = [  "app/journal/page.tsx",
   "app/rules/page.tsx",
   "app/schedule/page.tsx",
   "app/sessions/page.tsx",
@@ -1104,6 +1109,7 @@ test("the old ui barrel still exports every name its remaining importers ask for
     "a page started or stopped importing the barrel without this list being told",
   );
 });
+
 
 /**
  * One empty state, one badge, one stat card. Not three.
@@ -1693,6 +1699,101 @@ test("a dangerous write is reachable only from a confirmation", () => {
     alsoDirect,
     [],
     "a control calls the write directly, so the dialog is decoration",
+  );
+});
+
+/* ── The module this console will not send from ──────────────────────────
+ *
+ * `867018069509705` leaves the USB bus on every MO submit. What makes this a
+ * test rather than a comment is the *wording*: the board believed for two days
+ * that its MO path was dead, and `edge-bin/src/main.rs:537-560` records the
+ * opposite — the SIM's own `EF_SMSS` counter advanced by 34 over a day of sends
+ * the console called failures, and 10086 kept replying. Told the message
+ * failed, an operator sends it again and the recipient gets it twice.
+ *
+ * So "cannot send" is the wrong refusal and "costs you the module" is the right
+ * one, and the difference lives entirely in `messages/*.json` where no type can
+ * reach it.
+ */
+
+test("a device carrying the module that leaves the bus cannot be sent from", () => {
+  const fleet = [
+    { deviceId: "edge-a", imei: "867018069509705" },
+    // On the same device, and healthy. Without it this fixture would only show
+    // that a device with one bad module is refused, which is the easy half:
+    // the console sends to a *device* and cannot aim at a module, so a device
+    // with a good module and a bad one has to be refused as well.
+    { deviceId: "edge-a", imei: "867018069514820" },
+    { deviceId: "edge-b", imei: "862547055142811" },
+  ];
+
+  const blocked = blockedSendModules(fleet, "edge-a");
+  assert.equal(blocked.length, 1, "the refusal has to name which module it is about");
+  assert.equal(blocked[0].imei, "867018069509705");
+  assert.deepEqual(blockedSendModules(fleet, "edge-b"), [], "no other device is refused");
+
+  // A module list that could not be read is an empty one, and it must not read
+  // as "checked and clean" anywhere but here — see `inbox.smsModemsUnknown`.
+  assert.deepEqual(blockedSendModules([], "edge-a"), []);
+});
+
+test("the blocked module says what it costs, and never that the message failed", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const entries = Object.entries(SMS_BLOCKED_MODULES);
+  assert.ok(entries.length > 0, "an empty block list checks nothing");
+
+  for (const [imei, keys] of entries) {
+    assert.match(imei, /^\d{15}$/, "keyed by IMEI, because the card in it can be moved");
+
+    for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
+      const why = catalogue[keys.why];
+      const cost = catalogue[keys.cost];
+      assert.equal(typeof why, "string", `${language} ${keys.why} is missing`);
+      assert.equal(typeof cost, "string", `${language} ${keys.cost} is missing`);
+
+      // Which module, not "a module": there are three on this bench.
+      assert.ok(why.includes("{imei}"), `${language} ${keys.why} does not name the module`);
+      // What actually happens, in both transports' shared terms.
+      for (const term of ["QMI", "USB"]) {
+        assert.ok(why.includes(term), `${language} ${keys.why} stopped saying what happens: ${term}`);
+      }
+      // And the correction, which is the reason this key exists at all. These
+      // two are the evidence, not decoration: without them the sentence is an
+      // opinion, and the opinion it replaces is the one that gets a recipient
+      // the same message twice.
+      for (const term of ["EF_SMSS", "34"]) {
+        assert.ok(
+          cost.includes(term),
+          `${language} ${keys.cost} dropped the evidence that the message goes out: ${term}`,
+        );
+      }
+    }
+  }
+});
+
+test("the refusal reaches the button and the handler, not just one of them", () => {
+  const source = readSource("components/send-sms.tsx");
+
+  const submit = openingTags(source).find((tag) => /type=\{?"submit"/.test(tag.text));
+  assert.ok(submit, "the send form has no submit button any more");
+  assert.match(
+    submit.text,
+    /disabled=\{[^}]*blocked\.length/,
+    "the send button is enabled on a device that must not send",
+  );
+
+  // And again in the handler. Return submits a form without the button being
+  // pressed, so a guard that lives only in an attribute is one keystroke and
+  // one stale render away from not existing — which is exactly the note the
+  // edge panel carries over the same module.
+  const body = functionBody(source, "onSubmit");
+  assert.ok(body, "the send form has no submit handler");
+  assert.match(body, /blocked\.length[^;]*\)\s*return;/, "the submit handler does not refuse");
+  assert.ok(
+    body.indexOf("blocked.length") < body.indexOf("setPending"),
+    "the handler refuses after it has already started asking",
   );
 });
 
@@ -2591,6 +2692,15 @@ const RULES_SHIPPED_UNASKED = [
   "max-sm:grid",
   "sm:grid",
   "sr-only",
+  // `grid` itself, added by T014 and for the same reason as the two above it:
+  // `LEGACY_UTILITY_COLLISIONS` and `FORBIDDEN_IN_MIGRATED_SOURCES` both spell
+  // the name out in `lib/tokens.ts`, which is Tailwind content, so the rule is
+  // built from the ledger that exists to forbid it. It became unasked rather
+  // than newly shipped: `app/inbox/page.tsx:54` was the last `className="grid
+  // grid-wide"` in the console, and migrating that page took the last caller
+  // away. Deleting the name from the ledger is not the fix — the ledger is
+  // what the guard reads.
+  "grid",
 ];
 
 test("the stylesheet contains no rule that no file asks for", async () => {
