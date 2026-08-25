@@ -1776,8 +1776,8 @@ export const UI_PRIMITIVES = {
  *   form in this console that sends a text message has been an unstyled block
  *   with an unstyled button since it was written.
  *
- * Of the five sites this list was frozen with, one is gone: the device detail
- * page. The remaining `card-grid` pair belongs to T012 and T013, and
+ * Of the five sites this list was frozen with, three are gone: the device detail
+ * page. The remaining `card-grid` site belongs to T013 (/settings), and
  * `send-sms.tsx` to T014, and the entry stays until the last of them is fixed.
  */
 export const CLASSES_WITH_NO_STYLESHEET = ["card-grid", "panel", "primary"] as const;
