@@ -11,11 +11,17 @@ import {
   BADGE,
   BUTTON,
   CARD,
+  CENTERED,
   FORBIDDEN_IN_MIGRATED_SOURCES,
+  FORM,
   LEGACY_UTILITY_COLLISIONS,
   MIGRATED_SOURCES,
+  NAV_GROUPS,
   NON_UTILITY_CLASSES,
   PAGE,
+  SAFE_AREA,
+  SEGMENTED,
+  SHELL,
   TABLE,
   TAILWIND_BORDER_RADIUS,
   TAILWIND_BOX_SHADOW,
@@ -25,6 +31,7 @@ import {
   TAILWIND_SPACING,
   badgeClass,
   buttonClass,
+  navState,
   rootTokenValues,
   tableCellClass,
   themeOverrideValues,
@@ -54,6 +61,11 @@ const globalsCss = readFileSync(join(root, "app", "globals.css"), "utf8");
 
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** Block and line comments both, for reading source rather than a stylesheet. */
+function codeOnly(source: string): string {
+  return stripComments(source).replace(/\/\/.*$/gm, "");
 }
 
 /** The text between the braces of the first block whose head ends with `head`. */
@@ -197,6 +209,10 @@ function allUsedClasses(): string[] {
     ...Object.values(PAGE),
     ...Object.values(CARD),
     ...Object.values(TABLE),
+    ...Object.values(SHELL),
+    ...Object.values(CENTERED),
+    ...Object.values(FORM),
+    ...Object.values(SEGMENTED),
     BUTTON.base,
     ...Object.values(BUTTON.variant),
     ...Object.values(BUTTON.size),
@@ -356,6 +372,113 @@ test("the shared components hold no class strings of their own", () => {
     );
     assert.match(source, /from "@\/lib\/tokens"/, `${relative} does not read the recipes`);
   }
+});
+
+/* ── The shell ───────────────────────────────────────────────────────── */
+
+/**
+ * The navigation is four groups because that is what the operator agreed to.
+ *
+ * A `.tsx` cannot be rendered in a test here, so the check that the shell
+ * really offers those destinations has to be made against the data the shell
+ * renders from — which is why the groups are data.
+ */
+test("the nav is four groups covering every destination exactly once", () => {
+  assert.equal(NAV_GROUPS.length, 4);
+
+  const hrefs = NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href));
+  assert.deepEqual(
+    hrefs,
+    ["/", "/devices", "/journal", "/audit", "/inbox", "/rules", "/schedule", "/proxy", "/settings"],
+    "the confirmed grouping is fleet / comms / network / settings",
+  );
+  assert.equal(new Set(hrefs).size, hrefs.length, "a destination appears in one group only");
+
+  for (const group of NAV_GROUPS) {
+    assert.ok(group.items.length > 0, "an empty group is a divider pretending to be a section");
+    // A label is dropped only when it would repeat its single link's own name.
+    if (group.label === null) assert.equal(group.items.length, 1);
+  }
+});
+
+test("every nav string exists in both catalogues", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+  const keys = NAV_GROUPS.flatMap((group) => [
+    ...(group.label ? [group.label] : []),
+    ...group.items.map((item) => item.key),
+  ]);
+
+  // A missing key renders as ⟦key⟧ in the header of every page, so this is the
+  // one place a typo is worth catching before it ships.
+  const missing = keys.filter((key) => typeof zh[key] !== "string" || typeof en[key] !== "string");
+  assert.deepEqual(missing, []);
+});
+
+test("nav highlighting distinguishes the page from the section it is in", () => {
+  assert.equal(navState("/devices", "/devices"), "page");
+  assert.equal(navState("/devices/abc", "/devices"), "section");
+  assert.equal(navState("/inbox/%2B8613800138000", "/inbox"), "section");
+  // The overview's href is "/", and every path starts with it. A prefix test
+  // would light it up on every page — the bug the previous exact-match-only
+  // rule was written to avoid.
+  assert.equal(navState("/", "/"), "page");
+  assert.equal(navState("/devices", "/"), null);
+  assert.equal(navState("/devices/abc", "/"), null);
+  // A shared prefix is not a section: /rules must not claim /rules-archive.
+  assert.equal(navState("/rules-archive", "/rules"), null);
+  assert.equal(navState("/proxy", "/settings"), null);
+});
+
+/**
+ * The source footer, added by T094, and the reason it is not gated.
+ *
+ * It says where the source of the thing you are looking at is. A read-only
+ * account is not a lesser reader, so the shell holds no role logic at all —
+ * that absence is what keeps the footer visible to everyone, and it is easy to
+ * undo by accident while adding one.
+ */
+test("the shell still carries the source footer, for every account", () => {
+  const source = readSource("components/shell.tsx");
+  for (const key of [
+    "source.label",
+    "source.console",
+    "source.consoleUrl",
+    "source.edge",
+    "source.edgeUrl",
+    "source.edgeLicense",
+    "source.edgeLicenseUrl",
+  ]) {
+    assert.ok(source.includes(`"${key}"`), `the footer no longer renders ${key}`);
+  }
+  assert.match(source, /<footer/, "the footer element is gone");
+  assert.equal(
+    source.match(/target="_blank"/g)?.length,
+    3,
+    "three source links: console, edge, edge licensing",
+  );
+  assert.ok(
+    !/\brole\b|\breadonly\b|\bsession\b|\bpermission\b/i.test(codeOnly(source)),
+    "the shell gained a gate; the footer has to stay outside every one of them",
+  );
+});
+
+test("the header keeps its safe-area inset, which no class can express", () => {
+  // Without this the bar renders under the notch on an installed iOS console,
+  // because app/layout.tsx asks for viewportFit: "cover".
+  assert.match(SAFE_AREA.headerTop.paddingTop, /env\(safe-area-inset-top\)/);
+  assert.match(SAFE_AREA.headerTop.paddingTop, /var\(--s\d\)/);
+  assert.ok(readSource("components/shell.tsx").includes("SAFE_AREA.headerTop"));
+});
+
+test("the password field is a password field and cannot be revealed", () => {
+  const source = readSource("components/login-form.tsx");
+  assert.match(source, /name="password"[\s\S]{0,120}type="password"/);
+  assert.ok(
+    !/type=\{/.test(source),
+    "a computed input type is how a reveal toggle gets in",
+  );
+  assert.ok(!/type="text"/.test(source));
 });
 
 /* ── The helpers ─────────────────────────────────────────────────────── */

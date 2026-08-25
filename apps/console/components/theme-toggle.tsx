@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 type Theme = "dark" | "light";
 
@@ -40,9 +41,9 @@ export function ThemeToggle({
   const next: Theme = theme === "light" ? "dark" : "light";
 
   return (
-    <button
-      type="button"
-      className="subtle"
+    <Button
+      variant="subtle"
+      size="icon"
       title={labels.toggle}
       aria-label={`${labels.toggle}: ${next === "dark" ? labels.dark : labels.light}`}
       onClick={() => setTheme(next)}
@@ -50,6 +51,6 @@ export function ThemeToggle({
       {/* Rendered only once the stored choice is known, so the icon never
           flips on hydration. */}
       {theme === null ? "" : theme === "dark" ? "☾" : "☀"}
-    </button>
+    </Button>
   );
 }

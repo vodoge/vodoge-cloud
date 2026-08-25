@@ -1,6 +1,8 @@
 "use client";
 
+import { cn } from "@/lib/cn";
 import { LOCALE_COOKIE, htmlLang, t, type Locale } from "@/lib/i18n";
+import { SEGMENTED } from "@/lib/tokens";
 
 /**
  * A segmented pair rather than two standalone buttons.
@@ -21,12 +23,13 @@ export function LocaleSwitch({ locale }: { locale: Locale }) {
   }
 
   return (
-    <div className="segmented" role="group" aria-label={t("header.language", locale)}>
+    <div className={SEGMENTED.root} role="group" aria-label={t("header.language", locale)}>
       {(["zh", "en"] as const).map((option) => (
         <button
           key={option}
           type="button"
           aria-pressed={locale === option}
+          className={cn(SEGMENTED.option, locale === option ? SEGMENTED.optionSelected : undefined)}
           onClick={() => setLocale(option)}
         >
           {option === "zh" ? t("header.langZh", locale) : t("header.langEn", locale)}

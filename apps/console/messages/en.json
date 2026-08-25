@@ -513,5 +513,9 @@
   "source.edge": "Edge",
   "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
   "source.edgeLicense": "Edge licensing",
-  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE"
+  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE",
+  "nav.group.fleet": "Fleet",
+  "nav.group.comms": "Comms",
+  "nav.group.network": "Network",
+  "nav.schedule": "Schedule"
 }

@@ -513,5 +513,9 @@
   "source.edge": "边缘端",
   "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
   "source.edgeLicense": "边缘端许可",
-  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE"
+  "source.edgeLicenseUrl": "https://github.com/yuanshuai1122/vodoge-edge/blob/main/LICENSE",
+  "nav.group.fleet": "机队",
+  "nav.group.comms": "通信",
+  "nav.group.network": "网络",
+  "nav.schedule": "计划"
 }

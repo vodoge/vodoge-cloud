@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { FORM } from "@/lib/tokens";
 
 type Labels = {
   email: string;
@@ -48,14 +50,24 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <label>
+    <form onSubmit={onSubmit} className={FORM.root}>
+      <label className={FORM.label}>
         {labels.email}
-        <input name="email" type="email" autoComplete="username" required disabled={pending} />
-      </label>
-      <label>
-        {labels.password}
         <input
+          className={FORM.input}
+          name="email"
+          type="email"
+          autoComplete="username"
+          required
+          disabled={pending}
+        />
+      </label>
+      <label className={FORM.label}>
+        {labels.password}
+        {/* `type="password"`, never a reveal toggle: this field is the only
+            thing between a stranger on the same screen and the fleet. */}
+        <input
+          className={FORM.input}
           name="password"
           type="password"
           autoComplete="current-password"
@@ -63,10 +75,10 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
           disabled={pending}
         />
       </label>
-      {error ? <p className="danger">{error}</p> : null}
-      <button type="submit" disabled={pending}>
+      {error ? <p className={FORM.error}>{error}</p> : null}
+      <Button type="submit" disabled={pending}>
         {pending ? labels.working : labels.submit}
-      </button>
+      </Button>
     </form>
   );
 }

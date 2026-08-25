@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 /**
  * Signs out here and at the gateway.
@@ -13,9 +14,8 @@ export function SignOutButton({ label }: { label: string }) {
   const [pending, setPending] = useState(false);
 
   return (
-    <button
-      type="button"
-      className="subtle"
+    <Button
+      variant="subtle"
       disabled={pending}
       onClick={async () => {
         setPending(true);
@@ -29,6 +29,6 @@ export function SignOutButton({ label }: { label: string }) {
       }}
     >
       {label}
-    </button>
+    </Button>
   );
 }

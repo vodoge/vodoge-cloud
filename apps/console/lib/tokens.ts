@@ -307,6 +307,192 @@ export const BADGE = {
   },
 } as const;
 
+/* ── The shell ───────────────────────────────────────────────────────────
+ *
+ * The chrome every signed-in page renders inside: header bar, grouped
+ * navigation, content column, and the source footer.
+ */
+
+export const SHELL = {
+  root: "flex min-h-dvh flex-col",
+  /**
+   * Sticky from `sm` up, not below it.
+   *
+   * The four groups show all nine destinations without a horizontal scroller,
+   * which costs about three wrapped rows on a phone. Pinning that to the top
+   * would hand a quarter of a 390px screen to navigation permanently. Above
+   * `sm` the same nav is one or two rows, so it stays pinned there. The
+   * alternative — keeping it sticky and hiding destinations behind a scroller
+   * — is the arrangement this card was written to replace.
+   */
+  header: "z-20 border-b border-line bg-surface sm:sticky sm:top-0",
+  bar: "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-s3 px-s3 py-s2 sm:px-s5",
+  brand: "flex items-center gap-s2 text-base font-semibold tracking-tight text-fg",
+  brandMark:
+    "flex size-s5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink",
+  side: "ml-auto flex flex-wrap items-center gap-s2",
+  tenant:
+    "inline-flex items-center gap-s2 rounded-pill border border-line bg-surface-hover px-s3 py-s1 text-xs text-fg-muted",
+  tenantSlug: "font-semibold text-fg",
+  tenantRegion: "text-fg-faint",
+  /**
+   * `flex flex-wrap`, never `grid` — see LEGACY_UTILITY_COLLISIONS.
+   *
+   * The gaps are split: groups need horizontal room to read as groups, but a
+   * matching vertical gap only makes a wrapped nav taller. On a 390px phone in
+   * English this is the difference between a 304px and a 320px header.
+   */
+  nav: "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-x-s3 gap-y-s2 px-s3 pb-s2 sm:gap-x-s4 sm:px-s5",
+  /**
+   * A rule between groups, not only a caption.
+   *
+   * `uppercase` does the work in English and nothing at all in Chinese, where
+   * a dimmer label sitting next to links of the same size still reads as a
+   * twelfth link. The divider is what makes the four groups four groups in
+   * both languages.
+   */
+  navGroup:
+    "flex flex-wrap items-center gap-s1 border-l border-line-strong pl-s3 first:border-l-0 first:pl-0",
+  navGroupLabel: "px-s1 text-xs font-semibold uppercase tracking-wider text-fg-faint",
+  /**
+   * Full touch height at every width. The horizontal padding and the type
+   * shrink on a phone instead, because a 32px-tall target is the wrong thing
+   * to save space on.
+   */
+  navLink:
+    "inline-flex min-h-touch items-center rounded px-s2 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg sm:px-s3 sm:text-sm",
+  navLinkCurrent: "bg-accent-wash font-semibold text-accent",
+  main: "mx-auto w-full max-w-7xl flex-1 px-s3 py-s4 sm:px-s5 sm:py-s5",
+  footer:
+    "mx-auto flex w-full max-w-7xl flex-wrap items-center gap-s3 px-s3 py-s4 text-sm text-fg-muted sm:px-s5",
+  footerLabel: "text-fg-faint",
+  /** Anchors are `text-decoration: none` globally, so a bare link has to say so. */
+  footerLink: "underline transition-colors hover:text-fg",
+} as const;
+
+/**
+ * The one thing the token scales cannot express.
+ *
+ * `env(safe-area-inset-top)` is not reachable from a Tailwind class without an
+ * arbitrary value, and adding it as a token would mean declaring a custom
+ * property in `app/globals.css` — a file this card is not allowed to touch,
+ * and one `tokens.test.ts` checks declares *exactly* the token table. So it
+ * stays an inline style, which beats every class anyway. Dropping it would put
+ * the header under the notch on an installed iOS console, since
+ * `app/layout.tsx` asks for `viewportFit: "cover"`.
+ */
+export const SAFE_AREA = {
+  headerTop: { paddingTop: "calc(var(--s2) + env(safe-area-inset-top))" },
+} as const;
+
+/* ── Auth, 404 and the apex page ─────────────────────────────────────────
+ *
+ * One card centred in the viewport. The login page and the two error pages
+ * are the same shape, and all three render without the shell.
+ */
+
+export const CENTERED = {
+  root: "flex min-h-dvh flex-col items-center justify-center p-s5",
+  card: "flex w-full max-w-sm flex-col gap-s4 rounded-lg border border-line bg-surface p-s6 shadow-lg",
+  brand: "flex items-center gap-s2 text-lg font-semibold text-fg",
+  hint: "m-0 text-sm text-fg-muted",
+} as const;
+
+/**
+ * Form parts.
+ *
+ * Preflight is off and the legacy stylesheet still styles bare `form`, `label`
+ * and `input` elements, so every property that has to differ is spelled out
+ * rather than left to inherit. `focus` deliberately says nothing about
+ * `outline`: the global `:focus-visible` ring comes back on its own when the
+ * legacy layer goes.
+ */
+export const FORM = {
+  root: "flex flex-col gap-s3",
+  label: "flex flex-col gap-s1 text-sm font-medium text-fg-muted",
+  input:
+    "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
+  error: "m-0 text-sm text-bad",
+} as const;
+
+/**
+ * A setting with two or three states, as one control rather than a row of
+ * competing buttons. Only the selected option is filled.
+ */
+export const SEGMENTED = {
+  root: "inline-flex items-center gap-px rounded border border-line bg-surface-hover p-px",
+  option:
+    "inline-flex min-h-s6 cursor-pointer items-center rounded border-0 bg-transparent px-s3 text-xs font-semibold text-fg-faint transition-colors hover:text-fg",
+  optionSelected: "bg-surface text-fg shadow",
+} as const;
+
+/* ── Navigation ──────────────────────────────────────────────────────────
+ *
+ * Four groups, confirmed with the operator. This is data for the same reason
+ * the class recipes are: a `.tsx` cannot be read by a test in this app, so a
+ * nav written as markup is a nav nothing can check. `tokens.test.ts` asserts
+ * every key here resolves in both catalogues and every href is unique.
+ *
+ * `/sessions` is deliberately absent — see the note in
+ * `docs/goals/vodoge-ui-refactor/notes/T007-shell-and-nav.md`. The page still
+ * exists and still renders; it has no nav entry under the confirmed grouping.
+ */
+
+export type NavItem = { readonly href: string; readonly key: string };
+export type NavGroup = {
+  /** `null` when the group is a single link whose own label names it. */
+  readonly label: string | null;
+  readonly items: readonly NavItem[];
+};
+
+export const NAV_GROUPS: readonly NavGroup[] = [
+  {
+    label: "nav.group.fleet",
+    items: [
+      { href: "/", key: "nav.overview" },
+      { href: "/devices", key: "nav.devices" },
+      { href: "/journal", key: "nav.journal" },
+      { href: "/audit", key: "nav.audit" },
+    ],
+  },
+  {
+    label: "nav.group.comms",
+    items: [
+      { href: "/inbox", key: "nav.inbox" },
+      { href: "/rules", key: "nav.rules" },
+      { href: "/schedule", key: "nav.schedule" },
+    ],
+  },
+  {
+    label: "nav.group.network",
+    items: [{ href: "/proxy", key: "nav.proxy" }],
+  },
+  {
+    // "Settings / Settings" would be the label repeating its only link.
+    label: null,
+    items: [{ href: "/settings", key: "nav.settings" }],
+  },
+];
+
+/** Exact match, an ancestor of the current path, or neither. */
+export type NavState = "page" | "section" | null;
+
+/**
+ * Which nav entry the current path belongs to.
+ *
+ * A plain prefix test would light up the overview link on every page, since
+ * its href is `/`. Only `page` becomes `aria-current="page"`: a device detail
+ * page is *inside* the devices section, it is not the devices page, and saying
+ * otherwise to a screen reader is a lie told for a highlight.
+ */
+export function navState(pathname: string, href: string): NavState {
+  if (pathname === href) return "page";
+  // The trailing slash is doing two jobs: it keeps `/` from matching every
+  // path, and it keeps `/rules` from claiming `/rules-archive`. A bare
+  // `startsWith(href)` breaks both at once.
+  return pathname.startsWith(`${href}/`) ? "section" : null;
+}
+
 export type ButtonVariant = keyof typeof BUTTON.variant;
 export type ButtonSize = keyof typeof BUTTON.size;
 export type BadgeTone = keyof typeof BADGE.tone;
@@ -360,9 +546,27 @@ export function toneForState(state: string): BadgeTone {
  * migrated file is not allowed to do.
  */
 
-/** Files that must be free of the old stylesheet. Each page card appends to it. */
+/**
+ * Files that must be free of the old stylesheet. Each page card appends to it.
+ *
+ * A file that is not on this list is not checked, so adding the file is part
+ * of migrating it. Two of the entries below — `pwa.tsx` and `live-reload.tsx`
+ * — render `null` and never carried a class; they are listed so that the
+ * guard, not a reader's memory, is what keeps them that way.
+ */
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
+  "app/layout.tsx",
+  "app/login/page.tsx",
+  "app/not-found.tsx",
+  "app/not-a-tenant/page.tsx",
+  "components/live-reload.tsx",
+  "components/locale-switch.tsx",
+  "components/login-form.tsx",
+  "components/pwa.tsx",
+  "components/shell.tsx",
+  "components/sign-out.tsx",
+  "components/theme-toggle.tsx",
   "components/ui/badge.tsx",
   "components/ui/button.tsx",
   "components/ui/card.tsx",

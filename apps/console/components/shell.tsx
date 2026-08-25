@@ -2,28 +2,22 @@ import Link from "next/link";
 import { LocaleSwitch } from "@/components/locale-switch";
 import { SignOutButton } from "@/components/sign-out";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { cn } from "@/lib/cn";
 import { t, type Locale } from "@/lib/i18n";
 import type { Tenant } from "@/lib/tenant";
-
-/** Nav is data so the header markup does not grow a branch per destination. */
-const NAV = [
-  { href: "/", key: "nav.overview" },
-  { href: "/devices", key: "nav.devices" },
-  { href: "/inbox", key: "nav.inbox" },
-  { href: "/sessions", key: "nav.sessions" },
-  { href: "/rules", key: "nav.rules" },
-  { href: "/journal", key: "nav.journal" },
-  { href: "/audit", key: "nav.audit" },
-  { href: "/proxy", key: "nav.proxy" },
-  { href: "/settings", key: "nav.settings" },
-] as const;
+import { NAV_GROUPS, SAFE_AREA, SHELL, navState } from "@/lib/tokens";
 
 /**
- * Anchors are `text-decoration: none` globally, so a link that is not part of
- * a styled control has to say it is a link.
+ * The chrome every signed-in page renders inside.
+ *
+ * The nav is four groups rather than a flat row of nine links, and the groups
+ * live in `lib/tokens.ts` rather than here: a `.tsx` cannot be read by a test
+ * in this app, so a nav written as markup is a nav nothing can check. The same
+ * reason keeps every class string out of this file — `SHELL.*` is data that
+ * `lib/tokens.test.ts` puts to the real Tailwind build.
+ *
+ * `locale` arrives as a prop the server resolved. Nothing here reads a cookie.
  */
-const SOURCE_LINK = { textDecoration: "underline" } as const;
-
 export function Shell({
   tenant,
   locale,
@@ -38,47 +32,61 @@ export function Shell({
   const regionLabel = tenant.region === "cn" ? t("region.cn", locale) : t("region.intl", locale);
 
   return (
-    <div className="shell">
-      <header className="shell-header">
-        <Link href="/" className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            V
-          </span>
-          {t("app.name", locale)}
-        </Link>
+    <div className={SHELL.root}>
+      <header className={SHELL.header}>
+        {/* The inline style is the safe-area inset; see SAFE_AREA. */}
+        <div className={SHELL.bar} style={SAFE_AREA.headerTop}>
+          <Link href="/" className={SHELL.brand}>
+            <span className={SHELL.brandMark} aria-hidden="true">
+              V
+            </span>
+            {t("app.name", locale)}
+          </Link>
 
-        <nav className="shell-nav" aria-label={t("nav.label", locale)}>
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              // Only the exact path is current. A prefix match would light up
-              // the overview link on every page, since its href is "/".
-              aria-current={pathname === item.href ? "page" : undefined}
-            >
-              {t(item.key, locale)}
-            </Link>
+          <div className={SHELL.side}>
+            <span className={SHELL.tenant} title={tenant.tenant_id}>
+              <strong className={SHELL.tenantSlug}>{tenant.slug}</strong>
+              <span className={SHELL.tenantRegion}>{regionLabel}</span>
+            </span>
+            <ThemeToggle
+              labels={{
+                toggle: t("theme.toggle", locale),
+                dark: t("theme.dark", locale),
+                light: t("theme.light", locale),
+              }}
+            />
+            <LocaleSwitch locale={locale} />
+            <SignOutButton label={t("nav.logout", locale)} />
+          </div>
+        </div>
+
+        <nav className={SHELL.nav} aria-label={t("nav.label", locale)}>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label ?? group.items[0].href} className={SHELL.navGroup}>
+              {group.label ? (
+                <span className={SHELL.navGroupLabel}>{t(group.label, locale)}</span>
+              ) : null}
+              {group.items.map((item) => {
+                const state = navState(pathname, item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    // Only an exact match is the current page. A device detail
+                    // page is inside the devices section, not the devices page.
+                    aria-current={state === "page" ? "page" : undefined}
+                    className={cn(SHELL.navLink, state ? SHELL.navLinkCurrent : undefined)}
+                  >
+                    {t(item.key, locale)}
+                  </Link>
+                );
+              })}
+            </div>
           ))}
         </nav>
-
-        <div className="shell-side">
-          <span className="tenant-chip" title={tenant.tenant_id}>
-            <strong>{tenant.slug}</strong>
-            <span className="faint">{regionLabel}</span>
-          </span>
-          <ThemeToggle
-            labels={{
-              toggle: t("theme.toggle", locale),
-              dark: t("theme.dark", locale),
-              light: t("theme.light", locale),
-            }}
-          />
-          <LocaleSwitch locale={locale} />
-          <SignOutButton label={t("nav.logout", locale)} />
-        </div>
       </header>
 
-      <main className="shell-main">{children}</main>
+      <main className={SHELL.main}>{children}</main>
 
       {/* Where the source is.
           Deliberately not a licence notice. This console carries no vowifi-go
@@ -89,33 +97,26 @@ export function Shell({
           source is public, and this is where. It lives in the shell rather than
           on /settings so every page carries it, and outside every role gate,
           because a read-only account is not a lesser reader. */}
-      <footer
-        className="hint"
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: "var(--s3)",
-          padding: "var(--s4) var(--s5)",
-          maxWidth: "1400px",
-          width: "100%",
-          margin: "0 auto",
-        }}
-      >
-        <span className="faint">{t("source.label", locale)}</span>
+      <footer className={SHELL.footer}>
+        <span className={SHELL.footerLabel}>{t("source.label", locale)}</span>
         <a
-          style={SOURCE_LINK}
+          className={SHELL.footerLink}
           href={t("source.consoleUrl", locale)}
           target="_blank"
           rel="noreferrer"
         >
           {t("source.console", locale)}
         </a>
-        <a style={SOURCE_LINK} href={t("source.edgeUrl", locale)} target="_blank" rel="noreferrer">
+        <a
+          className={SHELL.footerLink}
+          href={t("source.edgeUrl", locale)}
+          target="_blank"
+          rel="noreferrer"
+        >
           {t("source.edge", locale)}
         </a>
         <a
-          style={SOURCE_LINK}
+          className={SHELL.footerLink}
           href={t("source.edgeLicenseUrl", locale)}
           target="_blank"
           rel="noreferrer"
