@@ -1591,12 +1591,12 @@ const RULES_SHIPPED_UNASKED = [
   "outline",
   "ring",
   "shrink",
-  "static",
   "table",
   "visible",
-  // `invisible` from `components/esim-panel.tsx:918`, `static` from
-  // `app/manifest.ts:4` — both prose, both in files this card cannot edit.
+  // The same thing in files this card cannot edit: `invisible` from
+  // `components/esim-panel.tsx:918`, `static` from `app/manifest.ts:4`.
   "invisible",
+  "static",
   // Wanted: the documented way to lay something out in a grid before the
   // legacy layer is deleted, plus the collision name that is safe to use.
   "max-sm:grid",
