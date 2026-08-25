@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { LOCALE_COOKIE } from "./i18n.ts";
 import {
   INSTALL_DISMISSED_KEY,
   LOST_AFTER_FAILURES,
+  MIDDLEWARE_MATCHER,
   PROBE_INTERVAL_MS,
   PROBE_PATH,
   STANDALONE_QUERIES,
@@ -20,6 +21,7 @@ import {
   isConnectionFailure,
   isStandalone,
   isWatchedRequest,
+  middlewareRunsOn,
   requestUrl,
   type ConnectionHost,
   type FetchLike,
@@ -784,6 +786,152 @@ test("app/manifest.ts is only a caller, so no test has to reach into app/", () =
   for (const field of ["start_url", "icons", "screenshots", "theme_color"]) {
     assert.ok(!route.includes(`${field}:`), `${field} moved back into app/manifest.ts`);
   }
+});
+
+/* ── The assets are reachable without a session ──────────────────────────
+ *
+ * Everything above checks that the right bytes are on disk and named correctly
+ * in the manifest. All of that was true and green while production answered
+ * `307 → /login` to every one of the seven PNGs, because the middleware's
+ * `config.matcher` excluded a hand-written list of the five files that existed
+ * when it was written. Nothing in the repository could see the difference: the
+ * manifest was right, the icons were right, and the only wrong thing was a
+ * regex in another file that nobody had a reason to open.
+ *
+ * So these run against the literal `middleware.ts` actually ships — parsed out
+ * as text — rather than against `MIDDLEWARE_MATCHER`. A test that agreed with
+ * the copy in `lib/` while the middleware disagreed with both would be the same
+ * class of green as the manifest was.
+ */
+
+const middlewareSource = readText("middleware.ts");
+
+/** The `config.matcher` entry as the shipped file spells it. */
+function shippedMatcher(): string {
+  const found = /matcher:\s*\[\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\]/.exec(middlewareSource);
+  assert.ok(found, "config.matcher is no longer one string literal — this parser is stale");
+  // Through JSON so the `\\.` in the source becomes the `\.` the regex means.
+  return JSON.parse(`"${found[1]}"`) as string;
+}
+
+/** Every file under `public/`, as the path a browser would ask for. */
+function publicFiles(dir = join(root, "public"), prefix = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const served = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...publicFiles(join(dir, entry.name), served));
+    else out.push(served);
+  }
+  return out;
+}
+
+/** Every route `app/` defines, as a path. `[param]` becomes a sample value. */
+function appRoutes(dir = join(root, "app"), prefix = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      const segment = entry.name.replace(/^\[\.{0,3}(.+)\]$/, "sample");
+      out.push(...appRoutes(join(dir, entry.name), `${prefix}/${segment}`));
+    } else if (entry.name === "page.tsx" || entry.name === "route.ts") {
+      out.push(prefix === "" ? "/" : prefix);
+    }
+  }
+  return out;
+}
+
+test("the matcher in middleware.ts is the one lib/ describes and tests", () => {
+  // Next reads config.matcher by static analysis and needs a literal, so the
+  // rule cannot be imported from lib/pwa.ts. This is what stops the copy from
+  // being a second place for it to live.
+  assert.equal(shippedMatcher(), MIDDLEWARE_MATCHER);
+});
+
+test("every file in public/ is served to a browser that has no session", () => {
+  const matcher = shippedMatcher();
+  const files = publicFiles();
+  // A walk that returned nothing would pass the assertion below without
+  // measuring anything at all.
+  assert.ok(files.length >= 11, `only ${files.length} files under public/ — the walk is broken`);
+
+  const gated = files.filter((path) => middlewareRunsOn(path, matcher));
+  // This is the reconciliation the old list could not do. Drop any file into
+  // public/ and it is covered; nest one in a subdirectory and this goes red
+  // rather than 307ing in production for a month.
+  assert.deepEqual(gated, [], "these files redirect an anonymous browser to /login");
+});
+
+test("every asset the install path fetches is reachable anonymously", () => {
+  const matcher = shippedMatcher();
+  const manifest = consoleManifest();
+  const layout = readText(join("app", "layout.tsx"));
+  const declared = [
+    // The connection banner's probe, which runs while signed out on /login.
+    PROBE_PATH,
+    ...manifest.icons.map((icon) => icon.src),
+    ...manifest.screenshots.map((shot) => shot.src),
+    // apple-touch-icon is declared in the <head>, not the manifest: iOS ignores
+    // the manifest's icons entirely, so it has its own way to be missed.
+    ...[...layout.matchAll(/url:\s*"(\/[^"]+)"/g)].map((match) => match[1]),
+  ];
+  assert.ok(declared.length >= 9, `only ${declared.length} declared assets — the extractor broke`);
+  assert.ok(
+    declared.includes("/apple-touch-icon.png"),
+    "the apple-touch-icon is not being read out of app/layout.tsx",
+  );
+
+  const unreachable = declared.filter((path) => middlewareRunsOn(path, matcher));
+  assert.deepEqual(unreachable, [], "the manifest names files an anonymous browser cannot fetch");
+});
+
+test("opening the assets did not open anything that needs a session", () => {
+  const matcher = shippedMatcher();
+  // The negative half, and the more important one: a matcher that let
+  // everything through would satisfy every assertion above.
+  const routes = appRoutes();
+  assert.ok(routes.length >= 15, `only ${routes.length} routes found — the walk is broken`);
+
+  const open = routes.filter((path) => !middlewareRunsOn(path, matcher));
+  // Including /login and /unknown-tenant: the middleware still has to run on
+  // those to resolve the tenant. Being reachable without a session is
+  // isPublicPath's job, inside the middleware, not the matcher's.
+  assert.deepEqual(open, [], "these routes no longer reach the middleware at all");
+
+  for (const path of ["/", "/devices", "/proxy", "/settings"]) {
+    assert.ok(middlewareRunsOn(path, matcher), `${path} stopped being gated`);
+  }
+});
+
+test("a dot in a path cannot be used to walk out of a gated route", () => {
+  const matcher = shippedMatcher();
+  // The exclusion is anchored to a single segment. Without that anchor, every
+  // one of these would be served with no session and no bearer token —
+  // /devices/[deviceId] accepts any string, so the first one is a real route.
+  for (const path of [
+    "/devices/evil.png",
+    "/inbox/evil.png",
+    "/devices/sample/deeper.svg",
+    "/v1/auth/session.json",
+    "/api/auth/login.json",
+    "/v1/devices.png",
+    // A leading dot is not a filename for this purpose.
+    "/.env",
+    "/.git/config",
+  ]) {
+    assert.ok(middlewareRunsOn(path, matcher), `${path} escaped the middleware`);
+  }
+});
+
+test("no route segment could ever be mistaken for a static file", () => {
+  // The premise the rule rests on: route segments are directory names, and none
+  // of them contains a dot, so no page can match the exclusion. The day someone
+  // adds `app/report.pdf/page.tsx` this goes red — which is the point, because
+  // that page would otherwise be served to anyone.
+  const withDots = appRoutes().filter((path) =>
+    path.split("/").some((segment) => segment.includes(".")),
+  );
+  assert.deepEqual(withDots, [], "a route segment contains a dot and the matcher would skip it");
 });
 
 /* ── Safe area ───────────────────────────────────────────────────────── */

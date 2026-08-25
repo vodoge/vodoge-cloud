@@ -76,12 +76,29 @@ function rewriteUnknown(request: NextRequest) {
 }
 
 export const config = {
-  // PWA assets are excluded, not merely made public. The browser fetches the
-  // manifest and service worker outside any page context, so gating them sends
-  // a redirect where a file is expected; the offline page in particular has to
-  // work when there is no session and no network. Skipping them here also
-  // avoids a tenant lookup — a gateway round trip — for every static asset.
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|icon.svg|icon-maskable.svg).*)",
-  ],
+  // Static assets are excluded, not merely made public. The browser fetches the
+  // manifest, the icons and the service worker outside any page context, so
+  // gating them sends a redirect where a file is expected; the offline page in
+  // particular has to work when there is no session and no network. Skipping
+  // them here also avoids a tenant lookup — a gateway round trip — for every
+  // static asset, which is why `lib/session.ts`'s PUBLIC_PATHS is the wrong
+  // place for this even though it looks like the obvious one.
+  //
+  // This used to be a list of filenames, and the list was the bug: it named the
+  // five files that existed the day it was written, and the seven PNGs added
+  // later were answered `307 → /login` in production for anyone without a
+  // session. Nothing failed — the icons simply arrived as a login page — so the
+  // manifest looked correct while no browser could install the console.
+  //
+  // The rule now describes the *shape* of a static asset instead: one path
+  // segment with a dot in it, which is exactly how everything in `public/` is
+  // served. Nobody has to remember to add the next file. It is anchored to a
+  // single segment on purpose — `/devices/anything.png` still reaches this
+  // middleware, and so does every `/api/…` and `/v1/…`, because those have two
+  // segments or more. `lib/pwa.ts` carries the reasoning and the same string as
+  // a testable value; `lib/pwa.test.ts` reconciles this literal against the
+  // real contents of `public/` and against every route under `app/`, in both
+  // directions, so neither an unreachable asset nor an unguarded page can be
+  // introduced quietly again.
+  matcher: ["/((?!_next/|[^/]+\\.[A-Za-z0-9]+$).*)"],
 };

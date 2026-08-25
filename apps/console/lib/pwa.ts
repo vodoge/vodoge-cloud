@@ -175,6 +175,87 @@ export function consoleManifest(): ConsoleManifest {
   };
 }
 
+/* ── Reaching the assets at all ──────────────────────────────────────────
+ *
+ * A manifest that names a file the browser cannot fetch is worse than no
+ * manifest: the JSON parses, every field reads as correct, and the install
+ * quietly does not happen. That is what shipped. The seven PNGs declared above
+ * were answered `307 → /login` for anyone without a session, so a browser
+ * asking for a 3.9 KB icon received a 12.7 KB HTML login page — which killed
+ * Chromium's install criteria, the rich install dialog's screenshots and the
+ * `apple-touch-icon` all at once, and was invisible from the manifest itself.
+ *
+ * The cause was not the middleware's session logic but its `config.matcher`,
+ * which carried a hand-written list of the five files that happened to exist on
+ * the day it was written. Adding an asset does not fail loudly under that
+ * scheme — it 307s, and only to a browser that never reports it. **The list was
+ * the defect**, so replacing it with a longer list would only have moved the
+ * next occurrence a few months out.
+ *
+ * ## The rule that replaced the list
+ *
+ *     /((?!_next/|[^/]+\.[A-Za-z0-9]+$).*)
+ *
+ * Two exclusions, neither of which names a file:
+ *
+ * - `_next/` — build output. Framework-internal, tenant-independent, and
+ *   already half-excluded before (`_next/static` and `_next/image` by name).
+ * - `[^/]+\.[A-Za-z0-9]+$` — **one** path segment with a dot in it. Every file
+ *   in `public/` is served at exactly that shape, so a file dropped in there
+ *   tomorrow is covered without anybody remembering to edit this line. So is
+ *   `/manifest.webmanifest`, which is a route rather than a file.
+ *
+ * ## Why it cannot let a protected path out
+ *
+ * The single-segment anchor is the load-bearing part, not the extension:
+ *
+ * - `/devices/whatever.png` has two segments, so the middleware still runs on
+ *   it. A plain `.*\.png$` would have handed `app/devices/[deviceId]` — a
+ *   dynamic route that accepts any string — a way to be reached with no
+ *   session at all. The rule has to be anchored or it is worse than the list.
+ * - `/api/*` and `/v1/*` are always two segments or more, so they are
+ *   structurally out of reach. That matters beyond the redirect: the bearer
+ *   token in `gatewayAuthHeader` is attached inside the middleware, and a
+ *   `/v1` request that skipped it would be answered 401 by the gateway.
+ * - Every page is an `app/<name>/page.tsx` and a directory name is a literal,
+ *   so for a page to fall through here somebody would have to create a
+ *   directory called `something.png`. `lib/pwa.test.ts` walks `app/` and
+ *   asserts that no route segment contains a dot, which turns that from a
+ *   hypothetical into a red test on the day it is written.
+ * - A leading dot is deliberately not enough. `[^/]+` demands a character
+ *   before the dot, so `/.env` and friends stay gated.
+ *
+ * The one thing the rule does not cover is a *nested* asset —
+ * `public/img/logo.png`, served at `/img/logo.png`, keeps its two segments and
+ * stays gated. That is not an oversight to be widened away: widening it is
+ * exactly what would expose `/devices/x.png`. The reconciliation test walks
+ * `public/` recursively and goes red the moment such a file appears, so the
+ * cost of nesting is a failing test rather than a 307 nobody sees.
+ */
+
+/**
+ * The middleware's `config.matcher`, as a value a test can execute.
+ *
+ * It is written out again in `middleware.ts` rather than imported from here:
+ * Next reads `config.matcher` by static analysis at build time and needs a
+ * literal. `lib/pwa.test.ts` parses the literal out of that file and asserts it
+ * is this string, so the copy cannot drift — and every assertion about what is
+ * gated runs against the literal the middleware actually ships, not against
+ * this constant.
+ */
+export const MIDDLEWARE_MATCHER = "/((?!_next/|[^/]+\\.[A-Za-z0-9]+$).*)";
+
+/**
+ * Whether the middleware runs on a path — which is to say, whether the path is
+ * gated. Next anchors a matcher at both ends against the pathname alone.
+ */
+export function middlewareRunsOn(
+  pathname: string,
+  matcher: string = MIDDLEWARE_MATCHER,
+): boolean {
+  return new RegExp(`^${matcher}$`).test(pathname);
+}
+
 /* ── Installing ──────────────────────────────────────────────────────────
  *
  * Two entirely different mechanisms wearing one word.
