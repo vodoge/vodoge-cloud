@@ -578,6 +578,32 @@ export const CARD = {
    * `PAGE.stack`, the wider gap that separates one question from another.
    */
   stack: "flex flex-col gap-s3",
+  /**
+   * The danger zone: a card holding controls that cannot be taken back.
+   *
+   * 🔴 **A red border was the obvious answer and it would not have rendered.**
+   * `CARD.root` asks for `border border-line` and computes to `none 0px` on
+   * this build — preflight is off and the reset that stands in for it carries
+   * no `border-style`, which is the whole of `BORDER_WIDTH_WITHOUT_A_STYLE`.
+   * Adding `border-bad` to a card would have produced markup that reviews as
+   * a warning and paints nothing, which is the exact defect this card was sent
+   * to fix on `device-console.tsx:663`. So the zone is said with a wash and
+   * with text colour, both of which are properties this build really sets.
+   *
+   * It goes on the *header* rather than the whole card, because what is inside
+   * is a row of buttons carrying their own red (`BUTTON.variant.risk`), and a
+   * red field behind red outlines reads as one block of noise.
+   *
+   * ⚠️ Watch the prose here as well as the classes. `lib/tokens.ts` is Tailwind
+   * content and Tailwind reads text: the first draft of this comment used an
+   * ordinary English plural for "what is inside a box", which is also a bare
+   * `display` utility, and it put one more dead rule into the stylesheet the
+   * console downloads. The check that caught it is "the stylesheet contains no
+   * rule that no file asks for" — and the fix is always to not write the name,
+   * which is why this note does not write it either.
+   */
+  dangerHeader: "bg-bad-wash",
+  dangerTitle: "text-bad",
 } as const;
 
 /**
@@ -776,12 +802,18 @@ export const BUTTON = {
      * 🔴 `.risk` has never been a rule. The stylesheet only ever declares it
      * as `.button-row button.risk` and `.row-actions button.risk`
      * (`globals.css:851` and `:946`), so a `.risk` button anywhere else has
-     * been rendering in the ordinary colour the whole time —
-     * `device-console.tsx:663`, the USB-net mode switch, sits in an
-     * `<form className="inline-form">` and its warning colour has never once
-     * appeared. A variant needs no ancestor, which is the point of moving it
-     * here; `tokens.test.ts` derives the "only ever a descendant selector"
-     * claim from the stylesheet rather than trusting this comment.
+     * been rendering in the ordinary colour the whole time — the USB-net mode
+     * switch was one, inside an `<form className="inline-form">`, and its
+     * warning colour never once appeared in the three years it carried the
+     * class. T011 replaced it with this variant and measured the result.
+     *
+     * ⚠️ The two shapes are **not** equally bad, and T012 found the other one.
+     * A `.risk` button that really is inside `.row-actions` renders red with
+     * nothing behind it, which is worse than no colour: the red is what tells
+     * a reader somebody already thought about this. A variant needs no
+     * ancestor, which is the point of moving it here; `tokens.test.ts` derives
+     * the "only ever a descendant selector" claim from the stylesheet rather
+     * than trusting this comment.
      */
     risk: "border-bad bg-transparent text-bad hover:bg-bad-wash",
   },
@@ -1041,6 +1073,29 @@ export const BUTTON_ROW = {
  */
 export const OUTPUT = {
   root: "m-0 mt-s2 max-h-panel overflow-auto rounded bg-bg p-s3 font-mono text-xs text-fg",
+} as const;
+
+/**
+ * The command log: what was asked for, what came back, and when.
+ *
+ * An `<ol>`, because the order is the point, and every one of `list-none`,
+ * `m-0` and `p-0` is load-bearing rather than tidiness — preflight is off, so
+ * the browser's own decimal markers and 40px indent are still live and the old
+ * `.command-log` had to turn all three off too.
+ *
+ * 🔴 **No border on `entry`, and that is deliberate.** The rule it replaces was
+ * `1px solid var(--line)`, and a Tailwind border-width utility here would
+ * compute to `none 0px` on this build for exactly the reason
+ * `BORDER_WIDTH_WITHOUT_A_STYLE` exists: the reset that stands in for preflight
+ * carries no `border-style`. So an entry is separated from the card behind it
+ * by a raised surface, which is a property this build really sets. Measured,
+ * not assumed.
+ */
+export const LOG = {
+  list: "m-0 flex list-none flex-col gap-s3 p-0",
+  entry: "rounded bg-surface-raised p-s3",
+  /** The command's name, its status pill and its timestamp on one line. */
+  head: "flex flex-wrap items-center gap-s2",
 } as const;
 
 /**
@@ -1577,6 +1632,50 @@ export function toneForDeliveryStatus(status: string): BadgeTone {
   return TONE_BY_DELIVERY[status.toLowerCase()] ?? "warn";
 }
 
+/**
+ * A relayed command's status word to a badge tone.
+ *
+ * Its own table rather than an extra row in `TONE_BY_STATE`, because these are
+ * a different vocabulary about a different thing: `failed` is a device state
+ * and also a command status, and `pending` is neither. Folding them together
+ * would mean one map answering two questions, which is how a device that has
+ * never checked in ends up wearing the colour of a command that timed out.
+ *
+ * ⚠️ Anything not listed comes out neutral, and it has to: the gateway records
+ * whatever status a newer console or a newer edge produced, and guessing a
+ * colour for a word this build does not know is worse than not colouring it.
+ */
+const TONE_BY_COMMAND_STATUS: Record<string, BadgeTone> = {
+  succeeded: "ok",
+  failed: "bad",
+  expired: "bad",
+  cancelled: "neutral",
+  pending: "warn",
+  dispatched: "warn",
+  running: "warn",
+};
+
+export function toneForCommandStatus(status: string): BadgeTone {
+  return TONE_BY_COMMAND_STATUS[status.toLowerCase()] ?? "neutral";
+}
+
+/**
+ * An eUICC profile's state to a badge tone.
+ *
+ * `enabled` is the one carrying traffic, `deleted` is gone from the chip, and
+ * everything else — `disabled` above all — is inventory rather than news. The
+ * eSIM panel shows deleted profiles on purpose: which ICCID *used to* be on a
+ * chip is exactly what somebody needs when a card stops working after a switch.
+ */
+const TONE_BY_PROFILE_STATE: Record<string, BadgeTone> = {
+  enabled: "ok",
+  deleted: "bad",
+};
+
+export function toneForProfileState(state: string): BadgeTone {
+  return TONE_BY_PROFILE_STATE[state.toLowerCase()] ?? "neutral";
+}
+
 /* ── A confirmation has to say what will happen ──────────────────────────
  *
  * T030 read every confirmation in this console. Two of them state a
@@ -1710,6 +1809,42 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "inbox.confirmDeleteMessage",
   "inbox.confirmDeleteThread",
   "inbox.confirmForgetContact",
+  /**
+   * The device console's, from T011. `device.confirmDisruptive` — one sentence
+   * shared by seven commands, naming none of them — is retired here and these
+   * are what replaced it, one per command, each naming the module, what it
+   * loses, and what the way back is.
+   *
+   * Four of them are new guards rather than new copy: manual PLMN selection,
+   * opening a USSD session, replying into one, and every typed AT command that
+   * trips `AT_COMMAND_GUARDS`. T030 found all four sending with nothing in
+   * front of them, and T021's twenty-three-row survey of dangerous actions had
+   * missed the AT box entirely.
+   */
+  "device.confirmRestartModem",
+  "device.confirmResetModemUsb",
+  "device.confirmScanOperators",
+  "device.confirmRotateIp",
+  "device.confirmRadioOff",
+  "device.confirmDataOff",
+  "device.confirmReregister",
+  "device.confirmSelectOperator",
+  "device.confirmUssdSend",
+  "device.confirmUssdReply",
+  "device.confirmUsbnet",
+  "device.confirmUsbnetRmnet",
+  "device.confirmUnknownCommand",
+  "device.atGuardUsbnet",
+  "device.atGuardCfunReset",
+  "device.atGuardCfunOff",
+  "device.atGuardCops",
+  "device.atGuardCrsm",
+  "device.atGuardCsim",
+  "device.atGuardChannel",
+  "device.atGuardNvram",
+  /** The eSIM panel's two writes. Both already asked; neither said anything. */
+  "esim.confirmSwitch",
+  "esim.dlWarn",
 ] as const;
 
 /** The dialog's own chrome, so every confirmation asks in the same words. */
@@ -1886,6 +2021,424 @@ export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }
 
 /** IMEI → the message keys that say why, and what the cost really is. */
 
+/* ── The free-text AT box ────────────────────────────────────────────────
+ *
+ * 🔴 **This is the hole T021's twenty-three-row survey of dangerous actions
+ * did not have a row for.** `device-console.tsx` has an input that sends
+ * whatever is typed into it as `run_at_command`, and until this card the only
+ * thing between an operator and the modem was `command.trim().length < 2`.
+ * `AT+CFUN=0` and `AT+CFUN=4` therefore reached the module **without passing
+ * the confirmation the seven `DISRUPTIVE` buttons have** — and `AT+CFUN=1,1`
+ * is the command the vowifi board's T078 watched leave a module stranded at
+ * `+CFUN: 7`, on hardware that arrives over USB/IP where nobody can pull a
+ * stick.
+ *
+ * The edge debug panel has had `guardFor(command)` since T004 and it now
+ * carries eight entries (T031). This is the same table, in the same order,
+ * for the cloud console.
+ *
+ * ## The test an entry has to pass
+ *
+ * **It can leave the module in a state software cannot get it out of**, on
+ * hardware nobody can physically reach. That is the property, and it is the
+ * reason for the one entry people keep asking about:
+ *
+ * ⚠️ **`AT+COPS=?` is deliberately absent.** The full-band sweep is slow — the
+ * daemon gives it 180 seconds — but it is not irreversible: the modem comes
+ * back by itself with nothing to undo. It was in the edge's table for one card
+ * and was taken back out, because **a dialog in front of a safe command is what
+ * teaches an operator to confirm without reading**, and that is precisely how
+ * the entries below stop working. The *manual* forms, `AT+COPS=1,…` and `=2`,
+ * are here: locking onto a PLMN that is not on the air leaves the module with
+ * nothing on screen to say why.
+ *
+ * For the same reason `AT+CRSM` is trapped on the update codes only — the
+ * agent itself sends `AT+CRSM=176,…` on every report — and a plain `AT+CFUN=1`,
+ * which is the *recovery*, goes through untouched.
+ *
+ * ## What this is not
+ *
+ * A confirmation in a browser, and nothing else. The gateway validates each
+ * command on its own terms and this table is not part of that; a page cannot
+ * be a security control for a request it is not the only sender of. It stops a
+ * slip of the hand, which is what the box is dangerous for.
+ */
+
+export type AtCommandGuard = {
+  /** Stable id, so a test can name an entry without quoting its regex. */
+  readonly id: string;
+  /** The shape, as it is shown to the operator before they type. */
+  readonly label: string;
+  /** Matched against the trimmed command, case-insensitively. */
+  readonly pattern: RegExp;
+  /** The message key of the sentence saying what this one costs. */
+  readonly consequence: string;
+};
+
+export const AT_COMMAND_GUARDS: readonly AtCommandGuard[] = [
+  {
+    id: "usbnet",
+    label: 'AT+QCFG="usbnet",N',
+    pattern: /^at\+qcfg\s*=\s*"usbnet"\s*,\s*\d+/i,
+    consequence: "device.atGuardUsbnet",
+  },
+  {
+    // Before the bare forms below, because `AT+CFUN=0,1` is a reset and
+    // `AT+CFUN=0` is not, and the first match wins.
+    id: "cfun-reset",
+    label: "AT+CFUN=N,1",
+    pattern: /^at\+cfun\s*=\s*\d+\s*,\s*1\s*$/i,
+    consequence: "device.atGuardCfunReset",
+  },
+  {
+    id: "cfun-off",
+    label: "AT+CFUN=0 / =4 / =7",
+    pattern: /^at\+cfun\s*=\s*(?:0|4|7)\s*(?:,\s*0\s*)?$/i,
+    consequence: "device.atGuardCfunOff",
+  },
+  {
+    id: "cops-manual",
+    label: "AT+COPS=1,… / =2",
+    pattern: /^at\+cops\s*=\s*[12]\s*(?:,|$)/i,
+    consequence: "device.atGuardCops",
+  },
+  {
+    id: "crsm-write",
+    label: "AT+CRSM=214/219/220,…",
+    pattern: /^at\+crsm\s*=\s*(?:214|219|220)\b/i,
+    consequence: "device.atGuardCrsm",
+  },
+  {
+    id: "csim",
+    label: "AT+CSIM=…",
+    pattern: /^at\+csim\s*=/i,
+    consequence: "device.atGuardCsim",
+  },
+  {
+    id: "logical-channel",
+    label: "AT+CCHO / +CGLA / +CCHC",
+    pattern: /^at\+(?:ccho|cgla|cchc)\b/i,
+    consequence: "device.atGuardChannel",
+  },
+  {
+    id: "nvram",
+    label: "AT+QPRTPARA=…",
+    pattern: /^at\+qprtpara\s*=/i,
+    consequence: "device.atGuardNvram",
+  },
+];
+
+/** The first guard a typed command trips, or `null`. */
+export function atCommandGuard(command: string): AtCommandGuard | null {
+  const typed = String(command ?? "").trim();
+  for (const guard of AT_COMMAND_GUARDS) {
+    if (guard.pattern.test(typed)) return guard;
+  }
+  return null;
+}
+
+/* ── What stands in front of each command ────────────────────────────────
+ *
+ * One ledger for every command the device page can issue, from either panel,
+ * because both of them post to the same `/v1/commands`. Data rather than a
+ * condition inside a handler, for the reason everything else in this file is:
+ * a `.tsx` cannot be read by a test in this app, so a guard written into a
+ * click handler is a guard nothing can check.
+ *
+ * `consequence: null` is a *decision*, not an omission, and it carries its
+ * reason. That is the half that keeps the table honest: a guard in front of a
+ * harmless command trains the reflex that defeats every other guard, so
+ * refusing to add one has to be as visible as adding one.
+ *
+ * `tokens.test.ts` derives the set of kinds the two components actually issue
+ * from their source and requires it to equal these keys, so a command added to
+ * a panel with no entry here is a failing test rather than an unguarded write.
+ */
+
+export type CommandGuard = {
+  /** The message key of the sentence saying what will happen, or `null`. */
+  readonly consequence: string | null;
+  /** Why it is guarded, or why it deliberately is not. For a reviewer. */
+  readonly why: string;
+};
+
+/**
+ * One command's guard, possibly depending on what it is being asked to do.
+ *
+ * `when` is a subset of the request payload that has to match. The last
+ * variant of every entry has an empty `when` and is therefore the fallback,
+ * which is what makes the lookup total.
+ */
+export type CommandGuardVariant = CommandGuard & {
+  readonly when: Readonly<Record<string, unknown>>;
+};
+
+export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuardVariant[]>> = {
+  /* ---- device-console.tsx: reads ---- */
+  modem_report: [
+    { when: {}, consequence: null, why: "a diagnostic read; it changes nothing on the module" },
+  ],
+  refresh_modems: [
+    { when: {}, consequence: null, why: "re-enumerates what the agent can already see" },
+  ],
+
+  /* ---- device-console.tsx: writes ---- */
+  restart_modem: [
+    {
+      when: {},
+      consequence: "device.confirmRestartModem",
+      why: "the vowifi board's T078: this is how a module reaches +CFUN: 7, and nobody can reach the hardware to power-cycle it",
+    },
+  ],
+  reset_modem_usb: [
+    {
+      when: {},
+      consequence: "device.confirmResetModemUsb",
+      why: "the module leaves the USB bus; it arrives over USB/IP, so a stick that does not come back cannot be replugged",
+    },
+  ],
+  scan_operators: [
+    {
+      when: {},
+      consequence: "device.confirmScanOperators",
+      why: "the radio is taken away for up to three minutes; the way back is nothing, which the old shared sentence got wrong",
+    },
+  ],
+  rotate_ip: [
+    {
+      when: {},
+      consequence: "device.confirmRotateIp",
+      why: "the data session is torn down and rebuilt for a new address; the old sentence said 'off the network', which is not what this does",
+    },
+  ],
+  reregister_network: [
+    {
+      when: {},
+      consequence: "device.confirmReregister",
+      why: "detach and attach: the module is off the air until the network takes it back",
+    },
+  ],
+  set_radio: [
+    {
+      when: { enabled: false },
+      consequence: "device.confirmRadioOff",
+      why: "no calls, no messages, no data until it is switched back on",
+    },
+    { when: {}, consequence: null, why: "switching the radio back on is the way back from the guarded half" },
+  ],
+  set_data_network: [
+    {
+      when: { enabled: false },
+      consequence: "device.confirmDataOff",
+      why: "the default bearer goes down and anything routed through this module stops",
+    },
+    { when: {}, consequence: null, why: "bringing data back up is the way back from the guarded half" },
+  ],
+  select_operator: [
+    {
+      when: { mode: "manual" },
+      consequence: "device.confirmSelectOperator",
+      why: "T030: pinning a module to a PLMN that is not on the air leaves it searching for ever, and the page shows that as 'searching'",
+    },
+    {
+      when: {},
+      consequence: null,
+      why: "automatic selection is the recovery from a manual one; guarding the way back is how a dialog becomes reflex",
+    },
+  ],
+  set_usbnet_mode: [
+    {
+      when: { usbnet_mode: "rmnet" },
+      consequence: "device.confirmUsbnetRmnet",
+      why: "rmnet keeps the QMI port, so the module comes back by itself — but it still re-enumerates on the spot",
+    },
+    {
+      when: {},
+      consequence: "device.confirmUsbnet",
+      why: "every other mode removes the port the agent finds the module through, so the undo cannot travel back",
+    },
+  ],
+  send_ussd: [
+    {
+      when: { stage: "cancel" },
+      consequence: null,
+      why: "cancelling closes a session somebody already opened; it is the way out, not a way in",
+    },
+    {
+      when: { stage: "continue" },
+      consequence: "device.confirmUssdReply",
+      why: "T030: a menu item is a chargeable choice, and the call-forwarding menus change the subscription",
+    },
+    {
+      when: {},
+      consequence: "device.confirmUssdSend",
+      why: "T030: a service code can be billed and can change the subscription; nothing asked before this card",
+    },
+  ],
+  /**
+   * The free-text box. Its answer comes from `AT_COMMAND_GUARDS` against what
+   * was typed, which is why the variant here says `null`: the decision is per
+   * command, not per kind, and `deviceCommandGuard` routes it.
+   */
+  run_at_command: [
+    {
+      when: {},
+      consequence: null,
+      why: "decided per typed command by AT_COMMAND_GUARDS; a command that trips no entry is a read or a reversible write",
+    },
+  ],
+
+  /* ---- esim-panel.tsx ---- */
+  list_esim_profiles: [
+    { when: {}, consequence: null, why: "ES10c list; it reads the chip's inventory and writes nothing" },
+  ],
+  read_esim_info: [
+    { when: {}, consequence: null, why: "ES10b read-only, which is what its own heading says" },
+  ],
+  retrieve_esim_notification: [
+    {
+      when: {},
+      consequence: null,
+      why: "fetches a notification the card is already holding for delivery; it is the delivery step, not a change of state",
+    },
+  ],
+  initiate_esim_authentication: [
+    {
+      when: {},
+      consequence: null,
+      why: "an ES9+ round trip that stops before PrepareDownload; the panel renders the evidence that it stopped",
+    },
+  ],
+  switch_esim_profile: [
+    {
+      when: {},
+      consequence: "esim.confirmSwitch",
+      why: "disable one profile and enable another: the card is off the network across the re-registration, and a switch that half-lands leaves no profile enabled",
+    },
+  ],
+  download_esim_profile: [
+    {
+      when: {},
+      consequence: "esim.dlWarn",
+      why: "writes a profile into the eUICC and cannot be undone from here; a ppr1/ppr2 profile could never be removed at all",
+    },
+  ],
+};
+
+/**
+ * What has to be answered before `kind` is sent with `payload`.
+ *
+ * Total, and **fail-closed**: a kind with no entry gets a confirmation rather
+ * than a free pass. The alternative — an unknown command going straight out —
+ * is the failure this whole table exists to stop, and it is exactly what a new
+ * command kind added to a panel would do.
+ */
+export function deviceCommandGuard(
+  kind: string,
+  payload: Readonly<Record<string, unknown>> = {},
+): CommandGuard {
+  if (kind === "run_at_command") {
+    const guard = atCommandGuard(String(payload.command ?? ""));
+    if (guard) {
+      return { consequence: guard.consequence, why: `AT_COMMAND_GUARDS: ${guard.id}` };
+    }
+    return DEVICE_COMMAND_GUARDS.run_at_command[0];
+  }
+  const variants = DEVICE_COMMAND_GUARDS[kind];
+  if (!variants) {
+    return {
+      consequence: "device.confirmUnknownCommand",
+      why: "no entry in DEVICE_COMMAND_GUARDS; fail closed rather than send it unasked",
+    };
+  }
+  for (const variant of variants) {
+    if (Object.entries(variant.when).every(([field, value]) => payload[field] === value)) {
+      return { consequence: variant.consequence, why: variant.why };
+    }
+  }
+  // Unreachable while every entry ends in an empty `when`, which the test
+  // asserts. Fail closed anyway: the day it is reachable is the day somebody
+  // deleted the fallback.
+  return {
+    consequence: "device.confirmUnknownCommand",
+    why: "no variant matched, so the fallback was removed from this entry",
+  };
+}
+
+/* ── A switch is not done because the command said so ────────────────────
+ *
+ * `/api/esim/switch` reports success in cases where the profile did not change
+ * — the vowifi board is fixing that at the edge (T080), and this card must not
+ * touch it. What this card owes is a console that does not repeat the claim.
+ *
+ * So the panel never says "switched". It says which ICCID was asked for, and
+ * then whether **a read of the chip taken after the switch** agrees. A read
+ * taken before the switch says nothing about it, which is the whole reason
+ * this compares timestamps rather than looking at the newest row.
+ */
+
+export type EsimSwitchState = "unverified" | "confirmed" | "contradicted";
+
+export type EsimSwitchVerdict = {
+  readonly targetIccid: string;
+  readonly modemImei: string | null;
+  readonly state: EsimSwitchState;
+  /** When the chip was read, for `confirmed` and `contradicted`. */
+  readonly readAt: number | null;
+  /** What the read said the profile's state was, when there was a read. */
+  readonly observed: string | null;
+};
+
+type SwitchCommand = {
+  readonly kind: string;
+  readonly status: string;
+  readonly completed_at: number | null;
+  readonly payload: Readonly<Record<string, unknown>> | null;
+};
+
+type ObservedProfile = {
+  readonly iccid: string;
+  readonly state: string;
+  readonly collectedAt: number;
+};
+
+/**
+ * The newest switch this device was asked for, and whether the chip agrees.
+ *
+ * `null` when nothing has been switched, which is not the same as "fine".
+ */
+export function esimSwitchVerdict(
+  commands: readonly SwitchCommand[],
+  observed: readonly ObservedProfile[],
+): EsimSwitchVerdict | null {
+  let newest: SwitchCommand | null = null;
+  for (const row of commands) {
+    if (row.kind !== "switch_esim_profile" || row.status !== "succeeded") continue;
+    if (!newest || (row.completed_at ?? 0) > (newest.completed_at ?? 0)) newest = row;
+  }
+  if (!newest) return null;
+
+  const targetIccid = String(newest.payload?.target_iccid ?? "");
+  if (targetIccid === "") return null;
+  const imei = newest.payload?.modem_imei;
+  const switchedAt = newest.completed_at ?? 0;
+
+  // Strictly after, and only for the profile that was asked for. A reading
+  // collected before the command describes the chip as it was.
+  let latest: ObservedProfile | null = null;
+  for (const profile of observed) {
+    if (profile.iccid !== targetIccid || profile.collectedAt <= switchedAt) continue;
+    if (!latest || profile.collectedAt > latest.collectedAt) latest = profile;
+  }
+
+  return {
+    targetIccid,
+    modemImei: typeof imei === "string" ? imei : null,
+    state: latest === null ? "unverified" : latest.state === "enabled" ? "confirmed" : "contradicted",
+    readAt: latest?.collectedAt ?? null,
+    observed: latest?.state ?? null,
+  };
+}
 
 /* ── Secrets that are already stored ─────────────────────────────────────── */
 
@@ -1984,6 +2537,8 @@ export const MIGRATED_SOURCES = [
   "components/connection-status.tsx",
   "components/conversation.tsx",
   "components/device-admin.tsx",
+  "components/device-console.tsx",
+  "components/esim-panel.tsx",
   "components/journal.tsx",
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
@@ -2159,10 +2714,11 @@ export const CLASSES_WITH_NO_STYLESHEET = [] as const;
  * something. `.risk` looks like a class. It is not: the stylesheet declares it
  * only as `.button-row button.risk` (`globals.css:851`) and
  * `.row-actions button.risk` (`:946`), so it colours a button in those two
- * containers and does nothing at all anywhere else. `device-console.tsx:663`
- * puts a `.risk` button inside `<form className="inline-form">` — a warning
- * colour that has never once been drawn, on the control that takes a module
- * off the device list.
+ * containers and does nothing at all anywhere else. The USB-net mode switch
+ * put a `.risk` button inside `<form className="inline-form">` — a warning
+ * colour that was never once drawn, on the control that takes a module off the
+ * device list. T011 replaced it; the four sites left are on pages that have
+ * not been migrated yet.
  *
  * `tokens.test.ts` derives the claim from the stylesheet, so it is checked
  * rather than remembered, and asserts the replacement — `BUTTON.variant.risk`
@@ -2185,8 +2741,6 @@ export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
  */
 export const UNMIGRATED_SOURCES = [
   "app/unknown-tenant/page.tsx",
-  "components/device-console.tsx",
-  "components/esim-panel.tsx",
 ];
 
 /**
