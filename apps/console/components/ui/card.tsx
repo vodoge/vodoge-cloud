@@ -44,20 +44,24 @@ export function CardContent({ className, ...props }: DivProps) {
  *
  * ## Why this exists, when the parts above are the better API
  *
- * `components/ui.tsx` exports a `Card` that takes `title`, `note`, `actions`
- * and `bodyless`, and **ten pages import it** — every page in the seven
- * remaining migration cards. The composed `Card` here is a different API, so
- * each of those seven cards would have had to decide for itself how to turn
- * `<Card title=… note=… actions=… bodyless>` into header parts. Seven cards
- * running in parallel, each translating the same four props, is seven answers,
- * and the four that disagree are found afterwards by eye.
+ * `components/ui.tsx` used to export a `Card` taking `title`, `note`,
+ * `actions` and `bodyless`, and **ten pages imported it** — every page in the
+ * seven migration cards that ran in parallel. The composed `Card` here is a
+ * different API, so each of those seven would have had to decide for itself
+ * how to turn `<Card title=… note=… actions=… bodyless>` into header parts.
+ * Seven cards each translating the same four props is seven answers, and the
+ * four that disagree are found afterwards by eye.
  *
- * So the translation is written once, here, and a page migrating a card is a
- * change of import rather than a rewrite of every card on the page:
+ * So the translation was written once, here, and migrating a page was a change
+ * of import rather than a rewrite of every card on it:
  *
  * ```tsx
  * import { CardPanel as Card } from "@/components/ui/card";
  * ```
+ *
+ * All ten pages have since moved across, and `components/ui.tsx` was deleted
+ * once the last of them had. This is now the only place a card is built from
+ * that prop shape, rather than the translation sitting behind another one.
  *
  * The composed parts stay the primary API — a card whose content is a
  * full-bleed table is `<Card>` with a `<Table>` in it, not a boolean — and a
