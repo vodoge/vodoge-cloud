@@ -55,7 +55,14 @@ export function Shell({
                 light: t("theme.light", locale),
               }}
             />
-            <LocaleSwitch locale={locale} />
+            <LocaleSwitch
+              locale={locale}
+              labels={{
+                language: t("header.language", locale),
+                zh: t("header.langZh", locale),
+                en: t("header.langEn", locale),
+              }}
+            />
             <SignOutButton label={t("nav.logout", locale)} />
           </div>
         </div>

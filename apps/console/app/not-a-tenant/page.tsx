@@ -19,7 +19,14 @@ export default async function NotATenantPage() {
             {t("apex.body", locale, { slug: OPERATOR_SLUG, domain })}
           </p>
         </div>
-        <LocaleSwitch locale={locale} />
+        <LocaleSwitch
+          locale={locale}
+          labels={{
+            language: t("header.language", locale),
+            zh: t("header.langZh", locale),
+            en: t("header.langEn", locale),
+          }}
+        />
       </div>
     </div>
   );

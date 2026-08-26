@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { t, type Locale } from "@/lib/i18n";
 import {
   INSTALL_DISMISSED_KEY,
   detectPlatform,
@@ -68,7 +67,28 @@ type BeforeInstallPromptEvent = Event & {
  * this browser can install anything, and guessing would mean markup that
  * disagrees with the DOM on the first paint.
  */
-export function InstallPrompt({ locale }: { locale: Locale }) {
+export function InstallPrompt({
+  labels,
+}: {
+  /**
+   * Both wordings, already resolved by the server.
+   *
+   * Which pair is shown depends on `detectPlatform`, which only the browser
+   * can answer, so both arrive and this component picks. That is deliberate:
+   * the alternative is a `t()` call here, and `app/layout.tsx` mounts this on
+   * every page, so a lookup in this file drags `lib/i18n.ts` and both message
+   * catalogues — 27.7 kB gzipped, measured — into the layout's client graph
+   * and therefore onto every route. Six strings weigh what six strings weigh.
+   */
+  labels: {
+    title: string;
+    hint: string;
+    iosTitle: string;
+    iosHint: string;
+    action: string;
+    dismiss: string;
+  };
+}) {
   const [state, setState] = useState<InstallState>("unavailable");
   const [dismissed, setDismissed] = useState(true);
   const deferred = useRef<BeforeInstallPromptEvent | null>(null);
@@ -151,25 +171,21 @@ export function InstallPrompt({ locale }: { locale: Locale }) {
   const ios = state === "ios-guide";
 
   return (
-    <div className={PWA.install.bar} role="region" aria-label={t("pwa.install.title", locale)}>
+    <div className={PWA.install.bar} role="region" aria-label={labels.title}>
       <span className={PWA.install.text}>
-        <strong className={PWA.install.title}>
-          {ios ? t("pwa.install.iosTitle", locale) : t("pwa.install.title", locale)}
-        </strong>
-        <span className={PWA.install.hint}>
-          {ios ? t("pwa.install.iosHint", locale) : t("pwa.install.hint", locale)}
-        </span>
+        <strong className={PWA.install.title}>{ios ? labels.iosTitle : labels.title}</strong>
+        <span className={PWA.install.hint}>{ios ? labels.iosHint : labels.hint}</span>
       </span>
       <span className={PWA.install.actions}>
         {/* iOS gets no button, because there is nothing a button could call.
             Pretending otherwise is worse than directions that work. */}
         {ios ? null : (
           <Button variant="primary" size="sm" onClick={install}>
-            {t("pwa.install.action", locale)}
+            {labels.action}
           </Button>
         )}
         <Button variant="subtle" size="sm" onClick={remember}>
-          {t("pwa.install.dismiss", locale)}
+          {labels.dismiss}
         </Button>
       </span>
     </div>

@@ -414,6 +414,148 @@ test("every catalogue key a component asks t() for exists in both locales", () =
 
 /*
  * ---------------------------------------------------------------------------
+ * Keeping the catalogue off every route.
+ *
+ * `app/layout.tsx` wraps every page, so whatever its client components import,
+ * every page downloads. Three of them used to call `t()`, which put
+ * `lib/i18n.ts` — and both message catalogues welded to it, one chunk of
+ * 27.7 kB gzipped — into the layout's client graph. Measured on this tree:
+ * /audit's real cost was 150.2 kB gzipped while `next build` reported 102 kB,
+ * because that column omits the root layout's chunks.
+ *
+ * The repair is that those three take finished strings as props. What follows
+ * is what stops it from being undone by an import that looks harmless.
+ * ---------------------------------------------------------------------------
+ */
+
+/** The client components `app/layout.tsx` mounts on every route. */
+const LAYOUT_CLIENT_COMPONENTS = [
+  join("components", "connection-status.tsx"),
+  join("components", "pwa.tsx"),
+  join("components", "locale-switch.tsx"),
+];
+
+/** Import lines that reach the catalogue-bearing module, comments excluded. */
+function catalogueImportLines(source: string): string[] {
+  return withoutComments(source)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^import\b[^;]*from\s+"@\/lib\/i18n"/.test(line));
+}
+
+test("nothing the root layout mounts on the client imports the catalogue module", () => {
+  const offenders: string[] = [];
+  for (const file of LAYOUT_CLIENT_COMPONENTS) {
+    const source = readFileSync(join(CONSOLE_ROOT, file), "utf8");
+    // If one of these stops being a client component the rule still holds, but
+    // it is no longer the rule this test was written for, and silence would be
+    // the wrong answer.
+    assert.ok(
+      isClientModule(withoutComments(source)),
+      `${file} is no longer a client module; this guard is aimed at the wrong file`,
+    );
+    for (const line of catalogueImportLines(source)) offenders.push(`${file}: ${line}`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `these put both catalogues back on every route in the console: ${offenders.join(" | ")}`,
+  );
+
+  // Negative control. A reader that only ever says yes proves nothing, so the
+  // same function must find the defect in a file shaped like the old ones, and
+  // must not be fooled by the prose in the real files, which discusses
+  // `@/lib/i18n` at length precisely because that import is what they avoid.
+  assert.deepEqual(
+    catalogueImportLines('"use client";\nimport { t, type Locale } from "@/lib/i18n";'),
+    ['import { t, type Locale } from "@/lib/i18n";'],
+  );
+  assert.deepEqual(
+    catalogueImportLines('"use client";\n// import { t } from "@/lib/i18n";'),
+    [],
+  );
+  assert.deepEqual(
+    catalogueImportLines('"use client";\nimport { LOCALE_COOKIE } from "@/lib/locale";'),
+    [],
+  );
+});
+
+/**
+ * `lib/locale.ts` is only worth having while it stays empty of catalogue.
+ *
+ * It exists because webpack ties the catalogues to the *module* that imports
+ * them, not to the exports that read them: while `LOCALE_COOKIE` and
+ * `htmlLang` were declared in `lib/i18n.ts`, a client component that wanted
+ * the cookie's name downloaded both catalogues to get it. Measured: taking
+ * `t()` out of all three layout client components moved /audit by 0.1 kB;
+ * moving those two declarations into this module moved it by 27.7 kB.
+ *
+ * An import of anything at all here can reconnect that edge, so the rule is
+ * the same one `lib/interpolate.ts` lives under.
+ */
+test("lib/locale.ts reaches no catalogue, directly or through i18n", () => {
+  const code = readFileSync(join(CONSOLE_ROOT, "lib", "locale.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*\/\/.*$/, ""))
+    .join("\n");
+
+  const specifiers = [...code.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(
+    specifiers,
+    [],
+    `lib/locale.ts must import nothing; it imports ${specifiers.join(", ")}`,
+  );
+  for (const forbidden of ["messages/", "i18n", "import(", "require("]) {
+    assert.ok(
+      !code.includes(forbidden),
+      `lib/locale.ts reaches "${forbidden}"; the split it exists for is gone`,
+    );
+  }
+});
+
+/**
+ * Nothing was deleted to make the bundle smaller.
+ *
+ * This is the assertion that would have caught the cheap version of this
+ * change. Shortening the banners, merging the two install wordings into one,
+ * or dropping the consequence sentence from a confirmation would all shrink
+ * the payload, and all of them are the wrong trade: those sentences are the
+ * safety design. The keys are read out of the catalogue by prefix rather than
+ * listed here, so a key added to a catalogue is covered the day it is added
+ * and nobody has to remember to update a list.
+ */
+test("every string the layout's client components show is still rendered somewhere", () => {
+  const prefixes = ["connection.", "pwa.install.", "header.lang"];
+  const owed = Object.keys(catalogs.zh as Record<string, string>)
+    .filter((key) => prefixes.some((prefix) => key.startsWith(prefix)))
+    .sort();
+  // A floor, because this test passes loudest if the prefixes stop matching.
+  assert.ok(owed.length >= 12, `only ${owed.length} keys matched ${prefixes.join(", ")}`);
+
+  const asked = new Set<string>();
+  for (const [, source] of componentSources()) {
+    for (const call of translationCalls(withoutComments(source))) {
+      if (call.key !== null) asked.add(call.key);
+    }
+  }
+
+  const dropped = owed.filter((key) => !asked.has(key));
+  assert.deepEqual(
+    dropped,
+    [],
+    `in the catalogue but nothing renders them any more: ${dropped.join(", ")}`,
+  );
+
+  // Negative control: the same lookup must be able to report a key as gone.
+  assert.deepEqual(
+    ["connection.thisKeyDoesNotExist"].filter((key) => !asked.has(key)),
+    ["connection.thisKeyDoesNotExist"],
+  );
+});
+
+/*
+ * ---------------------------------------------------------------------------
  * The source link.
  *
  * T091 licensed the edge repository and T038 licensed this one; nothing said

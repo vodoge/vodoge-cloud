@@ -82,7 +82,31 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           matter on a device that is not even installed. */}
       <body style={SAFE_AREA.sides}>
         <ServiceWorker />
-        <InstallPrompt locale={locale} />
+        {/* Every string these two banners can draw is resolved here, on the
+            server, and handed over finished.
+
+            This layout wraps every route, so whatever its client components
+            import, every route downloads. When these took a `locale` and
+            called `t()` themselves, that was `lib/i18n.ts` and both message
+            catalogues — one 27.7 kB gzipped chunk — on the wire for pages that
+            never render a word of it. `next build`'s First Load JS column does
+            not show it, because that column omits the root layout's chunks;
+            the union of the layout's and the route's entries in
+            `.next/app-build-manifest.json` does, and matches the script tags
+            in the delivered HTML exactly.
+
+            Nothing is abbreviated to make that number: the catalogue is
+            unchanged and these are its sentences, resolved one step earlier. */}
+        <InstallPrompt
+          labels={{
+            title: t("pwa.install.title", locale),
+            hint: t("pwa.install.hint", locale),
+            iosTitle: t("pwa.install.iosTitle", locale),
+            iosHint: t("pwa.install.iosHint", locale),
+            action: t("pwa.install.action", locale),
+            dismiss: t("pwa.install.dismiss", locale),
+          }}
+        />
         {tenant && signedIn ? (
           <>
             <Shell tenant={tenant} locale={locale} pathname={pathname}>
@@ -91,7 +115,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             {/* A sibling of the shell rather than part of it: the banner is
                 this card's, the shell is T007's, and they have to be able to
                 change without touching each other. */}
-            <ConnectionStatus locale={locale} loadedAt={loadedAt} />
+            <ConnectionStatus
+              labels={{
+                lost: t("connection.lost", locale),
+                stale: t("connection.stale", locale),
+                retry: t("connection.retry", locale),
+              }}
+              loadedAt={loadedAt}
+            />
           </>
         ) : (
           children
