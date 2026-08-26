@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { t, type Locale } from "@/lib/i18n";
 import {
   createConnectionMonitor,
   formatClock,
@@ -41,10 +40,23 @@ import { PWA, SAFE_AREA } from "@/lib/tokens";
  * the reader's own time zone — out of the hydration comparison entirely.
  */
 export function ConnectionStatus({
-  locale,
+  labels,
   loadedAt,
 }: {
-  locale: Locale;
+  /**
+   * The three sentences this banner can show, already resolved by the server.
+   *
+   * They arrive translated rather than as a locale this component looks up,
+   * because `app/layout.tsx` mounts this on every page: a `t()` call here puts
+   * `lib/i18n.ts` — and with it both message catalogues, one 27.7 kB gzipped
+   * chunk — into the layout's client graph, which every route then downloads.
+   * Measured on this tree, and it is the whole reason the prop has this shape.
+   *
+   * Handing over three finished strings costs the wire what those three
+   * strings weigh. Nothing was shortened to get there; the sentences are the
+   * catalogue's, verbatim, resolved one step earlier.
+   */
+  labels: { lost: string; stale: string; retry: string };
   /**
    * When the server produced the page this tab is showing, in epoch
    * milliseconds. It is a prop rather than something read here because it is
@@ -96,14 +108,14 @@ export function ConnectionStatus({
     >
       <div className={PWA.connection.inner}>
         <span className={PWA.connection.mark} aria-hidden="true" />
-        <strong className={PWA.connection.title}>{t("connection.lost", locale)}</strong>
+        <strong className={PWA.connection.title}>{labels.lost}</strong>
         {/* The clock is the whole point. "Offline" on its own invites the
             reader to assume the numbers are merely a moment old. */}
-        <span className={PWA.connection.detail}>{t("connection.stale", locale)}</span>
+        <span className={PWA.connection.detail}>{labels.stale}</span>
         <span className={PWA.connection.time}>{formatClock(new Date(view.dataAt))}</span>
         <span className={PWA.connection.actions}>
           <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
-            {t("connection.retry", locale)}
+            {labels.retry}
           </Button>
         </span>
       </div>

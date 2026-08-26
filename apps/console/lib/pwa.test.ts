@@ -980,17 +980,41 @@ test("both PWA affordances are mounted, and the banner is not inside the shell",
 test("the banner prints the clock rather than only the word offline", () => {
   const banner = readText(join("components", "connection-status.tsx"));
   assert.match(banner, /formatClock\(new Date\(view\.dataAt\)\)/, "the timestamp is not rendered");
-  assert.match(banner, /t\("connection\.lost"/);
-  assert.match(banner, /t\("connection\.stale"/);
+
+  /*
+   * The two sentences are resolved in app/layout.tsx and handed over as props,
+   * so the check follows them there rather than looking for a `t()` call this
+   * component no longer makes. The component is a client component the root
+   * layout mounts on every page; a lookup here put both message catalogues —
+   * 27.7 kB gzipped — onto every route in the console. See lib/locale.ts.
+   *
+   * Both halves are asserted, because either one alone can pass while the
+   * banner shows nothing: the layout can resolve a string it never passes, and
+   * the component can render a label the layout never fills. Only the pair
+   * says the sentence reaches the screen.
+   */
+  const layout = readText(join("app", "layout.tsx"));
+  assert.match(layout, /t\("connection\.lost"/, "the layout no longer resolves connection.lost");
+  assert.match(layout, /t\("connection\.stale"/, "the layout no longer resolves connection.stale");
+  assert.match(banner, /labels\.lost/, "the banner no longer renders the lost label");
+  assert.match(banner, /labels\.stale/, "the banner no longer renders the stale label");
 });
 
 test("every string these components show exists in both catalogues", () => {
   const zh = JSON.parse(readText(join("messages", "zh.json"))) as Record<string, string>;
   const en = JSON.parse(readText(join("messages", "en.json"))) as Record<string, string>;
-  const sources = [
-    readText(join("components", "connection-status.tsx")),
-    readText(join("components", "pwa.tsx")),
-  ].join("\n");
+  /*
+   * Read from app/layout.tsx, which is where these keys are now resolved: both
+   * components take finished strings as props so that the root layout stops
+   * dragging both catalogues onto every route. The guarantee is unchanged —
+   * every string these two components can show must exist in both catalogues —
+   * only the file that names the keys moved.
+   *
+   * The floor below is what caught that move rather than letting it pass
+   * silently: after the refactor the old extractor found zero keys here and
+   * said so, instead of reporting an empty list of missing ones as success.
+   */
+  const sources = readText(join("app", "layout.tsx"));
 
   const keys = [...sources.matchAll(/\bt\(\s*"([^"]+)"/g)].map((match) => match[1]);
   assert.ok(keys.length >= 8, `only ${keys.length} message keys found — the extractor is broken`);

@@ -1,8 +1,7 @@
 import { interpolate } from "./interpolate.ts";
+import { DEFAULT_LOCALE, type Locale } from "./locale.ts";
 import en from "../messages/en.json" with { type: "json" };
 import zh from "../messages/zh.json" with { type: "json" };
-
-export type Locale = "zh" | "en";
 
 /**
  * A key both catalogues have.
@@ -23,9 +22,27 @@ export type MessageKey = keyof typeof zh & keyof typeof en;
 
 export const catalogs: Record<Locale, Record<MessageKey, string>> = { zh, en };
 export const LOCALES: readonly Locale[] = ["zh", "en"];
-export const DEFAULT_LOCALE: Locale = "zh";
-export const LOCALE_COOKIE = "vodoge.locale";
 export const MISSING_KEY_PATTERN = /^⟦.+⟧$/;
+
+/**
+ * Re-exported so every existing `from "@/lib/i18n"` keeps working unchanged.
+ *
+ * These five moved to `lib/locale.ts` for the reason that file documents: the
+ * catalogues above are welded to *this module*, so a client component that
+ * imported `LOCALE_COOKIE` or `htmlLang` from here downloaded 27.7 kB of
+ * gzipped message catalogue to learn a cookie's name. Forwarding through a
+ * re-export is what lets webpack resolve the specifier to a module with no
+ * catalogue in it and leave this one out of the chunk — the same mechanism
+ * `interpolate` below relies on, and the reason both live in separate files
+ * rather than being exported from here directly.
+ *
+ * `components/locale-switch.tsx` deliberately imports from `@/lib/locale`
+ * instead of going through this line, because it is the one client component
+ * the root layout mounts on every route: the shorter the path between it and
+ * the catalogues, the fewer ways a future edit can reconnect them.
+ */
+export type { Locale } from "./locale.ts";
+export { DEFAULT_LOCALE, LOCALE_COOKIE, htmlLang, isLocale } from "./locale.ts";
 
 /**
  * Re-exported so that `import { interpolate } from "@/lib/i18n"` keeps working
@@ -40,14 +57,6 @@ export const MISSING_KEY_PATTERN = /^⟦.+⟧$/;
  * back here, a test says so instead of a build table.
  */
 export { interpolate };
-
-export function isLocale(value: string | undefined | null): value is Locale {
-  return value === "zh" || value === "en";
-}
-
-export function htmlLang(locale: Locale): string {
-  return locale === "en" ? "en" : "zh-CN";
-}
 
 /**
  * Missing keys render as ⟦key⟧ so they are visible in the UI and in tests.

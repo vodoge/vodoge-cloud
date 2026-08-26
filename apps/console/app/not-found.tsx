@@ -22,7 +22,14 @@ export default async function NotFound() {
           <h1 className={PAGE.title}>{t("notFound.title", locale)}</h1>
           <p className={PAGE.description}>{t("notFound.body", locale)}</p>
         </div>
-        <LocaleSwitch locale={locale} />
+        <LocaleSwitch
+          locale={locale}
+          labels={{
+            language: t("header.language", locale),
+            zh: t("header.langZh", locale),
+            en: t("header.langEn", locale),
+          }}
+        />
       </div>
     </div>
   );
