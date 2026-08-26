@@ -1352,105 +1352,55 @@ test("every primitive still exports what it says, drawn by the recipes it names"
 });
 
 /**
- * The pages that import the old barrel keep compiling untouched.
+ * The old `components/ui.tsx` barrel is gone, and so are its two guards.
  *
- * `components/ui.tsx` is now a compatibility layer over `components/ui/*`, and
- * the thing that must not change is its surface: ten pages, spread across six
- * of the seven remaining migration cards, imported from it when it was written,
- * and only one of those cards is allowed to edit it. `tsc --noEmit` is the real
- * proof that the prop signatures still fit — this is the cheaper one that says
- * the *names* are still there, and it fails with the name of the page that
- * would break.
+ * It was a compatibility layer over `components/ui/*`: ten pages imported a
+ * prop-shaped `Card`, `StatCard`, `EmptyState` and `StateBadge` from it while
+ * seven migration cards ran in parallel. Two tests stood here. One pinned the
+ * set of importing pages as a *list* rather than a count — deliberately, so
+ * that seven cards in seven worktrees each deleted their own line and git
+ * merged the deletions, where two cards both writing `9` would have merged
+ * cleanly into a wrong `9`. The other held the layer to *delegating* rather
+ * than drawing, so it could not become a second empty state.
  *
- * 🔴 **A list of files rather than a count, and that is not a style choice.**
- * Seven page cards are in flight in seven worktrees, each of them migrating a
- * different page off this barrel, and each of them therefore has to say the
- * remaining set is smaller. As a *number*, two cards that both write `9` merge
- * without a conflict into `9` when the truth after both is `8` — a wrong value
- * arrived at by a clean automatic merge, which is the worst kind. As a *list*,
- * two cards delete different lines and git merges both deletions correctly.
- * The list reaching empty is what makes the barrel deletable.
+ * Both read the file itself, so both went with it when the list reached empty
+ * and the file was deleted. Nothing was loosened to let that happen: what
+ * replaces them is resolution rather than assertion. There is no
+ * `components/ui/index.tsx`, so `@/components/ui` now resolves to nothing at
+ * all — a page reaching for the old names is a `tsc --noEmit` and `next build`
+ * failure, which is a harder stop than either test was. The one claim here
+ * that outlived the barrel, "there is one empty state in this console", is the
+ * test below, and it is pinned tighter now than it was.
  */
-// PM merge note: this is empty, and that is the milestone T029 wrote it for.
-// Every page has moved off the compatibility layer, so `components/ui.tsx`
-// and this test can both be deleted — assigned to T018, which is the card that
-// deletes the legacy stylesheet. Until then the list stays empty and the
-// assertion below turns any page that goes back to the barrel red.
-const BARREL_IMPORTERS: string[] = [];
 
-test("the old ui barrel still exports every name its remaining importers ask for", () => {
-  const barrel = codeOnly(readSource("components/ui.tsx"));
-  const importers: string[] = [];
-  const missing: string[] = [];
-
-  for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
-    if (relative === "components/ui.tsx") continue;
-    const code = codeOnly(readSource(relative));
-    const imported = /import\s*\{([^}]*)\}\s*from\s*"@\/components\/ui"/.exec(code);
-    if (!imported) continue;
-    importers.push(relative);
-    for (const name of imported[1].split(",").map((part) => part.trim()).filter(Boolean)) {
-      const declared = new RegExp(`export\\s+(function|const)\\s+${name}\\b`);
-      if (!declared.test(barrel)) missing.push(`${relative} imports ${name}`);
-    }
-  }
-
-  assert.deepEqual(missing, [], "a page imports a name the compatibility layer no longer exports");
-  assert.deepEqual(
-    importers.sort(),
-    [...BARREL_IMPORTERS].sort(),
-    "a page started or stopped importing the barrel without this list being told",
-  );
-});
-
-
-/**
- * One empty state, one badge, one stat card. Not three.
- *
- * `CardEmpty` lives in `components/ui/card.tsx` and `EmptyState` used to be a
- * second implementation in the barrel; opening a third file for it — which was
- * the plan — would have turned two that disagree into three. The rule is that
- * the barrel may *delegate* but may not *draw*, and a component that draws is
- * one that writes markup. Checked structurally rather than by counting names,
- * because "no `<span>` of its own in this file" is what a second implementation
- * would need and cannot avoid.
- */
-test("the compatibility layer delegates and never draws", () => {
-  const { code } = scan(readSource("components/ui.tsx"));
-  const drawn = (code.match(/<[a-z][a-z0-9]*[\s/>]/g) ?? []).filter(
-    (tag) => !tag.startsWith("</"),
-  );
-  assert.deepEqual(
-    drawn,
-    [],
-    "the barrel is drawing its own markup again: that is a second implementation",
-  );
-  for (const source of ["@/components/ui/card", "@/components/ui/badge"]) {
-    assert.ok(code.includes(source), `the barrel no longer delegates to ${source}`);
-  }
-});
 
 /**
  * 🔴 One empty state. The reconciliation this card was given, stated as a test.
  *
  * `T001` renamed `EmptyState` to `CardEmpty` in `components/ui/card.tsx` and
  * left eight pages importing the old name, which is how two implementations of
- * the same thing start. The barrel's is a wrapper over the real one rather
+ * the same thing start. The barrel carried a wrapper over the real one rather
  * than a copy, and the plan to open a third file for it was dropped — but
- * "there is one of these" was a thing somebody had to remember, and the guard
- * next door only says the barrel does not *draw*. It says nothing about a
- * ninth page quietly growing its own.
+ * "there is one of these" was a thing somebody had to remember, and nothing
+ * else says a ninth page may not quietly grow its own.
+ *
+ * Deleting the barrel *tightened* this test rather than retiring it: the second
+ * name went with it, so claim 2 now pins a single file where it used to allow
+ * two. That is the whole of what this card changed here.
  *
  * Three claims, each of which a second implementation has to break:
  *
  * 1. **One file draws it.** Exactly one `.tsx` reads `CARD.empty*`. A copy has
  *    to get its classes from somewhere, and the recipes are the only place
  *    classes are allowed to come from.
- * 2. **Two files name it**, and the second delegates. The barrel's `EmptyState`
- *    has `CardEmpty` in its body; renaming a prop is all it is allowed to do.
+ * 2. **One file names it.** `components/ui/card.tsx` and nothing else exports
+ *    an `Empty`-shaped name. While the barrel existed this was a two-element
+ *    list whose second entry was allowed to delegate; with the barrel gone, a
+ *    second name anywhere is a second implementation with no exception left.
  * 3. **Nobody hand-draws one from the stylesheet.** `.empty`, `.empty-title`
- *    and `.empty-desc` are still in `@layer legacy` and still work, so a page
- *    could write the markup itself and look perfectly right.
+ *    and `.empty-desc` went with `@layer legacy`, so a page writing that markup
+ *    itself now renders unstyled rather than looking perfectly right — still
+ *    worth catching, and still caught here by name.
  */
 test("there is one empty state in this console, and one file draws it", () => {
   const drawing: string[] = [];
@@ -1475,13 +1425,8 @@ test("there is one empty state in this console, and one file draws it", () => {
   );
   assert.deepEqual(
     naming.sort(),
-    ["components/ui.tsx", "components/ui/card.tsx"],
-    "an empty state was declared somewhere new: there are meant to be two names for one of them",
-  );
-  assert.match(
-    codeOnly(readSource("components/ui.tsx")),
-    /function EmptyState[\s\S]{0,200}?<CardEmpty\b/,
-    "the barrel's EmptyState stopped delegating to CardEmpty, which makes it the second one",
+    ["components/ui/card.tsx"],
+    "an empty state was declared somewhere new: there is meant to be exactly one name for it",
   );
   assert.deepEqual(
     handDrawn,
@@ -1556,8 +1501,8 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
   assert.deepEqual([...UNMIGRATED_SOURCES], []);
   assert.equal(
     MIGRATED_SOURCES.length,
-    45,
-    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 45 — ` +
+    44,
+    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 44 — ` +
       "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
 

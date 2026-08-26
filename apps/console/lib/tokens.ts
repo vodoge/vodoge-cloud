@@ -2587,7 +2587,6 @@ export const MIGRATED_SOURCES = [
   "components/shell.tsx",
   "components/sign-out.tsx",
   "components/theme-toggle.tsx",
-  "components/ui.tsx",
   "components/ui/badge.tsx",
   "components/ui/button-row.tsx",
   "components/ui/button.tsx",
