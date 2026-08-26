@@ -226,25 +226,45 @@ What this repository does with them:
 
 Which artifact contains them:
 
+Neither. As of the commits that added the checks described below, no image
+built from this repository can contain them -- and that is enforced by the
+build, not by a instruction someone has to remember.
+
   - The recipe under "Producing the console artifact" in deploy/RUNBOOK.md --
     the one that produces deploy/console-dist.tgz, which is what
     deploy/Dockerfile.console.prebuilt extracts and what the production host
     runs -- executes `rm -rf .next/standalone/node_modules/@img` before packing.
-    An artifact produced by following that recipe therefore contains no `@img/*`
-    package, and none of the LGPL-licensed code listed above.
 
-  - deploy/Dockerfile.console builds from source, runs a plain `npm ci`, and
-    performs no equivalent removal. It refuses to build unless invoked with
-    `--build-arg VODOGE_BUILD_FROM_SOURCE=yes`. An image produced that way would
-    contain the `@img/*` packages matching its build platform.
+  - deploy/Dockerfile.console builds from source. It now performs the same
+    removal after `npm ci`, rather than relying on the runbook.
 
-If an image of the second kind is ever conveyed to anyone, the LGPL-3.0
-obligations for those packages apply to that conveyance: the license text must
-travel with it, the use of the library must be stated, and the recipient must
-be able to obtain the library's source and to relink a modified version. The
-upstream sources are at the URLs above, published free of charge and without an
-account. This paragraph records the obligation. It does not assert that such an
-image has been built or distributed.
+  - Both deploy/Dockerfile.console and deploy/Dockerfile.console.prebuilt end
+    with an assertion over the assembled image: if any `@img` directory or any
+    `libvips*.so*` survives, the build fails. It matches the shared object
+    rather than today's package names, so a rename upstream does not defeat it.
+
+The assertion was verified in both directions with real builds, and with the
+assertion deleted, so that its absence is known to be what lets a contaminated
+tree through: a tarball carrying `@img` fails the build and the failure names
+both `libvips-cpp.so.8.17.3` files; the same tarball with the assertion removed
+builds green at 241 MB with the payload inside; a clean tarball builds at
+207 MB with no `@img` and no `libvips*.so*` anywhere in the image.
+
+This is why `--omit=optional` was not used instead: eight of the 38 optional
+entries are `@next/swc-*`, next's native compiler, declared in the same
+`optionalDependencies` block as sharp, with no `@next/swc-wasm-nodejs` in the
+lockfile to fall back to. Dropping them would remove the compiler `next build`
+needs. Removing `@img` is sufficient because all fourteen LGPL-bearing entries
+live under `@img/`.
+
+Should an image ever be conveyed that does contain these packages -- built by
+bypassing the assertion, or from a commit predating it -- the LGPL-3.0
+obligations apply to that conveyance: the license text must travel with it, the
+use of the library must be stated, and the recipient must be able to obtain the
+library's source and to relink a modified version. The upstream sources are at
+the URLs above, published free of charge and without an account. This paragraph
+records the obligation. It does not assert that such an image has been built or
+distributed.
 
 
 ================================================================================
