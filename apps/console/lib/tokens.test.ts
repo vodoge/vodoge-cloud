@@ -868,15 +868,45 @@ const WASHES = ["accent-wash", "ok-wash"] as const;
 function everyBackdrop(
   colours: Record<string, { readonly dark: string; readonly light: string }>,
   theme: "dark" | "light",
+  washes: readonly string[] = WASHES,
 ): { name: string; hex: string }[] {
   const opaque = OPAQUE_SURFACES.map((s) => ({ name: `--${s}`, hex: colours[s][theme] }));
   const washed = opaque.flatMap((base) =>
-    WASHES.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
+    washes.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
   );
   const twice = washed.flatMap((base) =>
-    WASHES.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
+    washes.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
   );
   return [...opaque, ...washed, ...twice];
+}
+
+/**
+ * Which wash a colour's own recipes paint behind it, read out of the recipes.
+ *
+ * 🔴 **T049's two washes are the two a green sits on, and only those.** A warn
+ * word does not land on a green tint: the tone that carries it is
+ * `bg-warn-wash` with `text-warn` in the same string. Sweeping the other three
+ * status colours over the green set measured them somewhere they never appear
+ * — which is the same shape of mistake T049 caught T046 making about the wash
+ * over white, one level further in, and it read *optimistically*: 2.47 / 3.30 /
+ * 3.68 on the green set against 2.34 / 3.06 / 3.43 where they really sit.
+ *
+ * Derived rather than listed so a fifth tone is swept without anyone coming
+ * back here, and unioned with T049's pair rather than replacing it, so the set
+ * is a superset in every case and for the two greens it is byte-identical to
+ * what T049 swept. Their 28 backdrops and their pinned dark 5.022 do not move.
+ */
+const WASH_AND_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+)-wash(?=\s|$)/;
+
+function washesForTextToken(token: string): string[] {
+  const found = new Set<string>(WASHES);
+  for (const recipe of everyRecipeString(TOKENS)) {
+    const wash = WASH_AND_TEXT.exec(recipe);
+    if (!wash) continue;
+    const painted = [...recipe.matchAll(GREEN_TEXT)].map((m) => m[1]);
+    if (painted.includes(token)) found.add(`${wash[1]}-wash`);
+  }
+  return [...found].sort();
 }
 
 /**
@@ -981,31 +1011,374 @@ test("the dark theme's green-on-surface contrast is exactly what it was before",
   }
 });
 
+/* ── Contrast: the other three status colours ────────────────────────── */
+
 /**
- * The same defect in three other colours, measured and left alone.
+ * The same defect in `--warn`, `--bad` and `--info`, and the decision T049
+ * left for this card: each needed its own value on its own hue, which is a
+ * choice rather than arithmetic.
  *
- * `--warn`, `--bad` and `--info` are read on their own washes exactly as the
- * green was, and in the light theme none of them clears 4.5 either. They are
- * not this card's to fix: each needs its own value chosen against its own hue,
- * and that is a decision, not arithmetic. The worst ratios are pinned here so
- * the numbers cannot drift unnoticed and so whoever does fix them starts from
- * a recorded baseline rather than re-deriving one. If you are that card, these
- * three numbers are what you are moving — update them here.
+ * Each is now **the lightest value on its own exact hue and saturation whose
+ * worst backdrop clears 4.5 by half a point** — T046's own margin rule, the
+ * one it applied when it refused to ship a fill at a margin of 0.036, and the
+ * rule T049 chose the second green by. Light theme only; the dark values are
+ * untouched and the test below pins them.
+ *
+ * | | on the green set T049 swept | where it really sits | now |
+ * |---|---|---|---|
+ * | `--warn` | 2.47 | **2.341** | **5.012** |
+ * | `--bad`  | 3.30 | **3.060** | **5.008** |
+ * | `--info` | 3.68 | **3.429** | **5.048** |
+ *
+ * 🔴 The middle column is the reason this test is not simply the old one with
+ * three numbers edited. T049 measured these over the two washes a *green* sits
+ * on, and every one of the three was worse than that said. The washes
+ * themselves did not move — they are literal `rgba()` and do not follow the
+ * colour, exactly as `--accent-wash` did not follow the green — so the pale
+ * pills behind these words look the same and only the words darkened.
  */
-test("the other three status colours are recorded where they stand in light", () => {
+const STATUS_TEXT_TOKENS = ["warn", "bad", "info"] as const;
+
+test("every status colour painted as text clears 4.5:1 on every backdrop it has, in light", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const failures: string[] = [];
+
+  for (const token of STATUS_TEXT_TOKENS) {
+    const washes = washesForTextToken(token);
+    assert.ok(
+      washes.includes(`${token}-wash`),
+      `--${token}'s own wash is not in its backdrop set, so this is measuring the wrong place`,
+    );
+    for (const backdrop of everyBackdrop(colours, "light", washes)) {
+      const ratio = contrastRatio(colours[token].light, backdrop.hex);
+      if (ratio < 4.5) {
+        failures.push(
+          `light: --${token} ${colours[token].light} on ${backdrop.name} ` +
+            `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
+        );
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * 🔴 **The dark theme pays for none of the above, and this is what says so.**
+ *
+ * These three dark values are byte-identical to what they were before this
+ * card, and `--accent-edge` — the one new colour the dark theme sees at all —
+ * is the value `--accent` already had, so every dark ratio in the console is
+ * the ratio it was. Stated as the hexes rather than as ratios because that is
+ * the strongest form: a ratio can be preserved by two compensating edits.
+ */
+test("this card moved no colour the dark theme already had", () => {
+  const colours = TOKENS.COLOR_TOKENS;
+  assert.deepEqual(
+    {
+      warn: colours.warn.dark,
+      bad: colours.bad.dark,
+      info: colours.info.dark,
+      accent: colours.accent.dark,
+      "accent-strong": colours["accent-strong"].dark,
+      "surface-hover": colours["surface-hover"].dark,
+      "line-strong": colours["line-strong"].dark,
+    },
+    {
+      warn: "#f0b429",
+      bad: "#f2686d",
+      info: "#63a4ff",
+      accent: "#4ade9b",
+      "accent-strong": "#22c47f",
+      "surface-hover": "#1c2230",
+      "line-strong": "#303950",
+    },
+  );
+  assert.equal(colours["accent-edge"].dark, colours.accent.dark);
+});
+
+/**
+ * 🔴 **Measured, not fixed, and the next card's baseline.**
+ *
+ * The dark theme has the same defect in two of the three, and it is out of
+ * this card's scope for the reason T049 gave about the light theme: repairing
+ * it means moving a dark value, and every dark value moving is a change to the
+ * theme this console is looked at in for hours. The site is real and not a
+ * superset artefact — `components/conversation.tsx` renders the delivery badge
+ * with the tone `toneForDeliveryStatus` returns, so a failed send is a red
+ * badge inside `INBOX.messageOut`, which is a green tint. `--warn` clears the
+ * bar; `--bad` and `--info` do not.
+ *
+ * Pinned to the digit so the numbers cannot drift and so whoever fixes them
+ * starts from a measurement rather than re-deriving one. If you are that card,
+ * these three numbers are what you are moving — update them here.
+ */
+test("the dark theme's status contrast is recorded where it stands", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const worst = (token: string) =>
     Number(
       Math.min(
-        ...everyBackdrop(colours, "light").map((b) => contrastRatio(colours[token].light, b.hex)),
-      ).toFixed(2),
+        ...everyBackdrop(colours, "dark", washesForTextToken(token)).map((b) =>
+          contrastRatio(colours[token].dark, b.hex),
+        ),
+      ).toFixed(3),
     );
   assert.deepEqual({ warn: worst("warn"), bad: worst("bad"), info: worst("info") }, {
-    warn: 2.47,
-    bad: 3.3,
-    info: 3.68,
+    warn: 4.632,
+    bad: 2.869,
+    info: 3.407,
   });
+});
+
+/* ── Contrast: the accent when it is a line ──────────────────────────── */
+
+/**
+ * The third green, and the third bar.
+ *
+ * 🔴 **The focus ring was the accent fill, and it was the one thing on a light
+ * page not required to be visible.** `:focus-visible` draws
+ * `2px solid` in `app/globals.css`, and the fill green is **2.681** on a card
+ * and **2.523** on the page against the **3:1** WCAG 1.4.11 sets for a non-text
+ * indicator — the same wall `ring-*`, `TABS.tabCurrent`'s rule and an input's
+ * focused edge were standing at.
+ *
+ * ⚠️ **Not the readable green.** T049's guard below forbids painting
+ * `--fg-accent` as a fill, a border or a ring, and that guard is right: this is
+ * the *fill* green's role, an outline carries no ink, and reaching for a text
+ * tier because its number happens to be big enough is how a role gets
+ * borrowed and then forgotten. A third entry with its own bar is the honest
+ * answer, chosen the way T049 chose the second: the lightest value on the
+ * brand's exact hue and saturation clearing 3:1 by half a point.
+ *
+ * Light 2.035 -> **3.527** on the worst backdrop, 2.414-2.681 -> 4.184-4.648
+ * on the four surfaces. `--accent-strong` was measured as a candidate first
+ * and rejected at **3.046** on the page — a margin of 0.046, which is the
+ * margin T046 refused to ship a fill at.
+ */
+const NON_TEXT_BAR = 3;
+
+test("--accent-edge clears 3:1 on every backdrop, in both themes", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const failures: string[] = [];
+
+  for (const theme of ["dark", "light"] as const) {
+    for (const backdrop of everyBackdrop(colours, theme)) {
+      const ratio = contrastRatio(colours["accent-edge"][theme], backdrop.hex);
+      if (ratio < NON_TEXT_BAR) {
+        failures.push(
+          `${theme}: --accent-edge ${colours["accent-edge"][theme]} on ${backdrop.name} ` +
+            `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
+        );
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * The one colour `app/globals.css` chooses rather than reads, so the only
+ * place the repair above can be undone without touching a recipe.
+ */
+test("the focus outline is drawn in the edge green, not the fill green", () => {
+  const rules = rulesOf(globalsCss).filter(({ head }) => head.includes(":focus-visible"));
+  assert.equal(rules.length, 1, "expected exactly one :focus-visible rule in globals.css");
+  const outline = /outline:\s*([^;]+);/.exec(rules[0].body);
+  assert.notEqual(outline, null, ":focus-visible sets no outline");
+  assert.match(outline![1], /var\(--accent-edge\)/);
+  assert.doesNotMatch(outline![1], /var\(--accent\)/);
+});
+
+/**
+ * The mirror of T049's role guard, for the role it added. `--accent-edge` is a
+ * line: it is never read as type, and the bare fill green is never drawn as a
+ * line again, which is the regression this whole section exists to prevent.
+ */
+test("the edge green is only ever a line, and no line is drawn in the fill green", () => {
+  const offenders = everyRecipeString(TOKENS).filter(
+    (recipe) =>
+      /(?:^|\s)(?:[a-z-]+:)*text-accent-edge(?:\s|$)/.test(recipe) ||
+      /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-accent-edge(?:\s|$)/.test(recipe) ||
+      /(?:^|\s)(?:[a-z-]+:)*(?:border|ring|outline|divide)-accent(?:\s|$)/.test(recipe),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+/* ── Contrast: an ink is chosen against the fill under it ────────────── */
+
+/**
+ * 🔴 **The danger button's label was plain white, and it was the only solid
+ * button in this console whose ink was not chosen against its fill.**
+ * 3.010:1 in the dark theme and 4.351:1 in the light one, both under the 4.5
+ * its `text-sm`/`font-semibold` label asks for. T046 settled the direction on
+ * the green button — keep the fill, choose an ink for it — and this is the
+ * same repair on the other one: 5.006 dark, 7.122 light.
+ *
+ * ⚠️ **`--bad-ink` is themed where `--accent-ink` is not, and that is the
+ * whole content of the decision.** The accent is a light green in both themes,
+ * so one dark ink serves both. This red is pale in the dark theme and deep in
+ * the light one — it has to be, because the same token is *read* on a dark
+ * surface and *read* on a light one — so the ink is the opposite pole of the
+ * fill in each theme. Darkening the dark red instead would have repaired the
+ * button by breaking the eight places the same token is read.
+ *
+ * Written as a sweep over the recipes rather than as two numbers: the next
+ * filled status button is covered without anyone remembering to come back.
+ */
+const OPAQUE_STATUS_FILLS = [
+  "accent",
+  "accent-strong",
+  "accent-edge",
+  "ok",
+  "warn",
+  "bad",
+  "info",
+] as const;
+const OPAQUE_FILL: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+)(?=\s|$)/g;
+
+test("a recipe that fills with a status or accent colour carries an ink chosen against it", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const pairs: { fill: string; ink: string }[] = [];
+
+  for (const recipe of everyRecipeString(TOKENS)) {
+    for (const match of recipe.matchAll(OPAQUE_FILL)) {
+      const fill = match[1];
+      if (!(OPAQUE_STATUS_FILLS as readonly string[]).includes(fill)) continue;
+      for (const ink of [...recipe.matchAll(GREEN_TEXT)].map((m) => m[1])) {
+        if (colours[ink]) pairs.push({ fill, ink });
+      }
+    }
+  }
+
+  // A sweep that finds nothing passes for free. Both filled buttons in this
+  // console have to be in here, or the sweep has stopped seeing the recipes.
+  assert.deepEqual(
+    [...new Set(pairs.map((p) => `${p.ink} on ${p.fill}`))].sort(),
+    ["accent-ink on accent", "accent-ink on accent-strong", "bad-ink on bad"],
+  );
+
+  const failures: string[] = [];
+  for (const { fill, ink } of pairs) {
+    for (const theme of ["dark", "light"] as const) {
+      const ratio = contrastRatio(colours[ink][theme], colours[fill][theme]);
+      if (ratio < 4.5) {
+        failures.push(
+          `${theme}: --${ink} ${colours[ink][theme]} on --${fill} ` +
+            `${colours[fill][theme]} = ${ratio.toFixed(3)}:1`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
+/* ── Shape: a badge has to still be a badge on a hovered row ─────────── */
+
+/**
+ * 🔴 **`BADGE.tone.neutral` was filled with a surface token, and on a hovered
+ * row it stopped existing.**
+ *
+ * `TABLE.row` takes `--surface-hover` on hover and the grey badge *was*
+ * `--surface-hover`, so the pill's fill and the row's fill were the same
+ * colour: ratio exactly **1.000**. Not hard to read — not there. Both live
+ * sites suppress the dot, so the fill was the whole of the shape:
+ * `app/audit/page.tsx` puts one on every row of the log, and
+ * `app/devices/page.tsx` puts one in the transport column.
+ *
+ * The repair is the category rather than the symptom, and these two tests are
+ * why it had to be. A border would have drawn a line over a collision that was
+ * still there — and cost two pixels on every badge in the console, because the
+ * five tones have to stay one size when a setting toggles between two of them
+ * (`components/settings-form.tsx` swaps the same badge between `ok` and
+ * `neutral`). Moving the fill onto a line colour makes the collision
+ * impossible instead: no recipe in this file paints a line colour as a
+ * background, the first test derives that rather than asserting it, and a
+ * translucent wash over a surface is never that surface.
+ *
+ * Measured: 1.000 -> **1.342** in light and **1.383** in dark against all four
+ * surfaces, at or above all four tinted tones on the same hovered row
+ * (1.091-1.135 and 1.211-1.352). The word went with it — the faintest tier at
+ * 2.688:1 on the old fill, the plain tier at 10.895:1 on the new one, which is
+ * the tier an unbadged cell would have rendered it at anyway.
+ */
+function badgeToneFills(): { tone: string; fill: string }[] {
+  return Object.entries(TOKENS.BADGE.tone).map(([tone, recipe]) => {
+    const match = /(?:^|\s)bg-([a-z0-9-]+)(?=\s|$)/.exec(recipe as string);
+    assert.notEqual(match, null, `BADGE.tone.${tone} paints no background`);
+    return { tone, fill: match![1] };
+  });
+}
+
+test("no badge tone is filled with a colour this console paints as a surface", () => {
+  const paintedAsSurface = new Set<string>();
+  for (const recipe of everyRecipeString(TOKENS)) {
+    for (const match of recipe.matchAll(OPAQUE_FILL)) {
+      if ((OPAQUE_SURFACES as readonly string[]).includes(match[1])) paintedAsSurface.add(match[1]);
+    }
+  }
+  // The surfaces really are painted somewhere, or the sweep below is vacuous.
+  assert.deepEqual([...paintedAsSurface].sort(), ["bg", "surface", "surface-hover", "surface-raised"]);
+
+  const offenders = badgeToneFills().filter(({ fill }) => paintedAsSurface.has(fill));
+  assert.deepEqual(offenders, []);
+});
+
+test("every badge tone keeps a shape on every surface it can sit on", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const failures: string[] = [];
+
+  for (const { tone, fill } of badgeToneFills()) {
+    for (const theme of ["dark", "light"] as const) {
+      const value = colours[fill][theme];
+      for (const surface of OPAQUE_SURFACES) {
+        const behind = colours[surface][theme];
+        const pill = value.startsWith("rgba(") ? over(value, behind) : value;
+        if (pill === behind) {
+          failures.push(`${theme}: BADGE.tone.${tone} is ${pill} on --${surface}, which is ${behind}`);
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
+/* ── Size: what a finger has to hit ──────────────────────────────────── */
+
+/**
+ * 🔴 **The language switcher opted out of this console's own touch token, and
+ * nothing said why.**
+ *
+ * `--touch` is 44px, the AAA figure, and the console defines it precisely so
+ * that "anything a finger has to hit" is one decision made once. Measured on
+ * the signed-out pages the two options came out 48x32 and 62.9x32: past the AA
+ * floor of 24x24, twelve pixels short of the token. The sign-in field and its
+ * submit button beside them measure exactly 44.
+ *
+ * Three recipes sat below the token. The other two say in writing why, and
+ * both reasons are the same reason: they live in a dense table row and are
+ * sized to the cells around them — `FORM.selectCompact` argues it explicitly.
+ * The switcher is not in a table. It sits alone in a page header, and in the
+ * journal it sits above the table rather than inside it.
+ *
+ * The ledger below is the half that keeps this true. Without it the next
+ * recipe to want a shorter control just adds one, and nothing in this file
+ * would notice.
+ */
+test("the language switcher's options are a full touch target", () => {
+  assert.match(TOKENS.SEGMENTED.option, /(^|\s)min-h-touch(\s|$)/);
+});
+
+test("the only controls shorter than the touch token are the two a table row pays for", () => {
+  const short = everyRecipeString(TOKENS)
+    .filter((recipe) => /(^|\s)min-h-s6(\s|$)/.test(recipe))
+    .sort();
+  assert.deepEqual(short, [TOKENS.BUTTON.size.sm, TOKENS.FORM.selectCompact].sort());
 });
 
 /**
