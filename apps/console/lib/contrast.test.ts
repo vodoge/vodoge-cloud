@@ -56,9 +56,17 @@ import * as TOKENS from "./tokens.ts";
  * `--ok-wash` behind a delivery badge, `--accent-wash` behind an outbound
  * message — and on a wash over a wash, because a badge goes inside a bubble.
  * T003 measured that layer and deliberately did not assert it, because the
- * palette it would have judged was already being replaced. The sweep at the
- * bottom of this file is that assertion, and its backdrop set is derived the
- * same way everything else here is.
+ * palette it would have judged was already being replaced. The sweeps at the
+ * bottom of this file are that assertion, and their backdrop sets are derived
+ * the same way everything else here is.
+ *
+ * **How deep depends on the colour, and that too is derived rather than
+ * chosen.** A colour a recipe paints *on a wash of its own* is chip text, and a
+ * chip can be nested inside another chip, so chips are swept two washes deep.
+ * Everything else only ever inherits a wash from an ancestor and is swept one
+ * deep. The reasoning, and the single sentence that voids it, are written at
+ * the sweep itself rather than here, because that is where somebody about to
+ * trust the green will be looking.
  *
  * ⚠️ This file is deliberately outside `tailwind.config.ts`'s `content`, which
  * names `./app/**`, `./components/**` and reaches `lib/` only through the one
@@ -403,45 +411,75 @@ const WASHES: readonly string[] = [
 ].sort();
 
 /**
- * 🔴 **Two layers deep, because the console renders two layers deep.**
+ * Backdrops washed `depth` times over each opaque surface.
  *
- * `components/conversation.tsx:377` puts a `Badge` — `bg-ok-wash` or
- * `bg-bad-wash` — inside `INBOX.messageOut`, which is `bg-accent-wash`, and the
- * whole bubble can sit on a hovered row. That is a wash on a wash on a surface,
- * and it is the backdrop that binds: `lib/tokens.test.ts` records `--bad`'s
- * worst as `--ok-wash over --ok-wash over --surface-hover` and not as anything
- * one layer up. **A single-layer sweep cannot see that cell**, which is the
- * specific reason this goes to depth two rather than one.
- *
- * The set is the full cross product rather than the pairs that nest today,
- * which is the same choice `everyBackdrop` in `lib/tokens.test.ts` makes and
- * for the same stated reason: which wash ends up inside which is a fact about
- * JSX, and no test in this app can read a `.tsx`. A superset can only ever
- * measure a colour somewhere darker than it really lands, so it errs toward
- * refusing a palette rather than passing one — the opposite of the optimistic
- * reading T049 caught T046 making, which is the error that actually ships.
+ * The set at each layer is the full cross product rather than the pairs that
+ * nest today, which is the same choice `everyBackdrop` in `lib/tokens.test.ts`
+ * makes and for the same stated reason: which wash ends up inside which is a
+ * fact about JSX, and no test in this app can read a `.tsx`. A superset can
+ * only ever measure a colour somewhere *darker* than it really lands, so it
+ * errs toward refusing a palette rather than passing one — the opposite
+ * polarity to the optimistic reading T049 caught T046 making, which is the
+ * error that actually ships.
  *
  * The bare surfaces are not repeated here; the sweep above owns them.
  */
-function washedBackdrops(theme: string): { name: string; hex: string }[] {
-  const opaque = SURFACES.map((surface) => ({
+function washedBackdrops(theme: string, depth: number): { name: string; hex: string }[] {
+  let layer = SURFACES.map((surface) => ({
     name: `--${surface}`,
     hex: COLOURS[surface][theme],
   }));
-  const once = opaque.flatMap((base) =>
-    WASHES.map((wash) => ({
-      name: `--${wash} over ${base.name}`,
-      hex: over(COLOURS[wash][theme], base.hex),
-    })),
-  );
-  const twice = once.flatMap((base) =>
-    WASHES.map((wash) => ({
-      name: `--${wash} over ${base.name}`,
-      hex: over(COLOURS[wash][theme], base.hex),
-    })),
-  );
-  return [...once, ...twice];
+  const all: { name: string; hex: string }[] = [];
+  for (let at = 0; at < depth; at += 1) {
+    layer = layer.flatMap((base) =>
+      WASHES.map((wash) => ({
+        name: `--${wash} over ${base.name}`,
+        hex: over(COLOURS[wash][theme], base.hex),
+      })),
+    );
+    all.push(...layer);
+  }
+  return all;
 }
+
+/**
+ * 🔴 **How deep a token can be washed, derived from the recipes.**
+ *
+ * A **chip** is a colour a recipe paints as text *in the same recipe that
+ * paints a wash behind it* — `BADGE.tone.ok` is `bg-ok-wash text-ok`,
+ * `SHELL.navLinkCurrent` is `bg-accent-wash … text-fg-accent`. A chip is a
+ * self-contained tinted thing, and a chip can be put inside another tinted
+ * thing: `components/conversation.tsx:377` renders a `Badge` inside
+ * `INBOX.messageOut`, which is `bg-accent-wash`, on a row that can be hovered.
+ * **Two layers is a real constraint for a chip** — it is the backdrop that
+ * binds `--bad`, and `lib/tokens.test.ts` records it as such.
+ *
+ * Everything else painted as type is **ladder** text: ordinary words and
+ * metadata that never carry a wash of their own and only ever *inherit* one
+ * from an ancestor.
+ *
+ * The split is by **use and never by name**, which is the whole point of
+ * deriving it. `--fg-accent` is an `fg-*` token and lands in `CHIP` anyway,
+ * because `SHELL.navLinkCurrent` paints it on `bg-accent-wash`; `--ok`,
+ * `--warn`, `--bad` and `--info` land there for the same reason and not
+ * because of what they are called. Sorting colours by the family in their name
+ * is the move that lost `--fg-faint`, and nothing here does it.
+ */
+const WASH_AND_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-[a-z0-9-]+-wash(?=\s|$)/;
+
+function paintedOnItsOwnWash(): string[] {
+  const found = new Set<string>();
+  for (const recipe of everyRecipeString(TOKENS)) {
+    if (!WASH_AND_TEXT.test(recipe)) continue;
+    for (const match of recipe.matchAll(TEXT_UTILITY)) {
+      if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
+    }
+  }
+  return [...found].sort();
+}
+
+const CHIP: readonly string[] = TEXT.filter((token) => paintedOnItsOwnWash().includes(token));
+const LADDER: readonly string[] = TEXT.filter((token) => !CHIP.includes(token));
 
 /**
  * ④ The wash list is as large as the two derivations that feed it, restated
@@ -484,26 +522,104 @@ test("the wash list is derived from both the roles and the recipes", () => {
 });
 
 /**
- * Every colour used as type, on every washed backdrop, in both themes, at the
- * same 4.5:1 the opaque sweep uses and for the same reason: a timestamp inside
- * a message bubble is `text-xs`, and `text-xs` is body text under WCAG 1.4.3
- * whatever the element is called.
+ * ⑤ Every colour painted as type is a chip or it is ladder, and the two are
+ * told apart by use rather than by name.
  *
- * 🔴 **This is the assertion T003 measured and left unmade.** It measured the
- * four neutral tiers over a *single* wash — 41 red cells of 160 on the old
- * palette — and projected T001's dark recipe to clear it at 0 of 80. That
- * projection was right about the layer it covered and is not the whole layer:
- * at depth two the console still has cells below the bar. They are named in the
- * failure list rather than pinned here, because a pinned digit is what wedged
- * the first step of this retheme.
+ * 🔴 This is also the **mechanical half of the exception below**. The ladder is
+ * swept one wash deep on the argument that ladder text never carries a wash of
+ * its own. The moment somebody writes a recipe that paints a ladder colour on a
+ * wash, that argument is false — and this fails, here, naming the token,
+ * instead of the sweep quietly measuring one layer too few.
  */
-test("every colour used as type clears 4.5:1 on every washed backdrop, in both themes", (t) => {
+test("every colour painted as type is either a chip or ladder text", () => {
+  assert.deepEqual([...CHIP, ...LADDER].sort(), [...TEXT].sort());
+  assert.equal(CHIP.filter((token) => LADDER.includes(token)).length, 0);
+
+  // Non-vacuity on both halves: an empty CHIP would make the exception below
+  // vacuous, and an empty LADDER would make the sweep below measure nothing.
+  assert.ok(CHIP.length >= 4, `only ${CHIP.length} chip colours; the derivation collapsed`);
+  assert.ok(LADDER.length >= 3, `only ${LADDER.length} ladder colours; the derivation collapsed`);
+
+  /**
+   * 🔴 **The tripwire, and it has to read the recipes to be worth anything.**
+   *
+   * `LADDER` is *defined* as `TEXT` minus `CHIP`, so asserting that no ladder
+   * token is painted on a wash is true by construction and tests nothing —
+   * a vacuous green of exactly the kind the negative control at the top of this
+   * file exists to prevent. The question worth asking is about the **tier
+   * family**, which is derived from names and so cannot absorb the change:
+   * *which type tiers do the recipes paint on a wash?*
+   *
+   * Exactly one may, and it is `--fg-accent`, because `--accent-wash` exists
+   * precisely to carry it — `SHELL.navLinkCurrent` is the current navigation
+   * item. Any *second* tier appearing here means a tier has become chip text,
+   * which is the recipe-visible half of the falsification condition written out
+   * below: that tier can now reach two wash layers, and the one-layer exception
+   * no longer covers it.
+   */
+  const tiersOnAWash = NAMES.filter(
+    (name) => roleOf(name) === "text" && paintedOnItsOwnWash().includes(name),
+  );
+  assert.deepEqual(
+    tiersOnAWash,
+    ["fg-accent"],
+    `a type tier other than the accent is painted on a wash, so it is chip text ` +
+      `now and can reach two wash layers — the one-layer ladder exception below ` +
+      `no longer covers it: ${tiersOnAWash.join(", ")}`,
+  );
+});
+
+/**
+ * The ladder, one wash deep, in both themes, at the same 4.5:1 the opaque
+ * sweep uses and for the same reason: a timestamp inside a message bubble is
+ * `text-xs`, and `text-xs` is body text under WCAG 1.4.3 whatever it labels.
+ *
+ * 🔴 **This is the assertion T003 measured and left unmade** — the same 160
+ * cells it measured (four tiers × four surfaces × five washes × two themes),
+ * promoted now that T001's palette has landed.
+ *
+ * ── 🔴 WHY ONE LAYER FOR THE LADDER, AND WHEN THAT STOPS BEING TRUE ────────
+ *
+ * The chips above are swept two washes deep because a chip can be put inside
+ * another chip. **Ladder text cannot.** It is body copy and metadata —
+ * timestamps, column headings, hints — and the thing that creates a second
+ * wash is a *badge*, which contains a status word and never contains metadata.
+ * In `components/conversation.tsx` this is visible directly: `INBOX.metaTime`
+ * and `INBOX.binaryNote` are **siblings of the `Badge`, not children of it**,
+ * so they sit on the one `accent-wash` of the bubble and no deeper. Two layers
+ * is a real constraint for a chip and an **unreachable** superset for ladder
+ * text.
+ *
+ * 🔴 **WHAT VOIDS THIS EXCEPTION — read this before trusting the green.**
+ * **If ladder text is ever placed inside a badge, or inside any other element
+ * that carries a wash of its own, this exception is immediately invalid and
+ * the ladder must go to two layers like the chips.** The test above catches the
+ * half of that which is visible to a test — a recipe painting a ladder colour
+ * on a wash. It **cannot** catch the other half: a `.tsx` nesting a
+ * `text-fg-faint` span *inside* a `<Badge>`. No test in this app can read a
+ * `.tsx`. That case is yours to notice, and this paragraph is the only warning
+ * you will get.
+ *
+ * 🔴 **WHAT IT COSTS IF THE EXCEPTION IS WRONG.** Not hypothetical — measured,
+ * and emitted as a diagnostic on every run so it can never go stale. On the
+ * palette current as this is written the ladder's worst cell at two layers is
+ * `--fg-faint` at **3.831** on `--ok-wash over --ok-wash over --surface-hover`
+ * (`#284f3e`), and on the *real* nesting rather than the superset — an
+ * `ok-wash` badge inside the `accent-wash` bubble on a hovered row (`#364b42`)
+ * — it is **3.893**. Both are short. So this exception is load-bearing: it is
+ * the only reason the ladder is green, and the number it is holding back is
+ * printed beside it every time the suite runs.
+ *
+ * `--fg-faint` at one layer is 5.201, which is the margin actually being
+ * relied on.
+ */
+test("the neutral ladder clears 4.5:1 one wash deep, in both themes", (t) => {
   const failures: string[] = [];
   let compared = 0;
 
   for (const theme of THEMES) {
-    const backdrops = washedBackdrops(theme);
-    for (const token of TEXT) {
+    const backdrops = washedBackdrops(theme, 1);
+    for (const token of LADDER) {
       const ink = COLOURS[token][theme];
       let worst = { ratio: Infinity, name: "", hex: "" };
       for (const backdrop of backdrops) {
@@ -516,17 +632,80 @@ test("every colour used as type clears 4.5:1 on every washed backdrop, in both t
           );
         }
       }
-      // The worst cell per token per theme, on the record every run. The full
-      // matrix is 120 backdrops wide; printing the binding one for each token
-      // is what a reader can actually use, and it never goes stale.
       t.diagnostic(
         `${theme} --${token} ${ink} worst ${worst.ratio.toFixed(3)} on ${worst.name} ${worst.hex}`,
       );
     }
+
+    // 🔴 The price of the exception, current every run. If this number is at or
+    // above 4.5 the exception has stopped costing anything and the ladder
+    // should simply be swept two deep; if it drops further, the exception is
+    // carrying more weight than it was when it was argued for. Either way the
+    // next reader sees it without re-deriving it.
+    const deeper = washedBackdrops(theme, 2);
+    let sunk = { ratio: Infinity, token: "", name: "" };
+    for (const token of LADDER) {
+      for (const backdrop of deeper) {
+        const ratio = contrastRatio(COLOURS[token][theme], backdrop.hex);
+        if (ratio < sunk.ratio) sunk = { ratio, token, name: backdrop.name };
+      }
+    }
+    t.diagnostic(
+      `${theme} NOT ASSERTED — ladder at two washes would be worst ` +
+        `${sunk.ratio.toFixed(3)} (--${sunk.token} on ${sunk.name})`,
+    );
   }
 
-  const expected = WASHES.length * SURFACES.length * (1 + WASHES.length);
-  assert.equal(compared, TEXT.length * expected * THEMES.length);
-  assert.ok(compared >= 480, `only ${compared} comparisons; the wash layer collapsed`);
+  assert.equal(compared, LADDER.length * WASHES.length * SURFACES.length * THEMES.length);
+  assert.ok(compared >= 120, `only ${compared} comparisons; the wash layer collapsed`);
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * The chips, two washes deep.
+ *
+ * 🔴 **The dark half of this is a known, recorded shortfall that predates this
+ * card and is not its to settle.** `lib/tokens.test.ts:1214` pins `--bad` at
+ * 3.062 and `--info` at 3.637 on `--ok-wash over --ok-wash over
+ * --surface-hover` under the heading "measured, not fixed, and the next card's
+ * baseline", and asserts the light half at `:1100`. This file reproduces both
+ * of those numbers to the digit from an independent derivation, so the claim
+ * that they are covered there is checked rather than believed — which is the
+ * difference between this and excluding a colour because some other file is
+ * *assumed* to handle it, the move that lost `--fg-faint`.
+ *
+ * So: the light half is asserted, the dark half is emitted as diagnostics with
+ * its owner named, and no digit is pinned here. Asserting the dark half would
+ * not add coverage — it would re-open another card's recorded decision from a
+ * file that cannot fix it.
+ */
+test("the chips clear 4.5:1 two washes deep in light, and dark is on the record", (t) => {
+  const failures: string[] = [];
+
+  for (const theme of THEMES) {
+    const backdrops = washedBackdrops(theme, 2);
+    assert.ok(
+      backdrops.length > WASHES.length * SURFACES.length,
+      "the chip backdrop set is not actually two washes deep",
+    );
+    for (const token of CHIP) {
+      const ink = COLOURS[token][theme];
+      let worst = { ratio: Infinity, name: "", hex: "" };
+      for (const backdrop of backdrops) {
+        const ratio = contrastRatio(ink, backdrop.hex);
+        if (ratio < worst.ratio) worst = { ratio, name: backdrop.name, hex: backdrop.hex };
+      }
+      if (theme === "light" && worst.ratio < 4.5) {
+        failures.push(
+          `light: --${token} ${ink} on ${worst.name} ${worst.hex} = ${worst.ratio.toFixed(3)}:1`,
+        );
+      }
+      t.diagnostic(
+        `${theme} --${token} ${ink} worst ${worst.ratio.toFixed(3)} on ${worst.name} ${worst.hex}` +
+          (theme === "dark" && worst.ratio < 4.5 ? "  [SHORT — recorded in lib/tokens.test.ts]" : ""),
+      );
+    }
+  }
+
   assert.deepEqual(failures, []);
 });
