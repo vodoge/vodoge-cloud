@@ -138,8 +138,55 @@
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
 }
 
-* {
+/*
+ * The reset that stands in for Tailwind preflight.
+ *
+ * `corePlugins.preflight` is off — see the note in `tailwind.config.ts` — so
+ * these four declarations are the whole of it, and the last three are not
+ * tidiness. Every claim below was measured in a browser against this build,
+ * not read off the markup.
+ *
+ * A Tailwind border-*width* utility draws nothing unless something has set a
+ * border style. The initial value is `none`, and a `none` border has no width
+ * whatever the width utility says. For as long as this block was box-sizing
+ * alone, `CARD.root` asked for a 1px outline and computed to 0px: cards on all
+ * fifteen pages had no border, and neither did `TABLE.row`, `CENTERED.card`,
+ * `SHELL.navGroup`, `SHELL.tenant`, `SHELL.header`, `STAT.root`,
+ * `CONFIRM.panel`, `SEGMENTED.root`, `TABLE.specRow` or either card header.
+ *
+ * The inverse is the more dangerous half. `BUTTON.base`, `FORM.input`,
+ * `FORM.select`, `FORM.textarea` and `TABLE.headerCell` looked right, and only
+ * because `@layer legacy` hands `button`, `input`, `select`, `textarea` and
+ * `th, td` a border shorthand *by element name*. That layer is deleted when the
+ * last page is migrated. Built with it emptied and measured: `th` fell to 0px,
+ * and `button` and `input` fell back to the user agent's 3D bevels in the
+ * colour the recipe asked for. With the declarations below, all five compute
+ * the same with the legacy layer and without it.
+ *
+ * The zero width is the second half of the pair and not optional: turning the
+ * style on turns it on for all four sides, and the initial per-side width is
+ * `medium` — 3px. Built without the zero and measured: a card header asking
+ * for one bottom rule drew 3px along its other three sides.
+ *
+ * The colour matches `borderColor.DEFAULT` in `tailwind.config.ts`, which is
+ * what Tailwind compiles its own preflight to on this config. Built both ways
+ * and compared element by element: with all four declarations every specimen
+ * computes exactly what the real preflight computes, so the day the legacy
+ * layer goes and preflight is switched on is a day nothing about borders
+ * changes. With only three, a bare width with no colour class shifts from the
+ * text colour to the line colour on that day instead.
+ *
+ * This block stays inside `@layer tokens`. A later layer wins whatever the
+ * specificity, so `@layer legacy` still outranks it for every element it names
+ * and the page that still renders from the old stylesheet is untouched.
+ */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: var(--line);
 }
 
 html,

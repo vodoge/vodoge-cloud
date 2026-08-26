@@ -581,14 +581,16 @@ export const CARD = {
   /**
    * The danger zone: a card holding controls that cannot be taken back.
    *
-   * 🔴 **A red border was the obvious answer and it would not have rendered.**
-   * `CARD.root` asks for `border border-line` and computes to `none 0px` on
-   * this build — preflight is off and the reset that stands in for it carries
-   * no `border-style`, which is the whole of `BORDER_WIDTH_WITHOUT_A_STYLE`.
-   * Adding `border-bad` to a card would have produced markup that reviews as
-   * a warning and paints nothing, which is the exact defect this card was sent
-   * to fix on `device-console.tsx:663`. So the zone is said with a wash and
-   * with text colour, both of which are properties this build really sets.
+   * 🔴 **A red outline was the obvious answer and, when this was written, it
+   * would not have rendered.** `CARD.root` asked for `border border-line` and
+   * computed to zero: preflight is off and the reset standing in for it carried
+   * no border style, so `border-bad` on a card would have produced markup that
+   * reviews as a warning and paints nothing — the exact defect that card was
+   * sent to fix on `device-console.tsx:663`. **That reason is gone.** The reset
+   * in `app/globals.css` now carries the style, and an outline here would draw.
+   *
+   * The wash stays anyway, because the second reason below always was the
+   * stronger one.
    *
    * It goes on the *header* rather than the whole card, because what is inside
    * is a row of buttons carrying their own red (`BUTTON.variant.risk`), and a
@@ -648,6 +650,14 @@ export const TABLE = {
    * The rule lives on the row rather than on every cell: with
    * `border-collapse`, a row border renders, and `last:border-0` on a row is
    * reachable with a plain variant where "every cell of the last row" is not.
+   *
+   * 🔴 **Until the reset in `app/globals.css` learned to carry a border style,
+   * this row drew nothing and the line an operator saw between rows came from
+   * `@layer legacy`'s `th, td` rule** — the stylesheet this refactor exists to
+   * delete. Both draw now, and `border-collapse` makes them share one pixel, so
+   * turning the row's on changed no row height on any of the fifteen pages
+   * (measured at 390px and 1100px). When the legacy layer goes, the cell's line
+   * goes with it and this one is what is left.
    */
   row: "border-b border-line last:border-0 hover:bg-surface-hover",
   headRow: "",
@@ -1083,13 +1093,17 @@ export const OUTPUT = {
  * the browser's own decimal markers and 40px indent are still live and the old
  * `.command-log` had to turn all three off too.
  *
- * 🔴 **No border on `entry`, and that is deliberate.** The rule it replaces was
- * `1px solid var(--line)`, and a Tailwind border-width utility here would
- * compute to `none 0px` on this build for exactly the reason
- * `BORDER_WIDTH_WITHOUT_A_STYLE` exists: the reset that stands in for preflight
- * carries no `border-style`. So an entry is separated from the card behind it
- * by a raised surface, which is a property this build really sets. Measured,
- * not assumed.
+ * 🔴 **No border on `entry`, and the reason has changed.** The rule it replaces
+ * was a 1px line, and when this was written a Tailwind border-width utility
+ * here computed to zero: preflight is off and the reset standing in for it
+ * carried no border style. **That is no longer true** — the reset in
+ * `app/globals.css` carries it now and a line here would draw.
+ *
+ * The raised surface stays. A log is a stack of dozens of these, and a stack of
+ * outlined boxes inside an outlined card is three nested rectangles deep; the
+ * surface says the same thing with one less line. The old reason is recorded
+ * because it is the reason the first version had no border, and a reader who
+ * finds only the new one will think the choice was always aesthetic.
  */
 export const LOG = {
   list: "m-0 flex list-none flex-col gap-s3 p-0",
@@ -1115,31 +1129,26 @@ export const LOG = {
  * and the legacy layer gives every bare `button` a 1px border on all four
  * sides.
  *
- * 🔴 `border-solid` on both, and it is not redundant. Measured, not read.
+ * 🔴 **`border-solid` and `border-0` here are history, and they are kept on
+ * purpose.** They were the fix for a real defect and they are now belt over
+ * braces: the reset in `app/globals.css` carries the style and the zero width
+ * for every element, so this strip would draw without them. They stay because
+ * removing them is a change to what the browser is told with nothing measured
+ * gained, and because they are what the day this was found looked like.
  *
- * Preflight is off, and the reset that stands in for it (`app/globals.css`)
- * is `* { box-sizing: border-box }` — it does **not** carry preflight's
- * `border-style: solid`. So a Tailwind border-*width* utility on an element
- * the legacy layer gives no `border:` shorthand to computes to **0px**:
- * `border-style` defaults to `none`, and a `none` border has no width whatever
- * the width utility says.
+ * What was found, at 390px, in a browser: `getComputedStyle` on the strip and
+ * on a tab both reported no border at all — **the rule under the tab strip and
+ * the accent underline that says which tab is selected were not being drawn.**
+ * The tab that renders as a `<button>` was fine and the one that renders as an
+ * `<a>` was not, because `@layer legacy` hands every bare `button` a border
+ * shorthand and hands `a` nothing. One recipe, two elements, and the defect was
+ * invisible in exactly the half that was tried first.
  *
- * At 390px, before this line, `getComputedStyle` on the strip and on a tab
- * both reported `none 0px`: **the rule under the tab strip and the accent
- * underline that says which tab is selected were not being drawn at all.** The
- * tab that renders as a `<button>` was fine and the one that renders as an
- * `<a>` was not, because `@layer legacy` gives every bare `button` a
- * `border: 1px solid transparent` and gives `a` nothing — so the defect was
- * invisible in exactly the half of the component that was tried first.
- *
- * 🔴 And `border-0` beside it, which is the other half preflight does. The
- * first version of this fix said only `border-solid`, and the measurement came
- * back with a **3px** rule along the top of the strip: the initial value of
- * `border-top-width` is `medium`, which is 3px, and it had been invisible only
- * because the style was `none`. Turning the style on turns all four sides on.
- * Preflight is `border-width: 0` *and* `border-style: solid` for that reason.
- *
- * Other recipes are in the same position; see `BORDER_WIDTH_WITHOUT_A_STYLE`.
+ * And the second half of the fix, which the first version missed: saying only
+ * that the border is solid turns all four sides on, and the initial per-side
+ * width is `medium` — 3px. The measurement came back with a 3px rule along the
+ * top of a strip that had asked for one along the bottom. A style and a zero
+ * width are a pair; the reset now states both, once, for everything.
  */
 export const TABS = {
   list: "flex flex-wrap items-center gap-x-s4 border-0 border-b border-solid border-line",

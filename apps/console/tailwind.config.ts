@@ -49,13 +49,15 @@ import {
  * `lib/tokens.test.ts` asserts these arrive as replacements rather than under
  * `extend`, because putting one under `extend` restores the whole default.
  *
- * **Preflight is off.** Fourteen pages still render from the legacy stylesheet
- * in `@layer legacy`, and that stylesheet is styling bare `button`, `input`,
- * `table` and `label` elements. Preflight is unlayered, so switching it on
- * would outrank all of it and restyle fourteen pages this refactor has not
- * reached yet. `globals.css` carries the reset those pages actually depend on.
- * Turning preflight on belongs with the deletion of the legacy layer, not
- * before it.
+ * **Preflight is off.** The legacy stylesheet in `@layer legacy` still styles
+ * bare `button`, `input`, `table` and `label` elements, and preflight is
+ * unlayered, so switching it on would outrank all of it. `globals.css` carries
+ * the reset instead, and that reset is now all four of preflight's opening
+ * declarations rather than `box-sizing` alone — built both ways and compared in
+ * a browser, every element computes the same border under it as under the real
+ * preflight, which is what makes turning preflight on a no-op for borders on
+ * the day the legacy layer is deleted. Turning it on still belongs with that
+ * deletion: the rest of preflight is a great deal more than four declarations.
  *
  * There is no `darkMode` either. Colours are custom properties that already
  * flip with `:root[data-theme="light"]`, so a `dark:` variant would be a
@@ -109,6 +111,14 @@ export default {
       // exist (`gray.200`, `blue.500`). They fall back to `currentColor`
       // rather than failing, which would make a bare `border` mean something
       // different from every `border-line` next to it.
+      //
+      // 🔴 `borderColor.DEFAULT` did nothing at all until the reset in
+      // `app/globals.css` started writing it out. It is read by preflight and
+      // by nothing else: with preflight off there is no `border-DEFAULT`
+      // utility to carry it, so a bare border really did fall to the text
+      // colour, exactly what this line says it exists to prevent. The reset
+      // states the same value, and `lib/tokens.test.ts` asserts the two agree
+      // so switching preflight on cannot recolour anything.
       borderColor: { DEFAULT: "var(--line)" },
       ringColor: { DEFAULT: "var(--accent)" },
       ringOffsetColor: { DEFAULT: "var(--bg)" },

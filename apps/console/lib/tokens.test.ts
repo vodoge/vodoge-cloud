@@ -4045,64 +4045,68 @@ test("a column with a control in it never drops off the phone", () => {
 });
 
 /**
+ * The reset that stands in for Tailwind's preflight, read out of the sheet.
+ *
+ * Returned as a selector *and* a declaration map, because both halves have been
+ * wrong: for the whole of this refactor the block said `box-sizing` and nothing
+ * else, and it selected `*` without the two pseudo-elements preflight also
+ * covers.
+ */
+function preflightStandIn(): { selector: string; declarations: Record<string, string> } {
+  const css = stripComments(globalsCss);
+  const at = css.indexOf("box-sizing: border-box");
+  assert.notEqual(at, -1, "globals.css no longer carries a box-sizing reset at all");
+  const open = css.lastIndexOf("{", at);
+  const close = css.indexOf("}", at);
+  const previous = Math.max(css.lastIndexOf("}", open), css.lastIndexOf("{", open - 1));
+  const declarations: Record<string, string> = {};
+  for (const one of css.slice(open + 1, close).split(";")) {
+    const colon = one.indexOf(":");
+    if (colon === -1) continue;
+    declarations[one.slice(0, colon).trim()] = one.slice(colon + 1).trim();
+  }
+  return { selector: css.slice(previous + 1, open).replace(/\s+/g, " ").trim(), declarations };
+}
+
+/**
  * Recipes that ask for a border width and never say what kind of border.
  *
- * 🔴 **Preflight is off, and the reset that stands in for it does not carry
- * preflight's `border-style: solid`.** `app/globals.css` resets `box-sizing`
- * and nothing else. So a Tailwind border-*width* utility computes to **0px**
- * unless something else has set a style: `border-style` defaults to `none`, and
+ * **Empty, and it is the reset in `app/globals.css` that keeps it empty.** That
+ * is the whole of this check, so the reset is asserted here rather than
+ * assumed. Preflight is off; a Tailwind border-*width* utility draws nothing
+ * unless something has set a style, because `border-style` starts at `none` and
  * a `none` border has no width whatever the width utility says.
  *
- * Measured at 390x844 against the real build, not read:
+ * For most of this refactor the stand-in reset was `box-sizing` alone, and
+ * measured at 390x844 against the real build:
  *
- * | recipe | element | asked for | computed |
+ * | recipe | element | asked for | computed, then |
  * |---|---|---|---|
- * | `TABS.list` | `div` | `border-b border-line` | `none 0px` — **fixed here** |
- * | `TABS.tab` | `a` | `border-b-2` | `none 0px` — **fixed here** |
- * | `CARD.root` | `section` | `border border-line` | `none 0px` |
- * | `TABLE.row` | `tr` | `border-b border-line` | `none 0px` |
- * | `BUTTON.base` | `button` | `border` | `solid 1px` — the legacy layer |
- * | `FORM.input` | `input` | `border` | `solid 1px` — the legacy layer |
- * | `TABLE.headerCell` | `th` | `border-b` | `solid 1px` — the legacy layer |
+ * | `CARD.root` | `section` | a 1px outline | 0px — no card had a border |
+ * | `TABLE.row` | `tr` | a bottom rule | 0px |
+ * | `CENTERED.card` / `SHELL.navGroup` / `SHELL.tenant` | | | 0px |
+ * | `BUTTON.base` | `button` | a 1px outline | 1px — from `@layer legacy` |
+ * | `FORM.input` | `input` | a 1px outline | 1px — from `@layer legacy` |
+ * | `TABLE.headerCell` | `th` | a bottom rule | 1px — from `@layer legacy` |
  *
- * The ones that work are the ones the legacy layer hands a `border:` shorthand
- * to by element name. **That is the trap**: the tab that renders as a
- * `<button>` drew correctly and the one that renders as an `<a>` did not, from
- * one recipe — and it means the whole class of defect disappears on the day
- * `@layer legacy` is deleted for the recipes that look fine today, and stays
- * for the ones that do not.
+ * The second half is the dangerous one and it is why this check is about the
+ * reset rather than about a list of recipes: those three looked right only
+ * because the legacy layer hands `button`, `input` and `th, td` a border
+ * shorthand **by element name**, and that layer is deleted when the last page
+ * is migrated. Built with it emptied and measured: `th` fell to 0px, and
+ * `button` and `input` fell back to the user agent's 3D bevels in the colour
+ * the recipe asked for. One recipe, two elements is how T010 first tripped over
+ * it — `TABS.tab` renders `<a>` or `<button>` and only the `<button>` drew.
  *
- * 🔴 **`CARD.root` and `TABLE.row` are not fixed here and this list is how that
- * is reported rather than forgotten.** They are drawn on `/`, `/login`,
- * `/audit`, the shell, and the ten pages that still import the compatibility
- * layer. Giving them a border style makes a border appear on fifteen pages that
- * do not have one today — a visible change to already-migrated pages, which is
- * a call for the operator and the PM, not for a card migrating one page. The
- * complete fix is one declaration in the reset in `app/globals.css`, which no
- * page card may edit.
- *
- * The list may only shrink: a new recipe that asks for a width without a style
- * fails immediately.
+ * The colour is checked against `borderColor.DEFAULT` in `tailwind.config.ts`
+ * because that is what Tailwind compiles its own preflight to on this config.
+ * Built both ways and compared element by element: with all four declarations
+ * every specimen computes exactly what the real preflight computes, so the day
+ * T018 deletes the legacy layer and switches preflight on is a day nothing
+ * about borders changes. Drop the colour and a bare width with no colour class
+ * moves from the text colour to the line colour on that day instead.
  */
-const BORDER_WIDTH_WITHOUT_A_STYLE = [
-  "BUTTON.base",
-  "CARD.disclosureSummary",
-  "CARD.header",
-  "CARD.root",
-  "CENTERED.card",
-  "CONFIRM.panel",
-  "FORM.input",
-  "FORM.select",
-  "FORM.textarea",
-  "SEGMENTED.root",
-  "SHELL.header",
-  "SHELL.navGroup",
-  "SHELL.tenant",
-  "STAT.root",
-  "TABLE.headerCell",
-  "TABLE.row",
-  "TABLE.specRow",
-];
+const BORDER_WIDTH_WITHOUT_A_STYLE: string[] = [];
 
 test("a recipe that asks for a border width says what kind of border it is", () => {
   const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
@@ -4128,21 +4132,87 @@ test("a recipe that asks for a border width says what kind of border it is", () 
     found.length > 0,
     "the border-width matcher found nothing at all; this check is measuring nothing",
   );
-  const unlisted = found.filter((path) => !BORDER_WIDTH_WITHOUT_A_STYLE.includes(path)).sort();
-  assert.deepEqual(
-    unlisted,
-    [],
-    "this recipe's border computes to 0px: preflight is off and nothing sets border-style",
+  // And it has to be finding recipes that say nothing about style, or the
+  // assertions below are about a case that no longer occurs in this file.
+  assert.ok(
+    found.length > 10,
+    "almost every recipe states a width without a style; if that stopped being " +
+      "true the reset below stopped being what makes them draw",
   );
-  const fixed = BORDER_WIDTH_WITHOUT_A_STYLE.filter((path) => !found.includes(path));
-  assert.deepEqual(fixed, [], "one of these was fixed; take it off the list so it cannot come back");
 
-  // 🔴 The other half, and the reason preflight is two declarations rather than
-  // one. Switching `border-style` on switches it on for all four sides, and the
-  // initial `border-*-width` is `medium` — 3px. A recipe that says
-  // `border-solid` and states a width for one side gets a 3px rule on the other
-  // three. Measured: the first `border-solid` on the tab strip put a 3px line
-  // along its top. So every side has to be given a width.
+  const reset = preflightStandIn();
+  // Preflight covers the two pseudo-elements as well, and this stand-in has to
+  // cover what it covers or switching over is not a no-op.
+  for (const part of ["*", "*::before", "*::after"]) {
+    assert.ok(
+      reset.selector.split(",").some((one) => one.trim() === part),
+      `the stand-in reset does not cover ${part}, and preflight does`,
+    );
+  }
+  assert.equal(reset.declarations["box-sizing"], "border-box");
+  assert.equal(
+    reset.declarations["border-style"],
+    "solid",
+    "without this every border width in every recipe above computes to 0px",
+  );
+  assert.equal(
+    reset.declarations["border-width"],
+    "0",
+    "turning the style on turns all four sides on, and the initial width is `medium` — 3px",
+  );
+  const theme = tailwindConfig.theme as Record<string, unknown>;
+  const extend = (theme.extend ?? {}) as Record<string, unknown>;
+  const configured = (extend.borderColor as Record<string, unknown> | undefined)?.DEFAULT;
+  assert.equal(
+    reset.declarations["border-color"],
+    configured,
+    "the reset and borderColor.DEFAULT disagree, so preflight would recolour bare borders",
+  );
+
+  // In `@layer tokens`, never in `@layer legacy` and never unlayered. A later
+  // layer wins whatever the specificity: the reset has to stay below the legacy
+  // stylesheet so the page still rendering from it is untouched, and the whole
+  // of `@tailwind utilities` is unlayered and outranks both.
+  const css = stripComments(globalsCss);
+  const resetAt = css.indexOf("box-sizing: border-box");
+  assert.ok(
+    css.lastIndexOf("@layer tokens {", resetAt) !== -1,
+    "the reset is no longer inside @layer tokens",
+  );
+  assert.equal(
+    css.lastIndexOf("@layer legacy {", resetAt),
+    -1,
+    "the reset moved into @layer legacy, which is the layer T018 deletes",
+  );
+
+  assert.deepEqual(
+    BORDER_WIDTH_WITHOUT_A_STYLE,
+    [],
+    "this list is closed at empty: the reset is what supplies the style now",
+  );
+
+});
+
+/**
+ * A recipe that says `border-solid` states a width for all four sides.
+ *
+ * 🔴 This is the other half of the pair, and the reason preflight is two
+ * declarations rather than one. Turning `border-style` on turns it on for all
+ * four sides, and the initial `border-*-width` is `medium` — 3px. Measured on
+ * the tab strip: the first version of that fix said `border-solid` alone and
+ * put a 3px rule along the top of a strip that had asked for one along the
+ * bottom.
+ *
+ * The reset now sets the width to zero globally, so a recipe cannot reach that
+ * state through the stand-in. It can still reach it two other ways, which is
+ * why this stays: a `border-solid` written into a `style=` attribute or a raw
+ * `className`, and the day preflight is switched on with the reset removed and
+ * one of them typed by hand. The check is cheap and the failure it names is
+ * three pixels of rule down the wrong edge of a card.
+ */
+test("a recipe that says border-solid states a width for all four sides", () => {
+  const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
+  const table = TOKENS as unknown as Record<string, unknown>;
   const SIDES = ["top", "right", "bottom", "left"];
   const covers: Record<string, string[]> = {
     "": SIDES,
@@ -4154,10 +4224,12 @@ test("a recipe that asks for a border width says what kind of border it is", () 
     l: ["left"],
   };
   const partial: string[] = [];
+  let seen = 0;
   const walkStyles = (value: unknown, path: string) => {
     if (typeof value === "string") {
       const words = value.split(/\s+/).filter(Boolean);
       if (!words.includes("border-solid")) return;
+      seen += 1;
       const given = new Set<string>();
       for (const word of words) {
         const match = width.exec(word);
@@ -4170,10 +4242,103 @@ test("a recipe that asks for a border width says what kind of border it is", () 
     }
   };
   for (const name of recipeNames()) walkStyles(table[name], name);
+  // Derived, not remembered: if nothing says `border-solid` any more, the
+  // assertion under this is vacuous and has to say so.
+  assert.ok(
+    seen > 0,
+    "no recipe says border-solid at all; this check is measuring nothing",
+  );
   assert.deepEqual(
     partial,
     [],
     "a side with no width stated renders at the initial `medium`, which is 3px",
+  );
+});
+
+/**
+ * Every border the legacy layer draws by element name is also asked for by the
+ * recipe that draws that element.
+ *
+ * 🔴 **This is the precondition for T018.** `@layer legacy` styles `button`,
+ * `input`, `select`, `textarea` and `th, td` by element name, so a recipe can
+ * look correct while the thing painting it is the stylesheet the refactor is
+ * removing. Measured with the layer emptied, before the reset landed: `th` fell
+ * to `none 0px`, and `button` and `input` kept the width and colour their
+ * recipes asked for but fell back to the user agent's 3D bevels. The reset
+ * fixes the style; this fixes the ownership.
+ *
+ * The left-hand side is derived from the stylesheet, so a bare-element border
+ * added to the legacy layer tomorrow fails here rather than being discovered on
+ * the day the layer is deleted. A declaration that *removes* a border does not
+ * count — `tbody tr:last-child td { border-bottom: none }` is the legacy way of
+ * saying `last:border-0`, and the recipes say it themselves.
+ */
+const LEGACY_BORDERED_ELEMENTS: Record<string, string> = {
+  button: "BUTTON.base",
+  input: "FORM.input",
+  select: "FORM.select",
+  textarea: "FORM.textarea",
+  th: "TABLE.headerCell",
+  // The cell rule is what drew the line between rows for this console's whole
+  // life; `TABLE.row` is where it lives now. `border-collapse` makes the two
+  // share one pixel, which is why turning the row's border on changed no row
+  // height on any of the fifteen pages.
+  td: "TABLE.row",
+};
+
+test("no recipe's border is being drawn by the layer T018 deletes", () => {
+  const BORDER = /^border(-(top|right|bottom|left))?(-(width|style|color))?$/;
+  const drawn = new Set<string>();
+  for (const rule of legacyLayer().matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const head = rule[1];
+    if (head.includes("@")) continue;
+    const gives = rule[2].split(";").some((one) => {
+      const colon = one.indexOf(":");
+      if (colon === -1) return false;
+      const name = one.slice(0, colon).trim();
+      const value = one.slice(colon + 1).trim();
+      return BORDER.test(name) && value !== "none" && value !== "0" && !/^0\b/.test(value);
+    });
+    if (!gives) continue;
+    for (const selector of head.split(",")) {
+      const trimmed = selector.trim();
+      // A compound carrying a class, an id or an attribute is not styling the
+      // bare element, so deleting the layer takes the class with it.
+      if (!trimmed || /[.#[]/.test(trimmed)) continue;
+      const last = trimmed.split(/[\s>+~]+/).pop() ?? "";
+      const name = /^([a-z][a-z0-9]*)/.exec(last)?.[1];
+      if (name) drawn.add(name);
+    }
+  }
+
+  // Derived, not remembered.
+  assert.ok(drawn.size > 0, "the legacy border extractor found nothing; this check is vacuous");
+  assert.deepEqual(
+    [...drawn].sort(),
+    Object.keys(LEGACY_BORDERED_ELEMENTS).sort(),
+    "the legacy layer gives a border to an element nobody has claimed a recipe for",
+  );
+
+  const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
+  const table = TOKENS as unknown as Record<string, unknown>;
+  const orphans: string[] = [];
+  for (const [element, path] of Object.entries(LEGACY_BORDERED_ELEMENTS)) {
+    const recipe = path.split(".").reduce<unknown>((value, key) => {
+      return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+    }, table);
+    if (typeof recipe !== "string") {
+      orphans.push(`${element}: ${path} is not a recipe string`);
+      continue;
+    }
+    const words = recipe.split(/\s+/).filter(Boolean);
+    if (!words.some((word) => width.test(word) && !/-0$/.test(word))) {
+      orphans.push(`${element}: ${path} asks for no border of its own`);
+    }
+  }
+  assert.deepEqual(
+    orphans,
+    [],
+    "this element's border comes from @layer legacy alone and goes to zero when it does",
   );
 });
 
@@ -4571,8 +4736,25 @@ test("a migrated file does not use a class that only works inside a grid", () =>
       if (names.has(used)) offenders.push(`${relative}: ${used}`);
     }
   }
+  // 🔴 And the recipes, which are the other place a class name comes from and
+  // were not covered. `MIGRATED_SOURCES` catches a grid-only class typed into a
+  // `.tsx`; a recipe in `lib/tokens.ts` reaches every file that uses it, and
+  // `classListsIn` never looks there. The same ratchet, one layer deeper.
+  const table = TOKENS as unknown as Record<string, unknown>;
+  const inRecipes: string[] = [];
+  const walk = (value: unknown, path: string) => {
+    if (typeof value === "string") {
+      for (const used of value.split(/\s+/).filter(Boolean)) {
+        if (names.has(used.replace(/^[a-z-]+:/, ""))) inRecipes.push(`${path}: ${used}`);
+      }
+    } else if (value && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) walk(inner, `${path}.${key}`);
+    }
+  };
+  for (const name of recipeNames()) walk(table[name], name);
+
   assert.deepEqual(
-    offenders,
+    [...offenders, ...inRecipes],
     [],
     "this rule exists and does nothing: the element carrying it is not in a grid",
   );
@@ -5142,14 +5324,20 @@ test("nothing that was guarded before this card is unguarded after it", () => {
 });
 
 /**
- * The danger zone is drawn with properties this build actually sets.
+ * The danger zone is drawn with a wash and a red heading, not with a border.
  *
- * 🔴 A red border was the obvious answer and it would not have rendered:
- * `CARD.root` asks for a border width and computes to `none 0px` here, which
- * is the whole of `BORDER_WIDTH_WITHOUT_A_STYLE`. Shipping markup that reviews
- * as a warning and paints nothing is the exact defect this card was sent to fix
- * on the USB-net button, so the check is that the zone uses no border at all
- * and that what it does use generates CSS.
+ * 🔴 When this was written a red border would not have rendered at all —
+ * `CARD.root` asked for a border width and computed to `none 0px`, and shipping
+ * markup that reviews as a warning and paints nothing was the exact defect the
+ * card was sent to fix on the USB-net button. **That reason has since been
+ * removed**: the reset in `app/globals.css` now carries the style, and a border
+ * here would draw.
+ *
+ * The rule stays because the second reason always was the stronger one. What is
+ * inside this zone is a row of buttons carrying their own red, and a red field
+ * behind red outlines reads as one block of noise. So the check is unchanged
+ * and its justification is not: no border here, and everything it does use has
+ * to generate CSS.
  */
 test("the danger zone says so without a border, and the buttons in it are red", async () => {
   const classes = [CARD.dangerHeader, CARD.dangerTitle, LOG.entry]
@@ -5164,7 +5352,7 @@ test("the danger zone says so without a border, and the buttons in it are red", 
   );
   assert.ok(
     !classes.some((name) => /^-?border(-|$)/.test(name)),
-    "a border here computes to 0px on this build: BORDER_WIDTH_WITHOUT_A_STYLE",
+    "a red outline behind a row of red buttons reads as one block of noise",
   );
 
   const zone = bodyOfFunction(readSource(CONSOLE_SOURCE), "DangerZone");
