@@ -62,22 +62,48 @@ export const COLOR_TOKENS = {
   "fg-accent": { dark: "#4ade9b", light: "#0a704c" },
 
   // One accent. A second colour competing for attention is how dashboards
-  // turn into noise. The four below are the accent as a surface: a fill, its
-  // hover, the ink painted on that fill, and a tint to sit behind something.
-  // None of them is legible as text on a light background; the entry above is.
+  // turn into noise. The five below are the accent as a surface: a fill, its
+  // hover, the ink painted on that fill, an edge, and a tint to sit behind
+  // something. None of them is legible as text on a light background; the
+  // entry above is.
   accent: { dark: "#4ade9b", light: "#10b47a" },
   "accent-strong": { dark: "#22c47f", light: "#0fa36f" },
   "accent-ink": { dark: "#06251a", light: "#06251a" },
+  // The accent when it has to be *seen as a line* rather than filled or read:
+  // the focus outline, the current tab's rule, an input's focused edge. Its
+  // bar is the 3:1 that WCAG 1.4.11 sets for non-text, which the fill above
+  // misses in the light theme by a wide margin, and it is the lightest value
+  // on the brand hue that clears that bar by half a point. Not the readable
+  // green from the text family: an outline carries no ink and does not need
+  // to be a text tier, and borrowing one role for another is what these three
+  // separate entries exist to stop. In the dark theme it equals the fill, as
+  // the readable green does, so the dark theme is unchanged.
+  "accent-edge": { dark: "#4ade9b", light: "#0c855a" },
   "accent-wash": { dark: "rgba(74, 222, 155, 0.12)", light: "rgba(16, 180, 122, 0.1)" },
 
   // Status. These carry meaning, so they are never used decoratively.
   // The green one is only ever read, never filled — what sits behind it is the
   // separate wash below — so its light value is the readable green and not the
   // brand one. Its dark value is unchanged, where the two greens coincide.
+  //
+  // The other three moved for the same reason and by the same rule: each is
+  // the lightest value on its own exact hue and saturation whose worst real
+  // backdrop clears 4.5:1 by half a point. Their worst backdrop is their own
+  // wash on a hovered row, not the white page — the mistake T046 made about
+  // the green and T049 caught. Only the light values moved; the dark ones are
+  // untouched, and the washes below are literal and do not follow, so the pale
+  // pills behind these words look exactly as they did.
   ok: { dark: "#4ade9b", light: "#0a704c" },
-  warn: { dark: "#f0b429", light: "#b8860b" },
-  bad: { dark: "#f2686d", light: "#d64550" },
-  info: { dark: "#63a4ff", light: "#2b6fd4" },
+  warn: { dark: "#f0b429", light: "#745407" },
+  bad: { dark: "#f2686d", light: "#a7252f" },
+  info: { dark: "#63a4ff", light: "#2156a5" },
+  // The ink for the one solid button filled with the status red, and the only
+  // reason it is themed when the accent's ink is not: the accent is a light
+  // green in both themes, so one dark ink serves both, while this red is deep
+  // in the light theme and pale in the dark one. The ink is the opposite pole
+  // of the fill it sits on, in each theme, which is the rule the accent's ink
+  // already follows — it just never had to prove it.
+  "bad-ink": { dark: "#52070a", light: "#ffffff" },
   "ok-wash": { dark: "rgba(74, 222, 155, 0.14)", light: "rgba(16, 180, 122, 0.1)" },
   "warn-wash": { dark: "rgba(240, 180, 41, 0.14)", light: "rgba(184, 134, 11, 0.12)" },
   "bad-wash": { dark: "rgba(242, 104, 109, 0.14)", light: "rgba(214, 69, 80, 0.1)" },
@@ -813,11 +839,11 @@ export const TABLE = {
 } as const;
 
 export const BUTTON = {
-  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
+  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-edge focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
   variant: {
     primary: "bg-accent text-accent-ink hover:bg-accent-strong",
     ghost:
-      "border-line-strong bg-transparent text-fg-muted hover:border-accent hover:bg-surface-hover hover:text-fg",
+      "border-line-strong bg-transparent text-fg-muted hover:border-accent-edge hover:bg-surface-hover hover:text-fg",
     subtle: "bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg",
     /**
      * Colour is a hint, never the safeguard. The confirmation is. This fleet
@@ -826,8 +852,16 @@ export const BUTTON = {
      * Filled, and therefore for the one button that carries out the destructive
      * act — the confirm button in the dialog. A row of eight filled red buttons
      * is a row in which nothing stands out.
+     *
+     * 🔴 **This was the one solid button in the console whose label was not
+     * chosen against the fill under it.** The label was plain white on the
+     * status red: 3.010:1 in the dark theme and 4.351:1 in the light one, both
+     * under the 4.5 its own type asks for, and the dark half is the worse
+     * failure by a distance. T046 settled the direction for the green button
+     * — keep the fill, choose an ink for it — and this is the same repair on
+     * the other filled button. 5.419:1 in dark, 7.122:1 in light.
      */
-    danger: "bg-bad text-white hover:opacity-90",
+    danger: "bg-bad text-bad-ink hover:opacity-90",
     /**
      * The outlined red the legacy `.risk` class meant, standing on its own.
      *
@@ -859,12 +893,43 @@ export const BUTTON = {
 export const BADGE = {
   base: "inline-flex items-center gap-s1 whitespace-nowrap rounded-pill px-s2 py-s1 text-xs font-semibold",
   dot: "size-s1 shrink-0 rounded-full bg-current",
+  /**
+   * Four tints and a grey. The four are translucent washes of their own hue,
+   * so whatever carries them they are always a shade of that hue over it and
+   * the pill keeps its shape.
+   *
+   * 🔴 **The grey one used to be a surface token, and that is why it could
+   * disappear.** It was the same token a table row takes on hover, so on a
+   * hovered row the pill's fill *was* the row's fill: not low contrast, ratio
+   * exactly 1.000, no pill left at all. Two live sites, both with the dot
+   * suppressed so the fill was the whole of the shape —
+   * `app/audit/page.tsx` renders one on every row of the log, and
+   * `app/devices/page.tsx` renders one for the resolved transport.
+   *
+   * The repair is the category and not the symptom. A line colour is never
+   * painted as a surface anywhere in this console — there is no rule that
+   * paints one, and the test below derives that rather than trusting this
+   * sentence — so a pill filled with one cannot collide with a surface by
+   * construction, today or after the next page is written. Measured against
+   * all four surfaces it is 1.342 in light and 1.383 in dark, which is at or
+   * above every one of the four tinted tones on the same hovered row
+   * (1.091–1.135 and 1.211–1.352). A border would have hidden the collision
+   * instead of removing it, and cost two pixels on every badge in the console
+   * to keep the five tones the same size.
+   *
+   * The word on it moves up to the plain text tier at the same time, and that
+   * is a repair too rather than a side effect: on the old fill it was the
+   * faintest tier at 2.688:1 in light, and what these two badges carry is the
+   * cell's own value — the action that was logged, the transport that was
+   * resolved — which is the one thing in the row a reader came for. An
+   * unbadged cell would have rendered it at this tier already. Now 10.895:1.
+   */
   tone: {
     ok: "bg-ok-wash text-ok",
     warn: "bg-warn-wash text-warn",
     bad: "bg-bad-wash text-bad",
     info: "bg-info-wash text-info",
-    neutral: "bg-surface-hover text-fg-faint",
+    neutral: "bg-line-strong text-fg",
   },
 } as const;
 
@@ -1011,7 +1076,7 @@ export const FORM = {
   root: "flex flex-col gap-s3",
   label: "flex flex-col gap-s1 text-sm font-medium text-fg-muted",
   input:
-    "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
+    "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent-edge disabled:opacity-50",
   /**
    * The same box as `input`, minus the placeholder a `select` cannot have.
    * The native arrow is left alone: removing it means drawing and positioning
@@ -1019,7 +1084,7 @@ export const FORM = {
    * is the kind of polish that costs an operator a tap.
    */
   select:
-    "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-accent disabled:opacity-50",
+    "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-accent-edge disabled:opacity-50",
   /**
    * A `select` inside a table cell rather than inside a field.
    *
@@ -1039,7 +1104,7 @@ export const FORM = {
    * change of type scale; a `min-h-*` here would not.
    */
   textarea:
-    "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent disabled:opacity-50",
+    "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent-edge disabled:opacity-50",
   error: "m-0 text-sm text-bad",
   /** Not an error. `.hint` in the old stylesheet: a note under a control. */
   hint: "m-0 text-sm text-fg-muted",
@@ -1185,7 +1250,7 @@ export const TABS = {
   list: "flex flex-wrap items-center gap-x-s4 border-0 border-b border-solid border-line",
   tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
   /** The underline, not a fill: a filled tab competes with the primary button. */
-  tabCurrent: "border-accent text-fg",
+  tabCurrent: "border-accent-edge text-fg",
   panel: "pt-s4",
 } as const;
 
@@ -1434,11 +1499,29 @@ export const JOURNAL = {
 /**
  * A setting with two or three states, as one control rather than a row of
  * competing buttons. Only the selected option is filled.
+ *
+ * 🔴 **Full touch height, and the reason is consistency rather than a
+ * standard.** This console defines its own token for anything a finger has to
+ * hit — 44px, the AAA figure — and measured on the signed-out pages the two
+ * language options came out 48×32 and 62.9×32. That clears the AA floor of
+ * 24×24 and misses the console's own token by twelve pixels.
+ *
+ * Three recipes in this file sat below that token. The other two say in
+ * writing why: both live in a dense table row and are sized to the cells
+ * around them, and the compact select's note argues the case explicitly. This
+ * one carried no such note, and it is not in a table — it sits alone in a page
+ * header with room above and below it, which is the one place the argument for
+ * shrinking a control does not apply. It was an opt-out nobody had made.
+ *
+ * Height only: nothing here changes width, so the header's wrapping and the
+ * 390px column are untouched. Both consumers are outside a table row —
+ * `components/locale-switch.tsx` in the header, and the journal's kind filter
+ * above its table rather than inside it.
  */
 export const SEGMENTED = {
   root: "inline-flex items-center gap-px rounded border border-line bg-surface-hover p-px",
   option:
-    "inline-flex min-h-s6 cursor-pointer items-center rounded border-0 bg-transparent px-s3 text-xs font-semibold text-fg-muted transition-colors hover:text-fg",
+    "inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-s3 text-xs font-semibold text-fg-muted transition-colors hover:text-fg",
   optionSelected: "bg-surface text-fg shadow",
 } as const;
 
