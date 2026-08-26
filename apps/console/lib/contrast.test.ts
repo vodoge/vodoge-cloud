@@ -51,16 +51,22 @@ import * as TOKENS from "./tokens.ts";
  *    repository. A guard that cannot be cheaply falsified does not get
  *    falsified.
  *
- * **What this file does not cover, said out loud rather than left implied.**
- * The backdrops swept here are the four opaque surfaces. Type also lands on a
- * translucent wash over one of those — `--ok-wash` behind a delivery badge,
- * `--bad-wash` behind a failed row — and `lib/tokens.test.ts` composites those
- * for the greens and the status tones. The neutral tiers are not swept over
- * washes here. On the palette current as this is written that would be 41
- * failing cells out of 160 (forty of them `--fg-faint`, one `--fg-muted` at
- * 4.482, worst 2.366). Promoting it into an assertion is a scope decision
- * rather than a gap nobody noticed, and it is written up in
- * `docs/goals/vodoge-theme-black/notes/T003-contrast-sweep.md`.
+ * **The washes are covered too, and that is what T011 added.** Type does not
+ * only land on an opaque surface. It lands on a translucent wash over one —
+ * `--ok-wash` behind a delivery badge, `--accent-wash` behind an outbound
+ * message — and on a wash over a wash, because a badge goes inside a bubble.
+ * T003 measured that layer and deliberately did not assert it, because the
+ * palette it would have judged was already being replaced. The sweeps at the
+ * bottom of this file are that assertion, and their backdrop sets are derived
+ * the same way everything else here is.
+ *
+ * **How deep depends on the colour, and that too is derived rather than
+ * chosen.** A colour a recipe paints *on a wash of its own* is chip text, and a
+ * chip can be nested inside another chip, so chips are swept two washes deep.
+ * Everything else only ever inherits a wash from an ancestor and is swept one
+ * deep. The reasoning, and the single sentence that voids it, are written at
+ * the sweep itself rather than here, because that is where somebody about to
+ * trust the green will be looking.
  *
  * ⚠️ This file is deliberately outside `tailwind.config.ts`'s `content`, which
  * names `./app/**`, `./components/**` and reaches `lib/` only through the one
@@ -190,12 +196,13 @@ const TEXT: readonly string[] = [
 ].sort();
 
 /**
- * 🔴 **Not de-duplicated by value, on purpose.** In the light theme `--surface`
- * and `--surface-raised` are both `#ffffff` today, so two of these columns
- * carry identical numbers. Collapsing them would tidy the output and destroy
- * the signal: a four-step surface ladder that has flattened to three distinct
- * values is itself a defect, and a sweep that silently merged the duplicates
- * would be the last place it could ever be seen.
+ * 🔴 **Not de-duplicated by value, on purpose.** When this was written the
+ * light theme ran `--surface` and `--surface-raised` at the same `#ffffff`, so
+ * two of these columns carried identical numbers — a four-step ladder
+ * flattened to three distinct values, which is a defect in its own right.
+ * T001 has since given all four distinct values in both themes, so the
+ * duplication is gone; the rule stays because collapsing equal columns is what
+ * would have hidden it, and the next flattening is the one nobody has seen yet.
  */
 const SURFACES: readonly string[] = NAMES.filter((name) => roleOf(name) === "surface");
 
@@ -328,5 +335,377 @@ test("every colour used as type clears 4.5:1 on every surface, in both themes", 
   // a list that emptied itself cannot pass by measuring nothing.
   assert.equal(compared, TEXT.length * SURFACES.length * THEMES.length);
   assert.ok(compared >= 48, `only ${compared} comparisons; the sweep collapsed`);
+  assert.deepEqual(failures, []);
+});
+
+/* ── The wash layer ──────────────────────────────────────────────────── */
+
+/**
+ * Compositing a translucent wash over an opaque backdrop, the way a browser
+ * does: `alpha * front + (1 - alpha) * back`, per channel, in sRGB.
+ *
+ * This is a second copy of the helper in `lib/tokens.test.ts` for the same
+ * reason `contrastRatio` above is: importing a test module runs its tests. A
+ * copy that is not checked is a fork waiting to disagree, so the control under
+ * it is not decoration — and the two identities it pins are fixed by the
+ * arithmetic rather than by any palette, so they cannot go stale when a colour
+ * moves.
+ */
+function over(wash: string, backdrop: string): string {
+  const parsed = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(wash);
+  assert.notEqual(parsed, null, `not an rgba() wash: ${wash}`);
+  const alpha = Number(parsed![4]);
+  const front = [1, 2, 3].map((at) => Number(parsed![at]));
+  const base = [1, 3, 5].map((at) => parseInt(backdrop.slice(at, at + 2), 16));
+  return `#${front
+    .map((c, i) => Math.round(alpha * c + (1 - alpha) * base[i]))
+    .map((c) => c.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+/**
+ * The negative control on the compositor, in the same shape as the one on
+ * `contrastRatio`. A version of `over` that ignored its alpha and returned the
+ * backdrop would make every cell below identical to a cell already swept, and
+ * the wash layer would silently measure nothing at all — the vacuous pass this
+ * repository has shipped twice under a different mechanism.
+ *
+ * All three are fixed by the definition of alpha compositing and by nothing
+ * else: at alpha 0 the wash is absent, at alpha 1 it is opaque and replaces the
+ * backdrop entirely, and a half-strength white over black is the midpoint.
+ */
+test("the compositor is alpha compositing and not a passthrough", () => {
+  assert.equal(over("rgba(255, 255, 255, 0)", "#123456"), "#123456");
+  assert.equal(over("rgba(18, 52, 86, 1)", "#ffffff"), "#123456");
+  assert.equal(over("rgba(255, 255, 255, 0.5)", "#000000"), "#808080");
+});
+
+/**
+ * The washes, derived twice over, exactly as the tiers above are.
+ *
+ * **By name** — the `-wash` role — because a wash can be declared before any
+ * recipe paints it, which is the case the retheme keeps producing.
+ *
+ * **By use** — anything a recipe paints with a `bg-…-wash` utility — because a
+ * role pattern is a convention and narrowing one is the realistic regression.
+ *
+ * Hand-writing this list is the move the whole file is against, and it is not
+ * hypothetical here: `lib/tokens.test.ts` hand-writes `["accent-wash",
+ * "ok-wash"]` as the pair a *green* sits on, which was right for the card that
+ * wrote it and is not a list of every wash in the console. There are five.
+ */
+const WASH_BACKGROUND: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+-wash)(?=\s|$)/g;
+
+function paintedAsWash(): string[] {
+  const found = new Set<string>();
+  for (const recipe of everyRecipeString(TOKENS)) {
+    for (const match of recipe.matchAll(WASH_BACKGROUND)) {
+      if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
+    }
+  }
+  return [...found].sort();
+}
+
+const WASHES: readonly string[] = [
+  ...new Set([...NAMES.filter((name) => roleOf(name) === "wash"), ...paintedAsWash()]),
+].sort();
+
+/**
+ * Backdrops washed `depth` times over each opaque surface.
+ *
+ * The set at each layer is the full cross product rather than the pairs that
+ * nest today, which is the same choice `everyBackdrop` in `lib/tokens.test.ts`
+ * makes and for the same stated reason: which wash ends up inside which is a
+ * fact about JSX, and no test in this app can read a `.tsx`. A superset can
+ * only ever measure a colour somewhere *darker* than it really lands, so it
+ * errs toward refusing a palette rather than passing one — the opposite
+ * polarity to the optimistic reading T049 caught T046 making, which is the
+ * error that actually ships.
+ *
+ * The bare surfaces are not repeated here; the sweep above owns them.
+ */
+function washedBackdrops(theme: string, depth: number): { name: string; hex: string }[] {
+  let layer = SURFACES.map((surface) => ({
+    name: `--${surface}`,
+    hex: COLOURS[surface][theme],
+  }));
+  const all: { name: string; hex: string }[] = [];
+  for (let at = 0; at < depth; at += 1) {
+    layer = layer.flatMap((base) =>
+      WASHES.map((wash) => ({
+        name: `--${wash} over ${base.name}`,
+        hex: over(COLOURS[wash][theme], base.hex),
+      })),
+    );
+    all.push(...layer);
+  }
+  return all;
+}
+
+/**
+ * 🔴 **How deep a token can be washed, derived from the recipes.**
+ *
+ * A **chip** is a colour a recipe paints as text *in the same recipe that
+ * paints a wash behind it* — `BADGE.tone.ok` is `bg-ok-wash text-ok`,
+ * `SHELL.navLinkCurrent` is `bg-accent-wash … text-fg-accent`. A chip is a
+ * self-contained tinted thing, and a chip can be put inside another tinted
+ * thing: `components/conversation.tsx:377` renders a `Badge` inside
+ * `INBOX.messageOut`, which is `bg-accent-wash`, on a row that can be hovered.
+ * **Two layers is a real constraint for a chip** — it is the backdrop that
+ * binds `--bad`, and `lib/tokens.test.ts` records it as such.
+ *
+ * Everything else painted as type is **ladder** text: ordinary words and
+ * metadata that never carry a wash of their own and only ever *inherit* one
+ * from an ancestor.
+ *
+ * The split is by **use and never by name**, which is the whole point of
+ * deriving it. `--fg-accent` is an `fg-*` token and lands in `CHIP` anyway,
+ * because `SHELL.navLinkCurrent` paints it on `bg-accent-wash`; `--ok`,
+ * `--warn`, `--bad` and `--info` land there for the same reason and not
+ * because of what they are called. Sorting colours by the family in their name
+ * is the move that lost `--fg-faint`, and nothing here does it.
+ */
+const WASH_AND_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-[a-z0-9-]+-wash(?=\s|$)/;
+
+function paintedOnItsOwnWash(): string[] {
+  const found = new Set<string>();
+  for (const recipe of everyRecipeString(TOKENS)) {
+    if (!WASH_AND_TEXT.test(recipe)) continue;
+    for (const match of recipe.matchAll(TEXT_UTILITY)) {
+      if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
+    }
+  }
+  return [...found].sort();
+}
+
+const CHIP: readonly string[] = TEXT.filter((token) => paintedOnItsOwnWash().includes(token));
+const LADDER: readonly string[] = TEXT.filter((token) => !CHIP.includes(token));
+
+/**
+ * ④ The wash list is as large as the two derivations that feed it, restated
+ * the same way the tier list is, so narrowing either pattern makes the file
+ * disagree with itself instead of quietly sweeping fewer backdrops.
+ */
+test("the wash list is derived from both the roles and the recipes", () => {
+  const byName = NAMES.filter((name) => name.endsWith("-wash"));
+  const byUse = paintedAsWash();
+  assert.deepEqual(WASHES, [...new Set([...byName, ...byUse])].sort());
+
+  /**
+   * 🔴 The by-name half must agree with the **role table**, not merely with
+   * itself. Found by mutation, and it was a genuine hole: narrowing the `wash`
+   * role to one literal lets `--accent-wash` and the rest fall through to
+   * `fill` rather than becoming unclassified, so the role test stays green —
+   * and the by-use half of the union above quietly puts them back, so the
+   * sweep stays the same size and every other assertion here is satisfied.
+   * Without this line that edit is an equivalent mutant and the role table can
+   * be narrowed for free. With it, the two derivations disagree and it fails.
+   */
+  assert.deepEqual(NAMES.filter((name) => roleOf(name) === "wash"), byName);
+
+  // Non-vacuity on each half separately: either one silently returning nothing
+  // would leave the union looking healthy while half the derivation was dead.
+  assert.ok(byName.length >= 4, `only ${byName.length} washes by name`);
+  assert.ok(byUse.length >= 4, `only ${byUse.length} washes painted as a background`);
+  assert.deepEqual(byUse.filter((name) => !byName.includes(name)), []);
+
+  // Every wash is an rgba() with an alpha strictly between 0 and 1. A wash that
+  // had become an opaque hex would composite to itself on every surface and
+  // collapse the whole layer to one column per theme.
+  for (const wash of WASHES) {
+    for (const theme of THEMES) {
+      const alpha = /^rgba\(\d+,\s*\d+,\s*\d+,\s*([\d.]+)\)$/.exec(COLOURS[wash][theme]);
+      assert.notEqual(alpha, null, `--${wash} ${theme} is not an rgba() wash`);
+      assert.ok(Number(alpha![1]) > 0 && Number(alpha![1]) < 1, `--${wash} ${theme} alpha`);
+    }
+  }
+});
+
+/**
+ * ⑤ Every colour painted as type is a chip or it is ladder, and the two are
+ * told apart by use rather than by name.
+ *
+ * 🔴 This is also the **mechanical half of the exception below**. The ladder is
+ * swept one wash deep on the argument that ladder text never carries a wash of
+ * its own. The moment somebody writes a recipe that paints a ladder colour on a
+ * wash, that argument is false — and this fails, here, naming the token,
+ * instead of the sweep quietly measuring one layer too few.
+ */
+test("every colour painted as type is either a chip or ladder text", () => {
+  assert.deepEqual([...CHIP, ...LADDER].sort(), [...TEXT].sort());
+  assert.equal(CHIP.filter((token) => LADDER.includes(token)).length, 0);
+
+  // Non-vacuity on both halves: an empty CHIP would make the exception below
+  // vacuous, and an empty LADDER would make the sweep below measure nothing.
+  assert.ok(CHIP.length >= 4, `only ${CHIP.length} chip colours; the derivation collapsed`);
+  assert.ok(LADDER.length >= 3, `only ${LADDER.length} ladder colours; the derivation collapsed`);
+
+  /**
+   * 🔴 **The tripwire, and it has to read the recipes to be worth anything.**
+   *
+   * `LADDER` is *defined* as `TEXT` minus `CHIP`, so asserting that no ladder
+   * token is painted on a wash is true by construction and tests nothing —
+   * a vacuous green of exactly the kind the negative control at the top of this
+   * file exists to prevent. The question worth asking is about the **tier
+   * family**, which is derived from names and so cannot absorb the change:
+   * *which type tiers do the recipes paint on a wash?*
+   *
+   * Exactly one may, and it is `--fg-accent`, because `--accent-wash` exists
+   * precisely to carry it — `SHELL.navLinkCurrent` is the current navigation
+   * item. Any *second* tier appearing here means a tier has become chip text,
+   * which is the recipe-visible half of the falsification condition written out
+   * below: that tier can now reach two wash layers, and the one-layer exception
+   * no longer covers it.
+   */
+  const tiersOnAWash = NAMES.filter(
+    (name) => roleOf(name) === "text" && paintedOnItsOwnWash().includes(name),
+  );
+  assert.deepEqual(
+    tiersOnAWash,
+    ["fg-accent"],
+    `a type tier other than the accent is painted on a wash, so it is chip text ` +
+      `now and can reach two wash layers — the one-layer ladder exception below ` +
+      `no longer covers it: ${tiersOnAWash.join(", ")}`,
+  );
+});
+
+/**
+ * The ladder, one wash deep, in both themes, at the same 4.5:1 the opaque
+ * sweep uses and for the same reason: a timestamp inside a message bubble is
+ * `text-xs`, and `text-xs` is body text under WCAG 1.4.3 whatever it labels.
+ *
+ * 🔴 **This is the assertion T003 measured and left unmade** — the same 160
+ * cells it measured (four tiers × four surfaces × five washes × two themes),
+ * promoted now that T001's palette has landed.
+ *
+ * ── 🔴 WHY ONE LAYER FOR THE LADDER, AND WHEN THAT STOPS BEING TRUE ────────
+ *
+ * The chips above are swept two washes deep because a chip can be put inside
+ * another chip. **Ladder text cannot.** It is body copy and metadata —
+ * timestamps, column headings, hints — and the thing that creates a second
+ * wash is a *badge*, which contains a status word and never contains metadata.
+ * In `components/conversation.tsx` this is visible directly: `INBOX.metaTime`
+ * and `INBOX.binaryNote` are **siblings of the `Badge`, not children of it**,
+ * so they sit on the one `accent-wash` of the bubble and no deeper. Two layers
+ * is a real constraint for a chip and an **unreachable** superset for ladder
+ * text.
+ *
+ * 🔴 **WHAT VOIDS THIS EXCEPTION — read this before trusting the green.**
+ * **If ladder text is ever placed inside a badge, or inside any other element
+ * that carries a wash of its own, this exception is immediately invalid and
+ * the ladder must go to two layers like the chips.** The test above catches the
+ * half of that which is visible to a test — a recipe painting a ladder colour
+ * on a wash. It **cannot** catch the other half: a `.tsx` nesting a
+ * `text-fg-faint` span *inside* a `<Badge>`. No test in this app can read a
+ * `.tsx`. That case is yours to notice, and this paragraph is the only warning
+ * you will get.
+ *
+ * 🔴 **WHAT IT COSTS IF THE EXCEPTION IS WRONG.** Not hypothetical — measured,
+ * and emitted as a diagnostic on every run so it can never go stale. On the
+ * palette current as this is written the ladder's worst cell at two layers is
+ * `--fg-faint` at **3.831** on `--ok-wash over --ok-wash over --surface-hover`
+ * (`#284f3e`), and on the *real* nesting rather than the superset — an
+ * `ok-wash` badge inside the `accent-wash` bubble on a hovered row (`#364b42`)
+ * — it is **3.893**. Both are short. So this exception is load-bearing: it is
+ * the only reason the ladder is green, and the number it is holding back is
+ * printed beside it every time the suite runs.
+ *
+ * `--fg-faint` at one layer is 5.201, which is the margin actually being
+ * relied on.
+ */
+test("the neutral ladder clears 4.5:1 one wash deep, in both themes", (t) => {
+  const failures: string[] = [];
+  let compared = 0;
+
+  for (const theme of THEMES) {
+    const backdrops = washedBackdrops(theme, 1);
+    for (const token of LADDER) {
+      const ink = COLOURS[token][theme];
+      let worst = { ratio: Infinity, name: "", hex: "" };
+      for (const backdrop of backdrops) {
+        const ratio = contrastRatio(ink, backdrop.hex);
+        compared += 1;
+        if (ratio < worst.ratio) worst = { ratio, name: backdrop.name, hex: backdrop.hex };
+        if (ratio < 4.5) {
+          failures.push(
+            `${theme}: --${token} ${ink} on ${backdrop.name} ${backdrop.hex} = ${ratio.toFixed(3)}:1`,
+          );
+        }
+      }
+      t.diagnostic(
+        `${theme} --${token} ${ink} worst ${worst.ratio.toFixed(3)} on ${worst.name} ${worst.hex}`,
+      );
+    }
+
+    // 🔴 The price of the exception, current every run. If this number is at or
+    // above 4.5 the exception has stopped costing anything and the ladder
+    // should simply be swept two deep; if it drops further, the exception is
+    // carrying more weight than it was when it was argued for. Either way the
+    // next reader sees it without re-deriving it.
+    const deeper = washedBackdrops(theme, 2);
+    let sunk = { ratio: Infinity, token: "", name: "" };
+    for (const token of LADDER) {
+      for (const backdrop of deeper) {
+        const ratio = contrastRatio(COLOURS[token][theme], backdrop.hex);
+        if (ratio < sunk.ratio) sunk = { ratio, token, name: backdrop.name };
+      }
+    }
+    t.diagnostic(
+      `${theme} NOT ASSERTED — ladder at two washes would be worst ` +
+        `${sunk.ratio.toFixed(3)} (--${sunk.token} on ${sunk.name})`,
+    );
+  }
+
+  assert.equal(compared, LADDER.length * WASHES.length * SURFACES.length * THEMES.length);
+  assert.ok(compared >= 120, `only ${compared} comparisons; the wash layer collapsed`);
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * The chips, two washes deep.
+ *
+ * 🔴 **The dark half of this is a known, recorded shortfall that predates this
+ * card and is not its to settle.** `lib/tokens.test.ts:1214` pins `--bad` at
+ * 3.062 and `--info` at 3.637 on `--ok-wash over --ok-wash over
+ * --surface-hover` under the heading "measured, not fixed, and the next card's
+ * baseline", and asserts the light half at `:1100`. This file reproduces both
+ * of those numbers to the digit from an independent derivation, so the claim
+ * that they are covered there is checked rather than believed — which is the
+ * difference between this and excluding a colour because some other file is
+ * *assumed* to handle it, the move that lost `--fg-faint`.
+ *
+ * So: the light half is asserted, the dark half is emitted as diagnostics with
+ * its owner named, and no digit is pinned here. Asserting the dark half would
+ * not add coverage — it would re-open another card's recorded decision from a
+ * file that cannot fix it.
+ */
+test("the chips clear 4.5:1 two washes deep in light, and dark is on the record", (t) => {
+  const failures: string[] = [];
+
+  for (const theme of THEMES) {
+    const backdrops = washedBackdrops(theme, 2);
+    assert.ok(
+      backdrops.length > WASHES.length * SURFACES.length,
+      "the chip backdrop set is not actually two washes deep",
+    );
+    for (const token of CHIP) {
+      const ink = COLOURS[token][theme];
+      let worst = { ratio: Infinity, name: "", hex: "" };
+      for (const backdrop of backdrops) {
+        const ratio = contrastRatio(ink, backdrop.hex);
+        if (ratio < worst.ratio) worst = { ratio, name: backdrop.name, hex: backdrop.hex };
+      }
+      if (theme === "light" && worst.ratio < 4.5) {
+        failures.push(
+          `light: --${token} ${ink} on ${worst.name} ${worst.hex} = ${worst.ratio.toFixed(3)}:1`,
+        );
+      }
+      t.diagnostic(
+        `${theme} --${token} ${ink} worst ${worst.ratio.toFixed(3)} on ${worst.name} ${worst.hex}` +
+          (theme === "dark" && worst.ratio < 4.5 ? "  [SHORT — recorded in lib/tokens.test.ts]" : ""),
+      );
+    }
+  }
+
   assert.deepEqual(failures, []);
 });
