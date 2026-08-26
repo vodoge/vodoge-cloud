@@ -500,6 +500,167 @@ test("the offline page never claims to know how old the data is", () => {
   assert.ok(!/toLocaleTimeString|getHours|Date\.now|new Date/.test(html));
 });
 
+/* ── The offline page's palette is a copy, so it is checked like one ───
+ *
+ * `public/offline.html` types dark-theme hexes in by hand, and it has to.
+ * Nothing under `public/` is rewritten by a build step, Tailwind never scans
+ * it, the service worker hands it over with no server in the loop, and it is
+ * shown at exactly the moment the network is gone — so a `<link>` to the built
+ * stylesheet would be both a content-hashed URL this file cannot keep in sync
+ * and a fetch that by definition cannot succeed. T050 established that and
+ * left a comment in the file saying so.
+ *
+ * A comment is read at the wrong end. The person who makes these values stale
+ * is editing `app/globals.css` or `lib/tokens.ts` and has no reason to open a
+ * static asset, so the note is in the one file they will not have in front of
+ * them. This is the same statement pointed the other way round: it fails on
+ * their machine, in the run they were going to make anyway.
+ *
+ * ## Why this reads globals.css rather than COLOR_TOKENS
+ *
+ * `lib/tokens.test.ts` already owns the `lib/tokens.ts` ⇄ `app/globals.css`
+ * edge — it asserts `:root` declares exactly the dark column. Asserting
+ * against the token table here as well would restate somebody else's check,
+ * and worse, it would make a correctly synchronised palette change red until
+ * every file involved had been touched, which is how a guard earns being
+ * deleted. The claim made here is the narrower one nothing else makes:
+ * *whatever the dark theme currently paints, the offline page paints the same
+ * thing.* Change a token properly and this stays green. Change one side only
+ * and it does not.
+ */
+
+/** The dark theme as `app/globals.css` actually declares it. */
+function darkTokenValues(): Map<string, string> {
+  // The light theme is `:root[data-theme="light"] {`, which does not contain
+  // `:root {`, so the first hit is the dark block. Its body holds no nested
+  // braces — the values are hexes and `rgba()` — so the next `}` closes it.
+  const css = readText(join("app", "globals.css")).replace(/\/\*[\s\S]*?\*\//g, "");
+  const start = css.indexOf(":root {");
+  assert.notEqual(start, -1, "globals.css has no `:root {` block — this parser is stale");
+  const body = css.slice(start + ":root {".length, css.indexOf("}", start));
+  const values = new Map<string, string>();
+  for (const [, name, value] of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+    values.set(name, value.trim());
+  }
+  // A floor, because an extractor that silently finds nothing would make every
+  // comparison below vacuous and the whole section would pass reading colours
+  // out of an empty map.
+  assert.ok(values.size > 10, `only ${values.size} custom properties parsed out of globals.css`);
+  return values;
+}
+
+/** `public/offline.html` with everything that is only prose taken out. */
+function offlineMarkup(): string {
+  return readText(join("public", "offline.html"))
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** The offline page's own rules, keyed by the selector exactly as written. */
+function offlineRules(): Map<string, string> {
+  const style = /<style>([\s\S]*?)<\/style>/.exec(offlineMarkup());
+  assert.ok(style, "offline.html has no <style> block — this parser is stale");
+  const rules = new Map<string, string>();
+  for (const [, head, body] of style[1].matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.set(head.trim(), body);
+  }
+  assert.ok(rules.size > 3, `only ${rules.size} rules parsed out of offline.html`);
+  return rules;
+}
+
+/** One declaration out of one of those rules. */
+function offlineDeclaration(rules: Map<string, string>, selector: string, property: string) {
+  const body = rules.get(selector);
+  assert.ok(body !== undefined, `offline.html has no \`${selector}\` rule — this parser is stale`);
+  // Anchored on `;` or the start of the body so that `background-color` cannot
+  // answer for `color`.
+  const found = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`).exec(body);
+  assert.ok(found, `offline.html's \`${selector}\` no longer sets \`${property}\``);
+  return found[1].trim();
+}
+
+/**
+ * Every hex the offline page paints with, and the dark token each one copies.
+ *
+ * `where` is what a failure prints, so it names somewhere a reader can open
+ * rather than a line number that moves the first time the file is edited.
+ */
+const OFFLINE_PALETTE: {
+  token: string;
+  where: string;
+  hex: (rules: Map<string, string>) => string;
+}[] = [
+  {
+    token: "--bg",
+    where: '<meta name="theme-color">',
+    hex: () => {
+      const meta = /<meta\s+name="theme-color"\s+content="(#[0-9a-fA-F]{3,8})"/.exec(
+        offlineMarkup(),
+      );
+      assert.ok(meta, "offline.html has no theme-color meta — this parser is stale");
+      return meta[1];
+    },
+  },
+  { token: "--bg", where: "body { background }", hex: (r) => offlineDeclaration(r, "body", "background") },
+  { token: "--fg", where: "body { color }", hex: (r) => offlineDeclaration(r, "body", "color") },
+  { token: "--fg-muted", where: "p { color }", hex: (r) => offlineDeclaration(r, "p", "color") },
+  {
+    token: "--accent",
+    where: ".mark { background } gradient, first stop",
+    hex: (r) => gradientStops(r)[0],
+  },
+  {
+    token: "--accent-strong",
+    where: ".mark { background } gradient, second stop",
+    hex: (r) => gradientStops(r)[1],
+  },
+  { token: "--accent-ink", where: ".mark { color }", hex: (r) => offlineDeclaration(r, ".mark", "color") },
+];
+
+/** The two stops of `.mark`'s gradient, in the order they are painted. */
+function gradientStops(rules: Map<string, string>): string[] {
+  const background = offlineDeclaration(rules, ".mark", "background");
+  const stops = [...background.matchAll(/#[0-9a-fA-F]{3,8}/g)].map((m) => m[0]);
+  assert.equal(stops.length, 2, `.mark's gradient has ${stops.length} colour stops, not two`);
+  return stops;
+}
+
+test("every colour on the offline page is still the dark token it was copied from", () => {
+  const dark = darkTokenValues();
+  const rules = offlineRules();
+  const drifted: string[] = [];
+  for (const copy of OFFLINE_PALETTE) {
+    const declared = dark.get(copy.token);
+    assert.ok(declared, `globals.css :root no longer declares ${copy.token}`);
+    const painted = copy.hex(rules);
+    if (painted.toLowerCase() !== declared.toLowerCase()) {
+      drifted.push(`${copy.where} paints ${painted}, but ${copy.token} is now ${declared}`);
+    }
+  }
+  // Listed rather than asserted one at a time so that a palette change that
+  // missed several shows all of them in one run.
+  assert.deepEqual(
+    drifted,
+    [],
+    "the dark theme moved and public/offline.html did not follow — it is a hand-copy, so it has to be edited by hand",
+  );
+});
+
+test("the offline page paints with nothing but those copies", () => {
+  // Without this, a seventh hand-copied hex could be added tomorrow and the
+  // check above would keep passing while knowing nothing about it. Comparing
+  // the multiset also catches a colour moving from one declaration to another.
+  const inFile = [...offlineMarkup().matchAll(/#[0-9a-fA-F]{3,8}\b/g)]
+    .map((m) => m[0].toLowerCase())
+    .sort();
+  const known = OFFLINE_PALETTE.map((copy) => copy.hex(offlineRules()).toLowerCase()).sort();
+  assert.deepEqual(
+    inFile,
+    known,
+    "a colour in public/offline.html is not one OFFLINE_PALETTE knows about, so nothing is checking it",
+  );
+});
+
 /* ── The manifest matches the files on disk ──────────────────────────── */
 
 /** Width and height straight out of the IHDR, which is always the first chunk. */
@@ -755,10 +916,12 @@ test("the manifest still asks for a standalone window with the app's own colours
 });
 
 test("the two chrome colours come from the token table, not a second copy", () => {
-  // Three places have to remember a palette change: globals.css, the phone
-  // status bar in app/layout.tsx, and this. The last two are the ones nobody
-  // looks at — one paints the splash screen an installed console shows before
-  // its first paint, the other the strip above it.
+  // Four places have to remember a palette change: globals.css, the phone
+  // status bar in app/layout.tsx, public/offline.html, and this. The last
+  // three are the ones nobody looks at — one paints the strip above an
+  // installed console, one the splash screen it shows before its first paint,
+  // and one the page it falls back to with no network. The first two reach a
+  // token; the offline page cannot, and has its own guard above.
   const m = consoleManifest();
   assert.equal(m.theme_color, COLOR_TOKENS.bg.dark);
   assert.equal(m.background_color, COLOR_TOKENS.bg.dark);
@@ -770,8 +933,18 @@ test("the two chrome colours come from the token table, not a second copy", () =
   assert.match(source, /theme_color: COLOR_TOKENS\.bg\.dark/);
 
   const layout = readText(join("app", "layout.tsx"));
-  assert.match(layout, /color: COLOR_TOKENS\.bg\.dark/);
-  assert.match(layout, /color: COLOR_TOKENS\.bg\.light/);
+  // `themeColor` may be one unconditional value or a media-keyed list, and
+  // either shape has to reach the token rather than a typed hex. It used to be
+  // pinned to the list shape — one entry per `prefers-color-scheme` — and that
+  // pinned the defect T048 exists to fix: this console picks its theme from
+  // storage and a first-frame script, never from the system preference, so a
+  // media-keyed status bar answers a question nobody asked. `lib/pwa.ts` paints
+  // the splash screen behind it from `COLOR_TOKENS.bg.dark` unconditionally, so
+  // the two disagreed for every reader whose phone was set to light. Matching
+  // both shapes is what lets the fix land without this line having to be edited
+  // in lockstep from another worktree.
+  assert.match(layout, /themeColor:[\s\S]{0,120}?COLOR_TOKENS\.bg\.dark/);
+  // This one is the point of the test and does not move.
   assert.ok(!/#[0-9a-f]{6}/i.test(layout), "a hex colour was typed into app/layout.tsx again");
 });
 
