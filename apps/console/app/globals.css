@@ -64,9 +64,13 @@
   --fg: #e7ecf3;
   --fg-muted: #93a1b5;
   --fg-faint: #64708a;
+  /* The accent when it is being read rather than filled. It lives in this
+     family and not the accent one because the prefix is the role. Here the two
+     greens coincide; in the light theme they cannot. */
+  --fg-accent: #4ade9b;
 
   /* One accent. A second colour competing for attention is how dashboards
-     turn into noise. */
+     turn into noise. These four are the accent as a surface, never as text. */
   --accent: #4ade9b;
   --accent-strong: #22c47f;
   --accent-ink: #06251a;
@@ -125,11 +129,14 @@
   --fg: #1a2030;
   --fg-muted: #5a6579;
   --fg-faint: #8b96a9;
+  /* The second green. The brand green below fills buttons and cannot be read
+     on white; this one is read and cannot carry the button's dark ink. */
+  --fg-accent: #0a704c;
   --accent: #10b47a;
   --accent-strong: #0fa36f;
   --accent-ink: #06251a;
   --accent-wash: rgba(16, 180, 122, 0.1);
-  --ok: #10b47a;
+  --ok: #0a704c;
   --warn: #b8860b;
   --bad: #d64550;
   --info: #2b6fd4;

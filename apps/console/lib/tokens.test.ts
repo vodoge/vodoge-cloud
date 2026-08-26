@@ -777,6 +777,237 @@ test("the dark theme's accent contrast is exactly what it was before this card",
   );
 });
 
+/* ── Contrast: the green that is read rather than filled ────────────── */
+
+/**
+ * The second green, and why the console needs two.
+ *
+ * T046 swept the whole lightness axis of the brand hue and found that **no
+ * single green satisfies both roles in the light theme**. A green light enough
+ * to carry the button's dark ink (`#06251a`) is too light to be read on white;
+ * a green dark enough to be read on white cannot carry that ink. `#10b47a` is
+ * 6.084 under the ink and 2.681 as text; `#0b7c54` is 5.217 as text and 3.127
+ * under the ink. There is no crossing point. So the fill role keeps the brand
+ * green and the text role gets its own token.
+ *
+ * 🔴 The name carries the distinction, and it is `--fg-accent` rather than
+ * `--accent-text` for two reasons that are not taste:
+ *
+ * ① **The prefix is the role.** `--fg`, `--fg-muted`, `--fg-faint` are already
+ *    this file's text tiers, so a fourth `--fg-*` entry is text by
+ *    construction, and everything under `--accent-*` is a fill, a border or a
+ *    tint. `--accent-text` would instead have sat one letter from
+ *    `--accent-ink` in meaning-space — ink is what you paint *on* the accent,
+ *    text is the accent *as* type — and `text-accent-text` stutters where
+ *    `text-fg-accent` reads like `text-fg-muted`.
+ *
+ * ② **`accent-fg` would have shipped a dead rule.** `accent-<colour>` is a
+ *    live utility family here (`FORM.checkbox` really uses `accent-accent`),
+ *    and `fg` is a real colour key, so the bare string `accent-fg` in a
+ *    `content` file is a *valid* candidate and Tailwind would have emitted
+ *    `.accent-fg { accent-color: var(--fg) }` into the shipped stylesheet from
+ *    the token's own key. `fg-accent` matches no utility family, so it cannot.
+ *    Verified against the built sheet, not reasoned about: the class-name set
+ *    is byte-identical before and after this card apart from `text-fg-accent`.
+ *
+ * `--ok` moved instead of gaining a sibling, because `--ok` is only ever
+ * *read*: its two uses are both `text-ok`, and what sits behind it is the
+ * separate `--ok-wash`. Giving it an `--ok-fg` would have left `--ok` with no
+ * consumers at all.
+ */
+const GREEN_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*text-([a-z0-9-]+)/g;
+/** A recipe that paints an opaque accent fill: its text is ink, tested above. */
+const ACCENT_FILL: RegExp = /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-accent(?:-strong)?(?:\s|$)/;
+
+function hueAndSaturation(hex: string): [number, number] {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return [0, 0];
+  const lightness = (max + min) / 2;
+  const s = lightness > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h *= 60;
+  return [h < 0 ? h + 360 : h, s];
+}
+
+function isGreen(hex: string): boolean {
+  const [h, s] = hueAndSaturation(hex);
+  return h >= 90 && h <= 200 && s >= 0.3;
+}
+
+/** Composite a translucent wash over an opaque backdrop, as a browser does. */
+function over(wash: string, backdrop: string): string {
+  const parsed = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(wash);
+  assert.notEqual(parsed, null, `not an rgba() wash: ${wash}`);
+  const alpha = Number(parsed![4]);
+  const front = [1, 2, 3].map((at) => Number(parsed![at]));
+  const base = [1, 3, 5].map((at) => parseInt(backdrop.slice(at, at + 2), 16));
+  return `#${front
+    .map((c, i) => Math.round(alpha * c + (1 - alpha) * base[i]))
+    .map((c) => c.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+const OPAQUE_SURFACES = ["bg", "surface", "surface-raised", "surface-hover"] as const;
+const WASHES = ["accent-wash", "ok-wash"] as const;
+
+/**
+ * Every backdrop a green word can end up on — deliberately a superset of the
+ * sites that exist today, so a page built next month is covered without anyone
+ * remembering to come back here.
+ *
+ * The stacked entries are not hypothetical. `components/conversation.tsx:377`
+ * puts a `bg-ok-wash` delivery badge inside `INBOX.messageOut`, which is
+ * `bg-accent-wash` — a green pill on a green bubble on a surface, and the
+ * darkest backdrop any green word actually lands on. A green badge on a
+ * *hovered* table row (`TABLE.row` is `hover:bg-surface-hover`) is the other
+ * one, and both are darker than the plain white that a naive check would use.
+ */
+function everyBackdrop(
+  colours: Record<string, { readonly dark: string; readonly light: string }>,
+  theme: "dark" | "light",
+): { name: string; hex: string }[] {
+  const opaque = OPAQUE_SURFACES.map((s) => ({ name: `--${s}`, hex: colours[s][theme] }));
+  const washed = opaque.flatMap((base) =>
+    WASHES.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
+  );
+  const twice = washed.flatMap((base) =>
+    WASHES.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
+  );
+  return [...opaque, ...washed, ...twice];
+}
+
+/**
+ * Which tokens are greens painted as text on a surface — derived from the
+ * recipes rather than listed, so adding a third one puts it under the sweep
+ * below instead of quietly outside it.
+ *
+ * A recipe that also paints an opaque accent fill is excluded: its text is
+ * `--accent-ink`, which is painted on the accent and not on a surface, and
+ * that pair is the test further up.
+ */
+function greensPaintedAsTextOnASurface(): string[] {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const found = new Set<string>();
+  for (const recipe of everyRecipeString(TOKENS)) {
+    if (ACCENT_FILL.test(recipe)) continue;
+    for (const match of recipe.matchAll(GREEN_TEXT)) {
+      const token = colours[match[1]];
+      if (token && isGreen(token.dark) && isGreen(token.light)) found.add(match[1]);
+    }
+  }
+  return [...found].sort();
+}
+
+test("the greens painted as text on a surface are the two this card governs", () => {
+  assert.deepEqual(greensPaintedAsTextOnASurface(), ["fg-accent", "ok"]);
+});
+
+/**
+ * 🔴 The bar this card exists to clear. Before it, all four sites failed:
+ * `SHELL.navLinkCurrent` and `BADGE.tone.ok` at 2.440, `PAGE.link`,
+ * `TABLE.cellLink` and `STAT.tone.ok` at 2.681 — and worse than the card
+ * recorded, because a badge on a hovered row is 2.212 and one inside an
+ * outbound bubble is 2.230.
+ *
+ * ⚠️ `#0b7c54`, the value T046 proposed, does **not** pass this: 4.304 on
+ * `--ok-wash` over `--surface-hover` and 4.339 on the stacked bubble. T046's
+ * table only ever composited a wash over white. `#0a704c` is the lightest
+ * green on the brand's exact hue (158.78°) and saturation (83.7%) whose worst
+ * backdrop clears 4.5 by the same half-point margin T046 itself insisted on
+ * when it moved `--accent-strong` up rather than down.
+ */
+test("every green painted as text clears 4.5:1 on every backdrop, in both themes", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const failures: string[] = [];
+
+  for (const token of greensPaintedAsTextOnASurface()) {
+    for (const theme of ["dark", "light"] as const) {
+      for (const backdrop of everyBackdrop(colours, theme)) {
+        const ratio = contrastRatio(colours[token][theme], backdrop.hex);
+        if (ratio < 4.5) {
+          failures.push(
+            `${theme}: --${token} ${colours[token][theme]} on ${backdrop.name} ` +
+              `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
+          );
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * The two roles must not be able to trade places, which is the failure this
+ * card's naming is trying to prevent and the one a name alone cannot stop.
+ *
+ * Painting `--accent` as text is the defect being repaired, and painting
+ * `--fg-accent` as a fill is its mirror image: at `#0a704c` the button's
+ * `--accent-ink` would sit on it at 2.668, which is worse than what was there
+ * before. Neither can be expressed in a recipe after this test.
+ */
+test("the fill green is never text and the text green is never a fill", () => {
+  const offenders = everyRecipeString(TOKENS).filter(
+    (recipe) =>
+      /(?:^|\s)(?:[a-z-]+:)*text-accent(?:-strong)?(?:\s|$)/.test(recipe) ||
+      /(?:^|\s)(?:[a-z-]+:)*(?:bg|border|ring|from|to|via|outline|divide|shadow|accent)-fg-accent(?:\s|$)/.test(
+        recipe,
+      ),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+/**
+ * 🔴 The dark theme pays for none of this. `--fg-accent` and `--ok` are both
+ * `#4ade9b` in the dark theme — the value `--accent` already had — so every
+ * dark ratio is the one it was before this card, pinned here to the digit
+ * across the same superset of backdrops. If a later edit moves a dark green or
+ * a dark wash at all, this fails rather than drifting toward the threshold.
+ */
+test("the dark theme's green-on-surface contrast is exactly what it was before", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  for (const token of ["fg-accent", "ok"] as const) {
+    assert.equal(colours[token].dark, colours.accent.dark);
+    const worst = Math.min(
+      ...everyBackdrop(colours, "dark").map((b) => contrastRatio(colours[token].dark, b.hex)),
+    );
+    assert.equal(Number(worst.toFixed(3)), 5.022, `--${token} dark worst backdrop`);
+  }
+});
+
+/**
+ * The same defect in three other colours, measured and left alone.
+ *
+ * `--warn`, `--bad` and `--info` are read on their own washes exactly as the
+ * green was, and in the light theme none of them clears 4.5 either. They are
+ * not this card's to fix: each needs its own value chosen against its own hue,
+ * and that is a decision, not arithmetic. The worst ratios are pinned here so
+ * the numbers cannot drift unnoticed and so whoever does fix them starts from
+ * a recorded baseline rather than re-deriving one. If you are that card, these
+ * three numbers are what you are moving — update them here.
+ */
+test("the other three status colours are recorded where they stand in light", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const worst = (token: string) =>
+    Number(
+      Math.min(
+        ...everyBackdrop(colours, "light").map((b) => contrastRatio(colours[token].light, b.hex)),
+      ).toFixed(2),
+    );
+  assert.deepEqual({ warn: worst("warn"), bad: worst("bad"), info: worst("info") }, {
+    warn: 2.47,
+    bad: 3.3,
+    info: 3.68,
+  });
+});
+
 /**
  * The three text tiers, and where the line between them falls.
  *
