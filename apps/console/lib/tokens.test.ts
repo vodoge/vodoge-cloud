@@ -1131,10 +1131,23 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
  * spent and restating it would be a lie. What is worth guarding survives in a
  * stronger form:
  *
- * ① **The four status colours did not move, in either theme's dark column.**
- *    They are the only hue left in the console after this card, which makes
- *    them more load-bearing than they were, not less. Stated as hexes because
- *    a ratio can be held still by two compensating edits.
+ * ① **The four status colours are pinned as hexes in the dark column.**
+ *    They are the only hue left in the console after T001, which makes them
+ *    more load-bearing than they were, not less. Stated as hexes because a
+ *    ratio can be held still by two compensating edits.
+ *
+ *    🔴 **T001 moved none of them; T010 moved two.** `--bad` and `--info` were
+ *    unreadable two washes deep — 3.062 and 3.637 on #284f3e — and are now
+ *    #ffa9ac and #97c3ff, each holding its hue with its saturation at the sRGB
+ *    ceiling so that only the lightness moved. `--ok` and `--warn` cleared that
+ *    backdrop already and are byte for byte what T001 left. The pin below is
+ *    the record of which two moved, and the ratios are pinned separately at the
+ *    bottom of this file so that neither can drift without one of the two
+ *    going red.
+ *
+ *    ⚠️ **These two names are declared in the edge panel's `:root` as well.**
+ *    A change here is a change to the other repository, and oracle 1 compares
+ *    the two sets after normalisation.
  *
  * ② **The neutral accent is four identities, not four coincidences.** A green
  *    accent needed `--fg-accent` and `--accent-edge` to be separate values in
@@ -1143,7 +1156,7 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
  *    grows a brand colour back. Written as equalities so that landing a hue on
  *    any of the four fails here, whatever the hue is.
  */
-test("T001 kept the status four and made the accent four identities", () => {
+test("the status four are pinned as hexes and the accent is four identities", () => {
   const colours = TOKENS.COLOR_TOKENS;
 
   assert.deepEqual(
@@ -1157,8 +1170,8 @@ test("T001 kept the status four and made the accent four identities", () => {
     {
       ok: "#4ade9b",
       warn: "#f0b429",
-      bad: "#f2686d",
-      info: "#63a4ff",
+      bad: "#ffa9ac",
+      info: "#97c3ff",
       "bad-ink": "#52070a",
     },
   );
@@ -1178,40 +1191,43 @@ test("T001 kept the status four and made the accent four identities", () => {
 });
 
 /**
- * 🔴 **Measured, not fixed, and the next card's baseline.**
+ * 🔴 **Fixed, and the record of what the fix cost.** This used to read
+ * "measured, not fixed"; T010 is the card that moved it.
  *
- * The dark theme has the same defect in two of the three, and it is out of
- * this card's scope for the reason T049 gave about the light theme: repairing
- * it means moving a dark value, and every dark value moving is a change to the
- * theme this console is looked at in for hours. The site is real and not a
- * superset artefact — `components/conversation.tsx` renders the delivery badge
- * with the tone `toneForDeliveryStatus` returns, so a failed send is a red
- * badge inside `INBOX.messageOut`, which is a green tint. `--warn` clears the
- * bar; `--bad` and `--info` do not.
+ * 🔴 **The defect was in the backdrop set, not the arithmetic, and that is the
+ * part worth carrying forward.** A sweep of the four bare surfaces reports
+ * 6.931 for the old `--bad` and 8.231 for the old `--info` — both comfortable,
+ * and both what three earlier contrast cards saw. `washesForTextToken` unions a
+ * token's own wash with `WASHES` (`--accent-wash` and `--ok-wash`), and
+ * `everyBackdrop` then stacks them **twice**, which is 52 backdrops rather than
+ * four. On the worst of those, `--ok-wash` over `--ok-wash` over
+ * `--surface-hover` — hex **#284f3e** — the same two colours were **3.062** and
+ * **3.637**. Nothing about the arithmetic differed. The four-surface sweep was
+ * measuring somewhere the colour is not.
  *
- * Pinned to the digit so the numbers cannot drift and so whoever fixes them
- * starts from a measurement rather than re-deriving one. If you are that card,
- * these three numbers are what you are moving — update them here.
+ * ⚠️ **The stacked entries are a deliberate superset and were not narrowed to
+ * make this pass.** The literal red site today is a `bg-bad-wash text-bad`
+ * badge inside `INBOX.messageOut` (`bg-accent-wash`) on a hovered row, which
+ * composites to #4e3a3b and now measures 5.784 — easier than #284f3e. Trimming
+ * the set to the sites that exist this month is the move that produced the
+ * defect in the first place, one level further out, so the superset stands and
+ * the colours were moved to meet it.
  *
- * 🔴 **T010: read this before re-deriving anything.** These numbers are far
- * below what a sweep of the four surfaces produces, and the difference is the
- * backdrop set, not the arithmetic. `washesForTextToken` unions a token's own
- * wash with `WASHES`, which is `--accent-wash` and `--ok-wash`, and
- * `everyBackdrop` then stacks them **twice**. So the backdrop that binds
- * `--bad` is not a red pill on a surface — it is `--ok-wash` over `--ok-wash`
- * over `--surface-hover`, hex **#284f3e**, a red delivery badge inside a green
- * outbound bubble on a hovered row. That site is real:
- * `components/conversation.tsx` renders the badge with the tone
- * `toneForDeliveryStatus` returns, so a failed send puts red on green. A sweep
- * that only composites a colour over its own wash measures somewhere the
- * colour never is and reads optimistically — the exact mistake T049 caught
- * T046 making, one level further in.
+ * 🔴 **How the two were re-derived.** Each holds its hue and has its saturation
+ * at the sRGB ceiling, so only lightness moved, and it moved the least that
+ * clears 4.5 by half a point — T046's margin rule. `--bad` 3.062 -> **5.058**,
+ * `--info` 3.637 -> **5.077**, both on #284f3e. `--warn` already cleared and is
+ * untouched at 4.945, which is why it is in this pin: it is the control that
+ * shows the backdrop set did not move underneath the other two.
  *
- * T001 moved all three *up* without touching a dark status value, purely
- * because the surfaces under those washes got darker: warn 4.632 -> 4.945,
- * bad 2.869 -> 3.062, info 3.407 -> 3.637.
+ * ⚠️ **The price, stated so nobody has to rediscover it.** Oklab chroma falls
+ * 0.170 -> 0.102 on `--bad` and 0.150 -> 0.098 on `--info`. That is the real
+ * cost of reading a saturated colour against a light-ish tint, it is paid in
+ * colourfulness rather than in hue, and it is the reason to be suspicious of
+ * any future edit that darkens these back toward their old values "because the
+ * red looks washed out". The red looking washed out is the bar being met.
  */
-test("the dark theme's status contrast is recorded where it stands", () => {
+test("the dark theme's status colours clear the bar on every backdrop they have", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const worst = (token: string) =>
@@ -1224,10 +1240,37 @@ test("the dark theme's status contrast is recorded where it stands", () => {
     );
   assert.deepEqual({ warn: worst("warn"), bad: worst("bad"), info: worst("info") }, {
     warn: 4.945,
-    bad: 3.062,
-    info: 3.637,
+    bad: 5.058,
+    info: 5.077,
   });
-  // The backdrop these are measured on, named so the next card cannot re-derive
+
+  // 🔴 The pin above is three numbers; this is the claim they are shorthand
+  // for. Without it, a future edit could hold the worst cell still and sink a
+  // different one, which is exactly how a 52-cell table is failed quietly.
+  const failures: string[] = [];
+  let compared = 0;
+  for (const token of STATUS_TEXT_TOKENS) {
+    const backdrops = everyBackdrop(colours, "dark", washesForTextToken(token));
+    assert.equal(
+      backdrops.length,
+      52,
+      `--${token} is being swept over ${backdrops.length} backdrops, not 52 — the set collapsed`,
+    );
+    for (const backdrop of backdrops) {
+      const ratio = contrastRatio(colours[token].dark, backdrop.hex);
+      compared += 1;
+      if (ratio < 4.5) {
+        failures.push(
+          `dark: --${token} ${colours[token].dark} on ${backdrop.name} ` +
+            `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
+        );
+      }
+    }
+  }
+  assert.equal(compared, 156, "the dark status sweep is not covering 3 tokens x 52 backdrops");
+  assert.deepEqual(failures, []);
+
+  // The backdrop these are measured on, named so a later card cannot re-derive
   // them against an easier one and think it found an improvement.
   const binding = everyBackdrop(colours, "dark", washesForTextToken("bad")).reduce((a, b) =>
     contrastRatio(colours.bad.dark, a.hex) <= contrastRatio(colours.bad.dark, b.hex) ? a : b,
@@ -1319,7 +1362,15 @@ test("the edge green is only ever a line, and no line is drawn in the fill green
  * 3.010:1 in the dark theme and 4.351:1 in the light one, both under the 4.5
  * its `text-sm`/`font-semibold` label asks for. T046 settled the direction on
  * the green button — keep the fill, choose an ink for it — and this is the
- * same repair on the other one: 5.006 dark, 7.122 light.
+ * same repair on the other one: **8.269 dark, 7.898 light**.
+ *
+ * ⚠️ Two corrections, both found by T010 re-deriving these rather than reading
+ * them. The dark figure was 5.006 until T010 raised `--bad`; a dark ink on a
+ * lighter fill can only gain, so it rose on its own and needed no edit here.
+ * The light figure was written as **7.122** and had never been right —
+ * `lib/tokens.ts` recorded 7.898 for the same pair, and 7.898 is the value both
+ * files now carry. Nothing was asserting either number, which is how one of
+ * them stayed wrong; the sweep below asserts the bar rather than the digits.
  *
  * ⚠️ **`--bad-ink` is themed where `--accent-ink` is not, and that is the
  * whole content of the decision.** The accent is a light green in both themes,

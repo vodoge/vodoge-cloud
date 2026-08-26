@@ -117,12 +117,18 @@ export const COLOR_TOKENS = {
   // message. Neutral now, because its colour is the accent's.
   //
   // The alpha in each theme is the largest one that costs the status colours
-  // nothing, and that is a real edge rather than a round number: at 0.1 the
-  // dark tint is lighter than the wash a status word already sits on, so the
-  // binding backdrop stays that word's own wash; at 0.12 the tint takes over
-  // as the binding backdrop and drags all four down at once — warn 4.945 to
-  // 4.464, bad 3.062 to 2.764, info 3.637 to 3.283. The light side crosses the
-  // same edge between 0.06 and 0.08.
+  // nothing, and that is a real edge rather than a round number: at 0.1 this
+  // tint doubled is still darker than `--ok-wash` doubled, so the backdrop that
+  // binds a status word stays `--ok-wash` over `--ok-wash` over
+  // `--surface-hover`; at 0.12 the doubled tint overtakes it, becomes the
+  // binding backdrop at #4e4e4e and drags all three down at once — warn 4.945
+  // to 4.464, bad 5.058 to 4.566, info 5.077 to 4.583. The light side crosses
+  // the same edge between 0.06 and 0.08.
+  //
+  // ⚠️ T001 described the 0.1 case as the binding backdrop staying "that word's
+  // own wash". That is not what happens and the correction matters, because it
+  // is the same optimistic reading that hid T010's defect: a status word's own
+  // wash is never its worst backdrop — the doubled green is, for all three.
   //
   // Measured against the tint it replaces, the pill is 1.236 -> 1.188 on the
   // dark canvas and 1.099 -> 1.129 on the light one: a little fainter in the
@@ -141,12 +147,50 @@ export const COLOR_TOKENS = {
   // the washes are literal and do not follow the colour, so the pale pills
   // behind these words are unchanged in both themes.
   //
-  // 🔴 This card took the hue out of everything except these four, so they are
-  // now the only colour in the console — and all four dark values are byte for
-  // byte what they were. They read *better* against the new canvas than the
-  // old one (12.134 / 11.193 / 6.931 / 8.231 on `--bg` against 8.9 / 8.2 / 5.1
-  // / 6.0), which is why the palette moved around them rather than through
-  // them.
+  // 🔴 T001 took the hue out of everything except these four, so they are the
+  // only colour left in the console. It moved none of them. T010 moved two.
+  //
+  // 🔴 **Reading them on the canvas was never the failure, which is why three
+  // earlier sweeps missed it.** On `--bg` the old `--bad` and `--info` were
+  // 6.931 and 8.231 — comfortable, and exactly what a check of the four bare
+  // surfaces reports. The backdrop that binds them is two washes deep:
+  // `--ok-wash` over `--ok-wash` over `--surface-hover`, which composites to
+  // #284f3e. There the old values were 3.062 and 3.637, both well under the 4.5
+  // their words need. `--ok` and `--warn` cleared that same backdrop already
+  // (5.361 and 4.945) and are untouched.
+  //
+  // ⚠️ **#284f3e is the guard's deliberate superset and not a stack anyone has
+  // ever seen.** An earlier draft of this comment described it as a red
+  // delivery badge inside a green outbound bubble on a hovered row. That site
+  // does not exist: the outbound bubble is `--accent-wash`, which T001 made
+  // neutral, and nothing in that subtree has a hover state. The worst stack
+  // really painted is that same red badge inside the neutral bubble, #413030,
+  // where the old red measured 4.127 — still short, so the defect was real and
+  // not an artefact of the superset. `--info` is the honest half of the same
+  // story: on every stack that is really painted it already cleared 4.5, and
+  // only the superset ever asked it to move.
+  //
+  // 🔴 **How the two were re-derived, and the one axis that had to give.** Each
+  // kept its hue to a tenth of a degree and had its saturation pushed to the
+  // sRGB ceiling, so *only* the lightness moved, and it moved the least that
+  // clears 4.5 by half a point: 5.058 and 5.077. Saturation going up is a
+  // deliberate departure from the rule the light theme used, which held
+  // saturation fixed because it had the room. Buying contrast against a dark
+  // backdrop is paid for in lightness, and lightness is paid for in chroma, so
+  // the saturation ceiling is how as much of the hue as the gamut allows is
+  // handed back.
+  //
+  // ⚠️ **Chroma still falls, and that is the honest price of this repair.** In
+  // Oklab, `--bad` goes 0.170 to 0.102 and `--info` 0.150 to 0.098 — a paler
+  // red and a paler blue. Both land inside the range other systems ship for
+  // dark-theme status text (Material 3's dark error is less chromatic again at
+  // 0.068; Tailwind's red-300 is 0.104), and the hue is what carries the
+  // meaning, so they still read as red and blue rather than as a tint. On
+  // `--bg` the four are now 12.134 / 11.193 / 11.448 / 11.491.
+  //
+  // 🔴 `--bad` and `--info` are declared with the same names and values in the
+  // edge panel's `:root`, in the other repository. Moving them here without
+  // moving them there is precisely the drift oracle 1 exists to catch.
   //
   // The four light values did move, and only because their backdrops did: the
   // light surfaces now darken as they rise, so the worst pairing is darker
@@ -158,14 +202,18 @@ export const COLOR_TOKENS = {
   // 5.040 / 5.037 / 5.015 / 5.006.
   ok: { dark: "#4ade9b", light: "#085d3f" },
   warn: { dark: "#f0b429", light: "#6a4c06" },
-  bad: { dark: "#f2686d", light: "#9b222c" },
-  info: { dark: "#63a4ff", light: "#1f5099" },
+  bad: { dark: "#ffa9ac", light: "#9b222c" },
+  info: { dark: "#97c3ff", light: "#1f5099" },
   // The ink for the one solid button filled with the status red. Both inks are
   // themed now — the accent's became so with this card, because a neutral
   // accent is near-white in one theme and near-black in the other — and both
   // follow the same rule: the ink is the opposite pole of the fill it sits on,
-  // in each theme. 5.006 dark, 7.898 light. The dark pair is untouched; the
-  // light figure moved only because the red above did.
+  // in each theme. 8.269 dark, 7.898 light.
+  //
+  // The ink itself has never moved. The dark figure was 5.006 until T010 raised
+  // `--bad`, and it rose with it: a dark ink on a lighter fill can only gain,
+  // which is why raising the red needed no compensating edit here. This is the
+  // one place the repair paid a dividend rather than a price.
   "bad-ink": { dark: "#52070a", light: "#ffffff" },
   "ok-wash": { dark: "rgba(74, 222, 155, 0.14)", light: "rgba(16, 180, 122, 0.1)" },
   "warn-wash": { dark: "rgba(240, 180, 41, 0.14)", light: "rgba(184, 134, 11, 0.12)" },
