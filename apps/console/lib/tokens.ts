@@ -212,9 +212,21 @@ export const SPACE_TOKENS = {
   s7: "3rem",
 } as const;
 
+/**
+ * Corner radii, tightened to Warp's scale.
+ *
+ * `radius` is the control default — buttons, inputs, tabs — and keeps that
+ * meaning at the new value, which is why no recipe had to move: `rounded`
+ * still means "a control". `radius-md` is the one new name and is the card
+ * step; `radius-lg` is for the largest surfaces. The edge panel declares
+ * these same four names with these same four values, and that agreement is
+ * what oracle 1 compares, so renaming one here breaks a check in the other
+ * repo rather than anything nearby.
+ */
 export const RADIUS_TOKENS = {
-  radius: "10px",
-  "radius-lg": "14px",
+  radius: "3px",
+  "radius-md": "4px",
+  "radius-lg": "6px",
   "radius-pill": "999px",
 } as const;
 
@@ -308,6 +320,7 @@ export const TAILWIND_FONT_SIZE = {
 export const TAILWIND_BORDER_RADIUS = {
   none: "0px",
   DEFAULT: "var(--radius)",
+  md: "var(--radius-md)",
   lg: "var(--radius-lg)",
   pill: "var(--radius-pill)",
   full: "9999px",
