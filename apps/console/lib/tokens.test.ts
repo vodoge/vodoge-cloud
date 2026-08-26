@@ -5995,3 +5995,94 @@ test("an unknown state gets no colour rather than a guessed one", () => {
   assert.equal(toneForState("cfun-7"), "neutral");
   assert.equal(toneForState(""), "neutral");
 });
+
+/* ── The status bar and the background it claims to match (T048) ──────── */
+
+// Line endings here are CRLF; every pattern below is written against LF.
+const layoutSource = readSource("app/layout.tsx").replace(/\r/g, "");
+const themeToggleSource = readSource("components/theme-toggle.tsx").replace(/\r/g, "");
+
+/**
+ * The premise the single status bar colour rests on.
+ *
+ * A served page is dark whatever the reader's system says, because the only
+ * route to the light palette is an attribute set by script. The moment this
+ * stops being true — someone adds a `prefers-color-scheme` block meaning to be
+ * helpful — a served page could be light while `viewport.themeColor` still
+ * says dark, and the mismatch T048 removed comes back by a different door. It
+ * would show up only on a phone, which is where the last one hid for months.
+ */
+test("only data-theme reaches the light palette, which is what makes one status bar colour right", () => {
+  assert.ok(
+    !globalsCss.includes("prefers-color-scheme"),
+    "the stylesheet now picks a theme from the system preference, so the served page may be light while app/layout.tsx still declares a dark status bar",
+  );
+  assert.ok(
+    globalsCss.includes(':root[data-theme="light"]'),
+    "the light palette lost its attribute selector; nothing can reach it",
+  );
+});
+
+/**
+ * `viewport` is one value, and it is the background that is really painted.
+ *
+ * It used to be a pair keyed on `prefers-color-scheme`, which described the
+ * reader's phone rather than the document: measured in a browser, a light
+ * phone got #f7f8fa over the dark login page, and a signed-in reader whose
+ * stored choice disagreed with their system got the mismatch the other way
+ * round. Read from the token table so a palette change cannot leave a hex
+ * behind here.
+ */
+test("the status bar names the background the server actually paints", () => {
+  const viewportBlock = /export const viewport: Viewport = \{[\s\S]*?\n\};/.exec(layoutSource)?.[0];
+  assert.ok(viewportBlock, "could not find the viewport export in app/layout.tsx");
+  assert.ok(
+    !viewportBlock.includes("prefers-color-scheme"),
+    "the status bar is keyed on the system preference again, but the stylesheet never is",
+  );
+  assert.match(
+    viewportBlock,
+    /themeColor:\s*COLOR_TOKENS\.bg\.dark/,
+    "the status bar must be the dark background, the one painted before any script runs",
+  );
+  for (const hex of [TOKENS.COLOR_TOKENS.bg.dark, TOKENS.COLOR_TOKENS.bg.light]) {
+    assert.ok(
+      !viewportBlock.includes(hex),
+      `${hex} is typed into the viewport instead of read from the token table`,
+    );
+  }
+});
+
+/**
+ * The bar has to move when the background does.
+ *
+ * A static value can only ever describe the served document; the toggle is the
+ * one place that knows a reader changed their mind. It reads the colour back
+ * out of the stylesheet, so `--bg` keeps a single definition and the bar cannot
+ * be left a palette behind.
+ */
+test("flipping the theme repoints the status bar at the new background", () => {
+  const applyEffect = /useEffect\(\(\) => \{\s*if \(!theme\) return;[\s\S]*?\n {2}\}, \[theme\]\);/.exec(
+    themeToggleSource,
+  )?.[0];
+  assert.ok(applyEffect, "could not find the effect that applies the theme");
+  assert.match(applyEffect, /dataset\.theme = theme/, "the effect no longer applies the theme");
+  assert.match(
+    applyEffect,
+    /paintStatusBar\(/,
+    "the theme changes but the status bar is left on the old background",
+  );
+
+  const helper = /function paintStatusBar\([\s\S]*?\n\}/.exec(themeToggleSource)?.[0];
+  assert.ok(helper, "paintStatusBar is gone");
+  assert.match(helper, /meta\[name="theme-color"\]/, "nothing selects the status bar meta");
+  assert.match(
+    helper,
+    /getPropertyValue\("--bg"\)/,
+    "the colour must be read from the stylesheet, not decided here",
+  );
+  assert.ok(
+    !/#[0-9a-fA-F]{3,8}\b/.test(helper),
+    "a hex written into the toggle is another copy of --bg to keep in step",
+  );
+});
