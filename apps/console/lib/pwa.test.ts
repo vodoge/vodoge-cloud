@@ -933,17 +933,23 @@ test("the two chrome colours come from the token table, not a second copy", () =
   assert.match(source, /theme_color: COLOR_TOKENS\.bg\.dark/);
 
   const layout = readText(join("app", "layout.tsx"));
-  // `themeColor` may be one unconditional value or a media-keyed list, and
-  // either shape has to reach the token rather than a typed hex. It used to be
-  // pinned to the list shape — one entry per `prefers-color-scheme` — and that
-  // pinned the defect T048 exists to fix: this console picks its theme from
-  // storage and a first-frame script, never from the system preference, so a
-  // media-keyed status bar answers a question nobody asked. `lib/pwa.ts` paints
-  // the splash screen behind it from `COLOR_TOKENS.bg.dark` unconditionally, so
-  // the two disagreed for every reader whose phone was set to light. Matching
-  // both shapes is what lets the fix land without this line having to be edited
-  // in lockstep from another worktree.
-  assert.match(layout, /themeColor:[\s\S]{0,120}?COLOR_TOKENS\.bg\.dark/);
+  // `themeColor` is one unconditional value. It used to be a media-keyed list —
+  // one entry per `prefers-color-scheme` — and that was the defect T048 fixed:
+  // this console picks its theme from storage and a first-frame script, never
+  // from the system preference, so a media-keyed status bar answers a question
+  // nobody asked. `lib/pwa.ts` paints the splash screen behind it from
+  // `COLOR_TOKENS.bg.dark` unconditionally, so the two disagreed for every
+  // reader whose phone was set to light.
+  //
+  // The trailing comma is load-bearing and this line was wrong once without it.
+  // While T048 was in flight this had to accept both shapes so the two branches
+  // could land independently, and the pattern that did — `themeColor:` then the
+  // token within 120 characters — also matched the pair it was meant to forbid,
+  // because the pair's first entry reaches `COLOR_TOKENS.bg.dark` well inside
+  // that window. It was proved by injecting the old shape back, not reasoned
+  // about. The list form is always `themeColor: [`, never `themeColor: X,`, so
+  // requiring the comma is what separates them.
+  assert.match(layout, /themeColor: COLOR_TOKENS\.bg\.dark,/);
   // This one is the point of the test and does not move.
   assert.ok(!/#[0-9a-f]{6}/i.test(layout), "a hex colour was typed into app/layout.tsx again");
 });
