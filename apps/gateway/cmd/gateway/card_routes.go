@@ -5,12 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
+	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
 func (process *process) registerCardRoutes(mux *http.ServeMux) {
@@ -126,6 +126,27 @@ func (process *process) deleteCardPolicy(writer http.ResponseWriter, request *ht
 // two wrong answers: the alternative interpretation of "no policies" is "deny
 // everything", and applying that to a fleet by deleting a row would be a
 // spectacular way to take every card offline.
+//
+// # The payload is built from the contract type, not from the stored row
+//
+// contract.CardPolicy has four fields. cards.Policy has six: it is the database
+// row, and it carries note and updated_at because the console's table shows
+// them. Marshalling the row straight onto the wire put updated_at inside every
+// policy object, and the edge parses CardPolicy with deny_unknown_fields.
+//
+// So every card policy push this deployment has ever made was unreadable by the
+// device it was sent to. Confirmed against the deployed binaries on 2026-08-26
+// by pushing both shapes at the bench: the stored shape produced
+//
+//	command: invalid envelope: unknown field `updated_at`,
+//	expected one of `iccid`, `cellular_enabled`, `vertical`, `apn`
+//
+// on the device and no receipt at all, four re-sends and then expiry; the same
+// set through contract.UpdateCardPolicyCommand was accepted in two seconds.
+//
+// Building through the generated type is what keeps the two in step: a field
+// added to the row from now on cannot reach the wire by accident, and one added
+// to the contract will not compile until it is filled in here.
 func (process *process) pushCardPolicies(request *http.Request, tenantID string) {
 	policies, err := process.cards.List(request.Context(), tenantID)
 	if err != nil || len(policies) == 0 {
@@ -139,20 +160,44 @@ func (process *process) pushCardPolicies(request *http.Request, tenantID string)
 	if err != nil {
 		return
 	}
-	payload := mustJSON(map[string]any{
-		"kind":           "UpdateCardPolicy",
-		"policy_version": version,
-		"policies":       policies,
-	})
+	command := contract.UpdateCardPolicyCommand{
+		Kind:          "UpdateCardPolicy",
+		PolicyVersion: version,
+		Policies:      make([]contract.CardPolicy, 0, len(policies)),
+	}
+	for _, policy := range policies {
+		command.Policies = append(command.Policies, contract.CardPolicy{
+			Iccid:           policy.ICCID,
+			CellularEnabled: policy.CellularEnabled,
+			Vertical:        policy.Vertical,
+			Apn:             policy.APN,
+		})
+	}
+	// Marshalled here rather than through mustJSON, which takes a map: the whole
+	// point of this change is that the wire shape is the generated struct.
+	payload, err := json.Marshal(command)
+	if err != nil {
+		return
+	}
 	for _, device := range devices {
 		_, _ = process.queue.Enqueue(request.Context(), commands.Item{
 			TenantID: tenantID,
 			DeviceID: device.ID,
-			Kind:     "update_card_policy",
-			IdempotencyKey: "update_card_policy:" + device.ID + ":" + version + ":" +
-				strconv.FormatInt(time.Now().UnixNano(), 10),
-			Payload:   payload,
-			ExpiresAt: time.Now().Add(30 * time.Minute),
+			Kind:     commands.CardPolicyKind,
+			// Derived from the device, the version and the payload, and from
+			// nothing else. It used to carry time.Now().UnixNano(), which made
+			// every push a new row that no repeat could ever collapse onto --
+			// see commands.CardPolicyKey. The same derivation is what lets a
+			// redelivery on resume name itself as another attempt at this
+			// intent instead of a second intention.
+			IdempotencyKey: commands.CardPolicyKey(device.ID, version, payload),
+			Payload:        payload,
+			// The window is short on purpose and the redelivery in
+			// internal/commands carries the durability instead: a still-queued
+			// command is re-sent off any inbound traffic, so a longer window is
+			// mostly a longer re-send loop against a device that is not
+			// answering.
+			ExpiresAt: time.Now().Add(commands.CardPolicyTTL),
 		})
 	}
 }

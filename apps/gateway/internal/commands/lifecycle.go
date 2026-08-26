@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/tenant"
+	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
 // SQLPending loads queued commands for a resumed device.
@@ -21,6 +23,11 @@ func (store SQLPending) PendingForDevice(tenantID, deviceID string, now time.Tim
 	if store.DB == nil {
 		return nil
 	}
+	// Before the read, so a policy re-queued here is delivered in this same pass
+	// rather than waiting for the next one. On its own deadline as well as its
+	// own transaction: a slow redelivery must not eat the read's budget, since
+	// the read is what the session is actually waiting for.
+	store.redeliverCardPolicy(tenantID, deviceID, now)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var pending []dispatch.PendingCommand
@@ -339,4 +346,130 @@ func (store SQLLifecycle) RecordResult(tenantID string, result dispatch.CommandR
 		_, err = tx.ExecContext(ctx, settleOutboxSQL, result.CommandID)
 		return err
 	})
+}
+
+// newestCardPolicySQL reads the last card policy command a device was given.
+//
+// The newest row is the whole answer. It carries the current intent (an older
+// row can only hold a policy set the console has already replaced), and its
+// idempotency key carries how many attempts that intent has had -- which is why
+// this needs no ledger table and no second counting query on a path that runs
+// every few seconds per connected session.
+//
+// The tenant is named even though row-level security already scopes the read.
+// commands_device_issued_idx leads with tenant_id, and without it in the
+// predicate this is a sequential scan of every command the deployment holds --
+// on a statement that runs every few seconds for every connected session.
+// Checked against production: with the tenant it plans as an Index Scan using
+// commands_device_issued_idx, stopping at the first row the LIMIT wants.
+const newestCardPolicySQL = `
+	SELECT c.idempotency_key,
+	       c.status::text,
+	       c.expires_at,
+	       c.accepted_at IS NOT NULL,
+	       c.result -> 'late_result' IS NOT NULL,
+	       c.payload
+	  FROM app.commands AS c
+	 WHERE c.tenant_id = $1::uuid
+	   AND c.device_id = $2::uuid
+	   AND c.kind = 'update_card_policy'
+	 ORDER BY c.issued_at DESC
+	 LIMIT 1`
+
+// redeliverCardPolicy re-queues the card policy set a device never took.
+//
+// # Why this is the resume path and not a timer
+//
+// The set is desired state, and the console is its only producer: an operator
+// saves a policy once. When that single push lapses, nothing in the system ever
+// derives it again -- and lapsing is not hypothetical, it is the entire recorded
+// history of the kind (see queue.go). The device coming back is the moment the
+// answer changes, and this is the only hook that runs then and knows which
+// device it is.
+//
+// # Its own transaction
+//
+// Same reason ExpireTenantCommands uses two: a fault here must not cost the
+// caller its pending read. It cannot be folded into that transaction and
+// swallowed, because a failed statement aborts the surrounding transaction in
+// PostgreSQL -- the read would then fail on commit, PendingForDevice would log
+// and return nil, and every queued command for the device would stop being
+// delivered. A redelivery that can silence delivery is worse than no redelivery.
+//
+// Committing first is also what lets the row it writes be picked up by the very
+// same pending read, so a device that reconnects after a long outage gets the
+// policy in that session rather than the next one.
+func (store SQLPending) redeliverCardPolicy(tenantID, deviceID string, now time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var row cardPolicyRow
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, newestCardPolicySQL, tenantID, deviceID).Scan(
+			&row.Key, &row.Status, &row.ExpiresAt, &row.Accepted, &row.Late, &row.Payload)
+		if errors.Is(err, sql.ErrNoRows) {
+			// No policy has ever been pushed to this device. Nothing to repeat:
+			// deriving one from app.card_policies here would push a set to a
+			// device the console never chose to push to.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if redeliver, why := planCardPolicyRedelivery(row, now); !redeliver {
+			slog.Debug("card policy not re-queued", "device_id", deviceID, "reason", why)
+			return nil
+		}
+		payload, err := contractCardPolicyPayload(row.Payload)
+		if err != nil {
+			// A payload that cannot be read cannot be repaired, and sending it
+			// again would only repeat whatever the device already rejected.
+			return err
+		}
+		attempt := cardPolicyAttempts(row.Key)
+		id, err := EnqueueTx(ctx, tx, Item{
+			TenantID:       tenantID,
+			DeviceID:       deviceID,
+			Kind:           CardPolicyKind,
+			IdempotencyKey: cardPolicyRevivalKey(row.Key, attempt),
+			Payload:        payload,
+			ExpiresAt:      now.Add(CardPolicyTTL),
+		})
+		if err != nil {
+			return err
+		}
+		slog.Info("re-queued the card policy this device never took",
+			"tenant_id", tenantID, "device_id", deviceID, "command_id", id,
+			"attempt", attempt+1, "of", MaxCardPolicyDeliveries, "after", row.Key)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("card policy could not be re-queued",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+	}
+}
+
+// contractCardPolicyPayload re-renders a stored payload through the generated
+// contract type.
+//
+// Repairs as well as copies, and that is the point. The edge parses CardPolicy
+// with deny_unknown_fields over exactly four fields, and every payload this
+// deployment has ever stored carries a fifth: card_routes.go marshalled the
+// database row, whose updated_at is not on the wire contract. Verified against
+// the deployed binary on 2026-08-26 -- the device logged
+//
+//	command: invalid envelope: unknown field `updated_at`,
+//	expected one of `iccid`, `cellular_enabled`, `vertical`, `apn`
+//
+// and never answered. Re-rendering keeps the four contract fields verbatim and
+// drops what the contract does not define, so a redelivery of a row stored by
+// the old code is deliverable even though the original was not.
+func contractCardPolicyPayload(stored []byte) ([]byte, error) {
+	var command contract.UpdateCardPolicyCommand
+	if err := json.Unmarshal(stored, &command); err != nil {
+		return nil, err
+	}
+	if command.Kind == "" || len(command.Policies) == 0 {
+		return nil, errors.New("stored card policy payload carries no policies")
+	}
+	return json.Marshal(command)
 }
