@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/enroll"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/openapi"
@@ -425,4 +427,170 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// ---------------------------------------------------------------------------
+// The audit response schema against the struct that produces it.
+//
+// /v1/audit was documented as a list of free-form objects for as long as it was
+// answering under Go field names, and the document was not wrong -- it simply
+// did not say anything a reader could be let down by. That is the failure this
+// pair of tests exists for: a description vague enough to survive the bug is a
+// description that was never load-bearing.
+//
+// So the item schema now names its four properties, and this holds those names
+// to audit.Event's json tags. Two independent statements, made to agree by a
+// test, rather than one statement generated from the other -- generated docs
+// cannot disagree with the code, and therefore cannot catch it.
+// ---------------------------------------------------------------------------
+
+func TestAuditSchemaMatchesTheAuditEventStruct(t *testing.T) {
+	t.Parallel()
+
+	item := documentedAuditItem(t)
+	documented := map[string]openapi.Field{}
+	var described []string
+	for _, property := range item.Fields {
+		documented[property.Name] = property
+		described = append(described, property.Name)
+	}
+
+	structure := reflect.TypeOf(audit.Event{})
+	var encoded []string
+	for index := 0; index < structure.NumField(); index++ {
+		field := structure.Field(index)
+		if field.PkgPath != "" {
+			continue // unexported: never reaches the wire
+		}
+		tag, ok := field.Tag.Lookup("json")
+		if !ok {
+			t.Fatalf("audit.Event.%s carries no json tag, so it would go out as %q "+
+				"whatever this document claims", field.Name, field.Name)
+		}
+		name, options, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			continue
+		}
+		encoded = append(encoded, name)
+
+		property, ok := documented[name]
+		if !ok {
+			t.Errorf("audit.Event.%s is sent as %q and openapi.go does not mention it",
+				field.Name, name)
+			continue
+		}
+		if want := !strings.Contains(options, "omitempty"); property.Required != want {
+			t.Errorf("%q is documented required=%v but the struct tag says required=%v",
+				name, property.Required, want)
+		}
+		switch field.Type {
+		case reflect.TypeOf(""):
+			if property.Schema.Type != "string" {
+				t.Errorf("audit.Event.%s is a string; %q is documented as type %q",
+					field.Name, name, property.Schema.Type)
+			}
+		case reflect.TypeOf(json.RawMessage(nil)):
+			if !property.Schema.Free {
+				t.Errorf("audit.Event.%s is raw JSON whose keys are the action's own; "+
+					"%q has to be documented as a free object or the document claims "+
+					"a shape the gateway never promised", field.Name, name)
+			}
+		default:
+			t.Errorf("audit.Event.%s is a %s and this test does not know how such a "+
+				"field is documented. Teach it rather than deleting the case: an "+
+				"undescribed field is how this endpoint went wrong the first time",
+				field.Name, field.Type)
+		}
+	}
+
+	if !equalStrings(described, encoded) {
+		t.Errorf("openapi.go describes the audit item as %v; audit.Event encodes %v",
+			described, encoded)
+	}
+}
+
+// The same claim asked of the bytes the document is actually served as.
+//
+// The test above reads the Go values that build the document. Render walks them
+// again, and a schema it drops on the floor -- a nested Items, an object under
+// an array -- would leave the served document as silent as the free-form one it
+// replaced, with every in-process assertion still green.
+func TestTheRenderedAuditSchemaNamesItsProperties(t *testing.T) {
+	t.Parallel()
+
+	body, err := openapi.Render(apiDocument())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var root struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Content map[string]struct {
+					Schema map[string]any `json:"schema"`
+				} `json:"content"`
+			} `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(body, &root); err != nil {
+		t.Fatalf("the rendered document is not JSON: %v", err)
+	}
+
+	schema := root.Paths["/v1/audit"]["get"].Responses["200"].Content["application/json"].Schema
+	events := descend(t, schema, "properties", "events")
+	items := descend(t, events, "items")
+	properties := descend(t, items, "properties")
+
+	var names []string
+	for name := range properties {
+		names = append(names, name)
+		if name != strings.ToLower(name) {
+			t.Errorf("the served document describes an audit property named %q; a "+
+				"capitalised key here is the bug this endpoint already shipped", name)
+		}
+	}
+	sort.Strings(names)
+	if want := []string{"action", "actor", "detail", "target"}; !equalStrings(names, want) {
+		t.Errorf("rendered audit item properties = %v, want %v", names, want)
+	}
+}
+
+// documentedAuditItem returns the schema openapi.go gives one audit row.
+func documentedAuditItem(t *testing.T) openapi.Schema {
+	t.Helper()
+	for _, operation := range apiDocument().Operations {
+		if operation.Key() != "GET /v1/audit" {
+			continue
+		}
+		for _, response := range operation.Responses {
+			if response.Status != http.StatusOK || response.Schema == nil {
+				continue
+			}
+			for _, property := range response.Schema.Fields {
+				if property.Name != "events" {
+					continue
+				}
+				if property.Schema.Items == nil {
+					t.Fatal("the audit 200 documents events as an array with no item schema")
+				}
+				return *property.Schema.Items
+			}
+		}
+	}
+	t.Fatal("GET /v1/audit has no documented 200 body carrying an events array")
+	return openapi.Schema{}
+}
+
+// descend reads a nested object out of the rendered document, saying which step
+// was missing rather than panicking on a nil map.
+func descend(t *testing.T, node map[string]any, path ...string) map[string]any {
+	t.Helper()
+	for index, key := range path {
+		next, ok := node[key].(map[string]any)
+		if !ok {
+			t.Fatalf("the rendered audit schema has no object at %v (%q is %#v)",
+				path[:index+1], key, node[key])
+		}
+		node = next
+	}
+	return node
 }

@@ -739,10 +739,18 @@ func apiOperations() []openapi.Operation {
 		// ── audit ─────────────────────────────────────────────────────────
 		{
 			Method: "GET", Path: "/v1/audit", Tag: tagAudit,
-			Summary:  "Who changed what, newest first.",
+			Summary: "Who changed what, newest first.",
+			Description: "The one list route whose item shape is written out instead of left " +
+				"free. It is written out because it was wrong: audit.Event shipped with no " +
+				"struct tags, so this endpoint answered {\"Actor\": ...} while the " +
+				"console read \"actor\", dropped every row, and drew an empty audit log " +
+				"over a populated one. A free-form item schema described that endpoint " +
+				"perfectly and said nothing about it. The fields below are held to the Go " +
+				"struct by TestAuditSchemaMatchesTheAuditEventStruct, so the document " +
+				"cannot drift away from the bytes again.",
 			Security: []string{schemeSession},
 			Responses: []openapi.Response{
-				jsonOK("The events.", wrap("events", "One audited action.")),
+				jsonOK("The events.", wrapObjects("events", auditEventSchema())),
 				plain(500, "The audit log could not be read."),
 			},
 		},
@@ -1287,6 +1295,36 @@ func arrayOf(itemDescription string) openapi.Schema {
 // array.
 func wrap(key, itemDescription string) openapi.Schema {
 	return object(field(key, true, arrayOf(itemDescription)))
+}
+
+// wrapObjects is wrap for a list whose item shape is known field by field.
+//
+// arrayOf answers with a free-form object, which is honest for a payload the
+// gateway does not interpret and useless for one it produces itself. The
+// difference is not cosmetic: /v1/audit was documented with arrayOf while it
+// was answering under Go field names, and the document was not wrong, because
+// it did not say anything.
+func wrapObjects(key string, item openapi.Schema) openapi.Schema {
+	return object(field(key, true, openapi.Schema{Type: "array", Items: &item}))
+}
+
+// auditEventSchema is audit.Event as callers see it.
+//
+// Written here rather than derived from the struct by reflection on purpose: a
+// document generated from the code cannot disagree with the code, and so it
+// cannot catch the code being wrong. This is a second, independent statement of
+// the same shape, and a test makes the two agree.
+func auditEventSchema() openapi.Schema {
+	return openapi.Schema{
+		Type: "object", Description: "One audited action.",
+		Fields: []openapi.Field{
+			field("actor", true, str("Who did it. A user ID for a console action, or the name of the subsystem that acted.")),
+			field("action", true, str("What was done, as a stable identifier -- \"auth.login\", \"update_schedule\".")),
+			field("target", true, str("What it was done to. Empty when the action has no single subject.")),
+			field("detail", true, openapi.Schema{Free: true,
+				Description: "Whatever the action recorded about itself. The shape is per-action and the gateway does not interpret it. Null for a row written before the column was filled in."}),
+		},
+	}
 }
 
 func jsonOK(description string, schema openapi.Schema) openapi.Response {

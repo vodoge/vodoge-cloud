@@ -11,11 +11,18 @@ import (
 )
 
 // Event is one append-only audit row.
+//
+// The tags are wire format, not decoration. This struct is what GET /v1/audit
+// answers with, and it went out untagged for long enough that the console read
+// row.action, got undefined, dropped every row and drew an empty audit log over
+// a populated one -- silently, because a missing key is not an error anywhere.
+// The names match the app.audit_log columns below and the lowercase style every
+// other response struct in this gateway already uses.
 type Event struct {
-	Actor  string
-	Action string
-	Target string
-	Detail json.RawMessage
+	Actor  string          `json:"actor"`
+	Action string          `json:"action"`
+	Target string          `json:"target"`
+	Detail json.RawMessage `json:"detail"`
 }
 
 // Log records an event. Implementations must not update existing rows.

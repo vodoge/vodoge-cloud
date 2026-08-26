@@ -2875,3 +2875,94 @@ func TestTheUplinkStreamStillReachesASignedInConsole(t *testing.T) {
 		server.Close()
 	}
 }
+
+// ---------------------------------------------------------------------------
+// /v1/audit answers under the keys its only reader asks for.
+//
+// audit.Event shipped with no struct tags, so encoding/json marshalled it under
+// the Go field names and this endpoint answered
+//
+//	{"events":[{"Actor":...,"Action":...,"Target":...,"Detail":...}]}
+//
+// while the console asked for row.action, got undefined, dropped every row and
+// drew "Nothing recorded yet" over a populated audit log. Nothing threw, no
+// status code was wrong, and no test in either repository asked what the keys
+// were -- which is the whole reason it survived: the bug lived in the one place
+// neither side was looking.
+//
+// So this asserts the bytes, not a decoded struct. Unmarshalling into a Go type
+// with tags would pass under either spelling and prove nothing.
+func TestAuditEndpointAnswersUnderTheKeysTheConsoleReads(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	if err := proc.audit.Append(context.Background(), "t-a", audit.Event{
+		Actor:  "97747a3e-0000-0000-0000-000000000000",
+		Action: "proxy.instances_export_refused",
+		Target: "read-only account",
+		Detail: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	proc.handler().ServeHTTP(response,
+		authorize(httptest.NewRequest(http.MethodGet, "http://a.vodoge.com/v1/audit", nil)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	const want = `{"events":[{"actor":"97747a3e-0000-0000-0000-000000000000",` +
+		`"action":"proxy.instances_export_refused",` +
+		`"target":"read-only account","detail":{}}]}`
+	if got := strings.TrimSpace(response.Body.String()); got != want {
+		t.Fatalf("/v1/audit body =\n  %s\nwant\n  %s\n"+
+			"An audit row whose keys are not these is a row the console drops "+
+			"without raising anything.", got, want)
+	}
+}
+
+// The same claim asked of a caller that only knows the lowercase spelling.
+//
+// The body assertion above pins the exact bytes, which makes it strict but also
+// makes it a string comparison somebody could "fix" by pasting whatever the
+// server printed. This one reads the answer the way the console does -- ask for
+// the lowercase key, refuse anything that is not a string -- and needs no
+// knowledge of the encoder at all.
+func TestAuditRowsSurviveAConsoleShapedRead(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	for _, event := range []audit.Event{
+		{Actor: "console", Action: "auth.login", Target: "operator@example.com"},
+		{Actor: "console", Action: "create_enrollment_code", Target: "code-1"},
+	} {
+		if err := proc.audit.Append(context.Background(), "t-a", event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := getJSON(t, proc.handler(), "http://a.vodoge.com/v1/audit")
+	rows, ok := body["events"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("events = %#v, want two rows", body["events"])
+	}
+	var actions []string
+	for _, row := range rows {
+		record, ok := row.(map[string]any)
+		if !ok {
+			t.Fatalf("row = %#v", row)
+		}
+		for _, key := range []string{"actor", "action", "target"} {
+			if _, ok := record[key].(string); !ok {
+				t.Fatalf("row %#v has no string under %q -- a reader asking for "+
+					"that key drops the row and reports an empty audit log", record, key)
+			}
+		}
+		actions = append(actions, record["action"].(string))
+	}
+	sort.Strings(actions)
+	if want := []string{"auth.login", "create_enrollment_code"}; !equalStrings(actions, want) {
+		t.Fatalf("actions = %v, want %v", actions, want)
+	}
+}
