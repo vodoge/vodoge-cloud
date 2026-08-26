@@ -4,6 +4,24 @@ VoDoge Cloud is the multi-tenant control plane for VoDoge Edge devices. It is
 the authoritative home for tenant data, device commands, messaging history,
 rules, audit records, and the browser console.
 
+## License, and where to get the source
+
+This repository is under one license: the Apache License, Version 2.0. The full
+text is in [`LICENSE`](LICENSE), it applies to every path here, and there is no
+per-path exception. Third-party attribution is in [`NOTICE`](NOTICE).
+
+The source is published, free of charge and without an account, at
+<https://github.com/yuanshuai1122/vodoge-cloud>.
+
+`NOTICE` is not a claim that every dependency is permissive, and it is worth
+reading before you redistribute a build. The gateway's eleven third-party Go
+modules are MIT or BSD. Of the console's sixteen non-optional runtime packages,
+fifteen are MIT/ISC/BSD-3-Clause/0BSD/Apache-2.0 and one — `caniuse-lite` — is
+CC-BY-4.0, which binds you to attribution. Separately, `next` declares `sharp`
+as an *optional* dependency, and fourteen of `sharp`'s platform binaries carry
+LGPL-3.0-or-later; `NOTICE` section 4 records which of the two recipes in
+`deploy/` strips them out and which does not.
+
 ## Where this actually runs
 
 There is exactly **one** cloud host today, and **one** edge deployment. Nothing

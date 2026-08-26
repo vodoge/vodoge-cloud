@@ -1,0 +1,309 @@
+VoDoge Cloud
+Copyright (c) 2026 the VoDoge Cloud authors
+https://github.com/yuanshuai1122/vodoge-cloud
+
+This product is licensed under the Apache License, Version 2.0. The complete
+text is in LICENSE, and it covers every path in this repository -- there is no
+per-path exception.
+
+This file is the third-party attribution required by the licenses of the
+software this product depends on. It is not a claim that every dependency is
+permissively licensed. One dependency chain is not: read section 4.
+
+Nothing in this repository vendors third-party source. Every dependency below
+is resolved from its upstream registry (the Go module proxy, npm) at build time
+and is pinned in apps/gateway/go.mod, apps/gateway/go.sum and
+apps/console/package-lock.json. Those files are the authoritative list; the
+sections below record attribution, not a second inventory.
+
+
+================================================================================
+1. What this product distributes
+================================================================================
+
+Two artifacts leave a developer machine, and they carry different third-party
+content. Section 4 turns on that difference, so it is recorded here first.
+
+  vodoge-cloud-gateway   A Go binary built from apps/gateway. The modules in
+                         section 2 are compiled into it.
+
+  vodoge-cloud-console   A Next.js standalone bundle built from apps/console.
+                         The packages in section 3 are part of it. Whether the
+                         packages in section 4 are part of it depends on which
+                         of the two recipes in deploy/ produced it.
+
+Both run in container images built FROM alpine:3.22 and node:22-alpine, and the
+Compose project also runs stock postgres:18.4-alpine and redis:8.8.0-alpine.
+The contents of those base images are third-party software under their own
+licenses. They are not redistributed by this repository and are not covered by
+this NOTICE.
+
+
+================================================================================
+2. Go modules compiled into the gateway
+================================================================================
+
+apps/gateway requires twelve modules: five direct and seven indirect. One of
+them, github.com/vodoge/vodoge-cloud/packages/contract, is this repository (a
+`replace` directive pointing at packages/contract/go) and is covered by
+LICENSE. The other eleven are third-party:
+
+github.com/gorilla/websocket v1.5.3 -- BSD-2-Clause
+  Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.
+  https://github.com/gorilla/websocket
+
+github.com/jackc/pgx/v5 v5.7.4 -- MIT
+  Copyright (c) 2013-2021 Jack Christensen
+  https://github.com/jackc/pgx
+
+github.com/jackc/pgpassfile v1.0.0 -- MIT
+  Copyright (c) 2019 Jack Christensen
+  https://github.com/jackc/pgpassfile
+
+github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 -- MIT
+  Copyright (c) 2020 Jack Christensen
+  https://github.com/jackc/pgservicefile
+
+github.com/jackc/puddle/v2 v2.2.2 -- MIT
+  Copyright (c) 2018 Jack Christensen
+  https://github.com/jackc/puddle
+
+github.com/redis/go-redis/v9 v9.7.3 -- BSD-2-Clause
+  Copyright (c) 2013 The github.com/redis/go-redis Authors.
+  https://github.com/redis/go-redis
+
+github.com/cespare/xxhash/v2 v2.2.0 -- MIT
+  Copyright (c) 2016 Caleb Spare
+  https://github.com/cespare/xxhash
+
+github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f -- MIT
+  Copyright (c) 2017-2020 Damian Gryski <damian@gryski.com>
+  https://github.com/dgryski/go-rendezvous
+
+golang.org/x/crypto v0.31.0 -- BSD-3-Clause
+  Copyright 2009 The Go Authors.
+  https://cs.opensource.google/go/x/crypto
+
+golang.org/x/sync v0.10.0 -- BSD-3-Clause
+  Copyright 2009 The Go Authors.
+  https://cs.opensource.google/go/x/sync
+
+golang.org/x/text v0.21.0 -- BSD-3-Clause
+  Copyright 2009 The Go Authors.
+  https://cs.opensource.google/go/x/text
+
+apps/gateway/go.sum names eight further modules (bsm/ginkgo, bsm/gomega,
+davecgh/go-spew, pmezard/go-difflib, stretchr/objx, stretchr/testify,
+gopkg.in/check.v1, gopkg.in/yaml.v3). They are test dependencies of the modules
+above, sit outside the build closure declared by go.mod, and are not compiled
+into the gateway binary. They are named here only so that their absence from
+the list above is not mistaken for an omission.
+
+packages/contract/go declares no dependencies at all.
+
+
+================================================================================
+3. npm packages in the console's runtime dependency tree
+================================================================================
+
+apps/console/package-lock.json resolves 137 packages. Sixteen of them are
+production dependencies that are not optional -- every install of this project,
+on every platform, under either of the recipes in deploy/, has all sixteen:
+
+  @next/env          15.5.10       MIT           published by Vercel, Inc.; see the note below
+  @swc/helpers       0.5.15        Apache-2.0    published by the swc project, https://github.com/swc-project/swc
+  caniuse-lite       1.0.30001809  CC-BY-4.0     see section 3a
+  client-only        0.0.1         MIT           published by Vercel, Inc.; see the note below
+  clsx               2.1.1         MIT           Copyright (c) Luke Edwards
+  nanoid             3.3.18        MIT           Copyright 2017 Andrey Sitnik
+  next               15.5.10       MIT           Copyright (c) 2025 Vercel, Inc.
+  picocolors         1.1.1         ISC           Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov
+  postcss            8.4.31        MIT           Copyright 2013 Andrey Sitnik
+  react              19.2.1        MIT           Copyright (c) Meta Platforms, Inc. and affiliates
+  react-dom          19.2.1        MIT           Copyright (c) Meta Platforms, Inc. and affiliates
+  scheduler          0.27.0        MIT           Copyright (c) Meta Platforms, Inc. and affiliates
+  source-map-js      1.2.1         BSD-3-Clause  Copyright (c) 2009-2011, Mozilla Foundation and contributors
+  styled-jsx         5.1.6         MIT           Copyright (c) 2016-present Vercel, Inc.
+  tailwind-merge     2.6.1         MIT           Copyright (c) 2021 Dany Castillo
+  tslib              2.8.1         0BSD          Copyright (c) Microsoft Corporation
+
+@next/env and client-only ship without a LICENSE file of their own. The
+`license` field of their package.json says MIT, and both are published by
+Vercel out of the Next.js repository, whose own LICENSE reads
+"Copyright (c) 2025 Vercel, Inc.". @swc/helpers ships the Apache-2.0 text,
+which carries no separate copyright line.
+
+The MIT, ISC, BSD-3-Clause and 0BSD licenses above require that the copyright
+notice and the permission notice be reproduced with any redistribution. Those
+permission notices are the standard texts of those licenses. Every package in
+the table except @next/env and client-only ships its own copy in its package
+directory, and that copy travels with the package inside node_modules.
+
+
+--------------------------------------------------------------------------------
+3a. caniuse-lite -- CC-BY-4.0, attribution required
+--------------------------------------------------------------------------------
+
+caniuse-lite 1.0.30001809
+  Author: Ben Briggs <beneb.info@gmail.com>
+  Upstream: https://github.com/browserslist/caniuse-lite
+  Licensed under the Creative Commons Attribution 4.0 International License
+  (CC-BY-4.0): https://creativecommons.org/licenses/by/4.0/
+
+It is called out separately for two reasons. It is the only dependency in the
+tree under a content license rather than a software license, and attribution is
+its single binding condition -- an unattributed copy is a license violation
+even though nothing about it is copyleft.
+
+It is a non-optional production dependency of `next`, so it is present on every
+build of the console, on every platform, under either of the recipes in deploy/.
+No step in this repository removes it.
+
+Its own README describes it as "a smaller version of caniuse-db, with only the
+essentials" -- that is, a reduced form of the browser support tables behind
+https://caniuse.com/, which is where the CC-BY-4.0 on it comes from.
+
+
+================================================================================
+4. sharp and the @img/* platform binaries -- LGPL-3.0-or-later
+================================================================================
+
+This is the section that would make "every dependency is permissively licensed"
+a false statement, so it is written out in full.
+
+next 15.5.10 declares `sharp` as an OPTIONAL dependency, for image
+optimisation. sharp 0.34.5 in turn declares 24 `@img/*` platform packages as
+its own optional dependencies. In apps/console/package-lock.json every one of
+them carries `"optional": true` and is constrained by `os` and `cpu`, so any
+given machine installs only the handful that match its platform, never all 24.
+None of them is needed: the console builds with image optimisation disabled,
+and the artifact the production host runs has them deleted (see below).
+
+Fourteen of those entries carry LGPL-3.0-or-later:
+
+  @img/sharp-libvips-darwin-arm64     1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-darwin-x64       1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-arm        1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-arm64      1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-ppc64      1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-riscv64    1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-s390x      1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linux-x64        1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linuxmusl-arm64  1.2.4   LGPL-3.0-or-later
+  @img/sharp-libvips-linuxmusl-x64    1.2.4   LGPL-3.0-or-later
+  @img/sharp-win32-arm64              0.34.5  Apache-2.0 AND LGPL-3.0-or-later
+  @img/sharp-win32-ia32               0.34.5  Apache-2.0 AND LGPL-3.0-or-later
+  @img/sharp-win32-x64                0.34.5  Apache-2.0 AND LGPL-3.0-or-later
+  @img/sharp-wasm32                   0.34.5  Apache-2.0 AND LGPL-3.0-or-later AND MIT
+
+  All of the above are published by Lovell Fuller <npm@lovell.info>; sharp's
+  own notice reads "Copyright 2013 Lovell Fuller and others."
+
+  sharp:         https://github.com/lovell/sharp          (Apache-2.0)
+  sharp-libvips: https://github.com/lovell/sharp-libvips
+  libvips:       https://github.com/libvips/libvips
+  LGPL-3.0 text: https://www.gnu.org/licenses/lgpl-3.0.html
+
+The `@img/sharp-libvips-*` packages are prebuilt bundles of libvips and its
+dependency stack, and each ships a README.md carrying a per-library license
+table for what is inside it. The table in @img/sharp-libvips-linux-x64 1.2.4,
+read while writing this file, lists 29 upstream projects: LGPLv3 for
+libvips, glib, librsvg, pango, libheif, libexif, fribidi and proxy-libintl;
+MPL-2.0 for cairo; and permissive terms (MIT, BSD, Apache-2.0, zlib, libpng and
+similar) for the remaining twenty, one of which -- aom -- also carries the
+Alliance for Open Media Patent License 1.0. Those tables, not this file, are
+the authoritative statement of the contents of those bundles.
+
+What this repository does with them:
+
+  - It does not modify sharp, libvips, or any `@img/*` package. They are
+    consumed unmodified as published npm packages.
+
+  - No source file in this repository imports sharp. apps/console/next.config.ts
+    sets `images: { unoptimized: true }`, so nothing loads it at runtime.
+    Next.js traces it into the standalone output anyway, which is why the
+    removal below exists.
+
+Which artifact contains them:
+
+  - The recipe under "Producing the console artifact" in deploy/RUNBOOK.md --
+    the one that produces deploy/console-dist.tgz, which is what
+    deploy/Dockerfile.console.prebuilt extracts and what the production host
+    runs -- executes `rm -rf .next/standalone/node_modules/@img` before packing.
+    An artifact produced by following that recipe therefore contains no `@img/*`
+    package, and none of the LGPL-licensed code listed above.
+
+  - deploy/Dockerfile.console builds from source, runs a plain `npm ci`, and
+    performs no equivalent removal. It refuses to build unless invoked with
+    `--build-arg VODOGE_BUILD_FROM_SOURCE=yes`. An image produced that way would
+    contain the `@img/*` packages matching its build platform.
+
+If an image of the second kind is ever conveyed to anyone, the LGPL-3.0
+obligations for those packages apply to that conveyance: the license text must
+travel with it, the use of the library must be stated, and the recipient must
+be able to obtain the library's source and to relink a modified version. The
+upstream sources are at the URLs above, published free of charge and without an
+account. This paragraph records the obligation. It does not assert that such an
+image has been built or distributed.
+
+
+================================================================================
+5. Optional and build-time-only dependencies
+================================================================================
+
+Of the 137 entries in apps/console/package-lock.json, 16 are covered by section
+3. The remaining 121 split as follows.
+
+Thirty-seven are production dependencies marked `"optional": true`. Twenty-four
+of those are the `@img/sharp-*` platform packages: fourteen carry LGPL and are
+listed in section 4; the other ten, all 0.34.5 and all Apache-2.0, are
+
+  @img/sharp-darwin-arm64      @img/sharp-linux-ppc64    @img/sharp-linux-x64
+  @img/sharp-darwin-x64        @img/sharp-linux-riscv64  @img/sharp-linuxmusl-arm64
+  @img/sharp-linux-arm         @img/sharp-linux-s390x    @img/sharp-linuxmusl-x64
+  @img/sharp-linux-arm64
+
+("Copyright 2013 Lovell Fuller and others", same upstream as section 4). These
+ten are the sharp bindings only: each declares the matching LGPL-licensed
+`@img/sharp-libvips-*` package as its own optional dependency, which is where
+the LGPL content sits. The four win32 and wasm32 packages declare no such
+dependency and carry a combined license expression instead, the libvips content
+being inside them.
+
+The remaining thirteen optional production entries are:
+
+  @next/swc-darwin-arm64, @next/swc-darwin-x64, @next/swc-linux-arm64-gnu,
+  @next/swc-linux-arm64-musl, @next/swc-linux-x64-gnu, @next/swc-linux-x64-musl,
+  @next/swc-win32-arm64-msvc, @next/swc-win32-x64-msvc
+                                    15.5.7  MIT         published by Vercel, Inc. from vercel/next.js; no LICENSE file, license field MIT
+  sharp                             0.34.5  Apache-2.0  "Copyright 2013 Lovell Fuller and others"
+  @img/colour                       1.1.0   MIT         Copyright (c) 2012 Heather Arthur; republished by Lovell Fuller
+  @emnapi/runtime                   1.11.3  MIT         a dependency of @img/sharp-wasm32
+  detect-libc                       2.1.2   Apache-2.0  published by Lovell Fuller
+  semver                            7.8.5   ISC         Copyright (c) Isaac Z. Schlueter and Contributors
+
+The `@next/swc-*` binaries are the Next.js compiler; they run on the machine
+that builds the console. Note that they are pinned at 15.5.7 while `next`
+itself is 15.5.10 -- that is what the lockfile resolves, not a typo here.
+
+The last 84 entries are marked `dev`: TypeScript, Tailwind CSS, PostCSS and its
+plugins, the type definitions, and their transitive dependencies. They run on
+the machine that builds the console and are not part of either artifact, so
+they are not attributed individually. Their licenses, as recorded in
+package-lock.json, are MIT (74), ISC (6) and Apache-2.0 (4). No entry in the
+lockfile is missing a `license` field, and no dev entry carries a copyleft
+license.
+
+
+================================================================================
+6. Where to get the source
+================================================================================
+
+The source for this product is published, free of charge and without an
+account, at:
+
+    https://github.com/yuanshuai1122/vodoge-cloud
+
+The source for every third-party dependency named above is at the upstream URL
+given with it, or is resolvable from the version pinned in apps/gateway/go.mod,
+apps/gateway/go.sum and apps/console/package-lock.json.
