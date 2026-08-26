@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start --port 3000",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types lib/host.test.ts lib/tenant.test.ts lib/catalog.test.ts lib/plmn.test.ts lib/session.test.ts lib/tokens.test.ts lib/pwa.test.ts lib/sms-safety.test.ts scripts/check-i18n.mjs"
+    "test": "node --test --experimental-strip-types lib/host.test.ts lib/tenant.test.ts lib/catalog.test.ts lib/plmn.test.ts lib/session.test.ts lib/tokens.test.ts lib/pwa.test.ts lib/sms-safety.test.ts lib/i18n.test.ts lib/interpolate.test.ts scripts/check-i18n.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

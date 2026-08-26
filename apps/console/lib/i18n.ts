@@ -1,7 +1,24 @@
+import { interpolate } from "./interpolate.ts";
 import en from "../messages/en.json" with { type: "json" };
 import zh from "../messages/zh.json" with { type: "json" };
 
 export type Locale = "zh" | "en";
+
+/**
+ * A key both catalogues have.
+ *
+ * The intersection is the guard: adding a key to `zh.json` alone does not
+ * widen `MessageKey`, so the first `t("device.newThing")` that names it is a
+ * type error rather than a `⟦device.newThing⟧` an English-speaking operator
+ * discovers in production. `scripts/check-i18n.mjs` catches the same defect
+ * from the other side, at runtime, including for keys reached by lookup that
+ * no literal in the source names. Both are wanted; neither subsumes the other.
+ *
+ * This is why the two JSON imports above stay static. A dynamic import, or a
+ * `readFileSync`, would make the catalogues invisible to the type system and
+ * cost this guard — see `lib/interpolate.test.ts`, which fails if the
+ * intersection is replaced by a union or by `string`.
+ */
 export type MessageKey = keyof typeof zh & keyof typeof en;
 
 export const catalogs: Record<Locale, Record<MessageKey, string>> = { zh, en };
@@ -10,24 +27,26 @@ export const DEFAULT_LOCALE: Locale = "zh";
 export const LOCALE_COOKIE = "vodoge.locale";
 export const MISSING_KEY_PATTERN = /^⟦.+⟧$/;
 
+/**
+ * Re-exported so that `import { interpolate } from "@/lib/i18n"` keeps working
+ * for the callers that already write it, while the function itself lives in a
+ * module that pulls in no catalogue.
+ *
+ * The re-export is not decoration: with `sideEffects` declared in
+ * `package.json`, webpack resolves this specifier straight through to
+ * `lib/interpolate.ts`, finds nothing else in this module used, and leaves
+ * both catalogues out of the importing chunk. `lib/interpolate.test.ts`
+ * measures that, so the day someone deletes the re-export and moves the body
+ * back here, a test says so instead of a build table.
+ */
+export { interpolate };
+
 export function isLocale(value: string | undefined | null): value is Locale {
   return value === "zh" || value === "en";
 }
 
 export function htmlLang(locale: Locale): string {
   return locale === "en" ? "en" : "zh-CN";
-}
-
-export function interpolate(
-  template: string,
-  vars?: Record<string, string | number>,
-): string {
-  if (!vars) {
-    return template;
-  }
-  return template.replace(/\{(\w+)\}/g, (_, name: string) =>
-    vars[name] == null ? `{${name}}` : String(vars[name]),
-  );
 }
 
 /**
