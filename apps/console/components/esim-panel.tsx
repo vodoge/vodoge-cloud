@@ -19,10 +19,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  ESIM_CHIP_COMMANDS,
   esimProfileRowsFromReads,
   esimReadFailures,
   latestEsimChipReads,
   latestEsimProfileListings,
+  mergeCommandBatches,
   mergeEsimProfiles,
   parseEsimAuthentication,
   parseEsimDownload,
@@ -163,11 +165,27 @@ export function EsimPanel({
   );
 
   const refresh = useCallback(async () => {
-    const query = new URLSearchParams({ device_id: deviceId, limit: "60" });
-    const response = await fetch(`/v1/commands?${query}`, { cache: "no-store" });
-    if (!response.ok) return;
-    const body = (await response.json()) as { commands?: CommandRow[] };
-    setCommands(body.commands ?? []);
+    const unfilteredQuery = new URLSearchParams({ device_id: deviceId, limit: "60" });
+    const unfilteredResp = await fetch(`/v1/commands?${unfilteredQuery}`, { cache: "no-store" });
+    const unfilteredCmds: CommandRow[] = unfilteredResp.ok
+      ? ((await unfilteredResp.json()) as { commands?: CommandRow[] }).commands ?? []
+      : [];
+
+    // Fetch each eSIM chip command kind separately.  The unfiltered window
+    // holds the last 60 commands of any kind: if other traffic fills it, an
+    // eSIM failure that occurred on day one can silently scroll out.  A
+    // kind-filtered query for each entry in ESIM_CHIP_COMMANDS is a
+    // purpose-built lens that cannot be crowded out that way.
+    const kindBatches = await Promise.all(
+      [...ESIM_CHIP_COMMANDS].map(async (kind) => {
+        const q = new URLSearchParams({ device_id: deviceId, kind, limit: "60" });
+        const resp = await fetch(`/v1/commands?${q}`, { cache: "no-store" });
+        if (!resp.ok) return [] as CommandRow[];
+        return ((await resp.json()) as { commands?: CommandRow[] }).commands ?? [];
+      }),
+    );
+
+    setCommands(mergeCommandBatches(unfilteredCmds, ...kindBatches));
   }, [deviceId]);
 
   useEffect(() => {
