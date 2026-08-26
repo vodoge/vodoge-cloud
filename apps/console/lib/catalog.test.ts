@@ -15,8 +15,11 @@ import {
   esimProfileDisplayName,
   esimProfileRowsFromReads,
   esimReadFailures,
+  ESIM_CHIP_COMMANDS,
   latestEsimProfileListings,
+  mergeCommandBatches,
   mergeEsimProfiles,
+  type EsimCommandRow,
   parseDevice,
   parseEsimAuthentication,
   parseEsimDownload,
@@ -1118,6 +1121,72 @@ test("a reading with no EID identifies nothing and is dropped", () => {
   assert.equal(parseEsimInfoResult({ imei: "867018069514820" }), null);
   assert.equal(parseEsimInfoResult(null), null);
   assert.equal(parseEsimInfoResult("nope"), null);
+});
+
+test("ESIM_CHIP_COMMANDS names the two kinds that open an ISD-R channel", () => {
+  assert.ok(ESIM_CHIP_COMMANDS.has("read_esim_info"));
+  assert.ok(ESIM_CHIP_COMMANDS.has("list_esim_profiles"));
+  assert.equal(ESIM_CHIP_COMMANDS.size, 2);
+});
+
+test("mergeCommandBatches deduplicates across batches by id", () => {
+  const a = [
+    { id: "1", kind: "read_esim_info" },
+    { id: "2", kind: "at_command" },
+  ];
+  const b = [
+    { id: "2", kind: "at_command" }, // duplicate of a[1]
+    { id: "3", kind: "list_esim_profiles" },
+  ];
+  const merged = mergeCommandBatches(a, b);
+  assert.equal(merged.length, 3);
+  assert.deepEqual(
+    merged.map((r) => r.id),
+    ["1", "2", "3"],
+  );
+});
+
+test("mergeCommandBatches preserves order: first batch first, then new ids", () => {
+  const first = [{ id: "a" }, { id: "b" }];
+  const second = [{ id: "b" }, { id: "c" }];
+  const merged = mergeCommandBatches(first, second);
+  assert.deepEqual(
+    merged.map((r) => r.id),
+    ["a", "b", "c"],
+  );
+});
+
+test("a read failure scrolled past the 60-command window is recovered when kind-filtered rows are merged", () => {
+  // 60 non-eSIM commands fill the unfiltered window, pushing the failure out.
+  // This reproduces the scenario from 2026-08-24: 867018069509705 had its
+  // only read_esim_info at position 61+, so the panel showed nothing.
+  type TestRow = EsimCommandRow & { id: string };
+  const window60: TestRow[] = Array.from({ length: 60 }, (_, i) => ({
+    id: `cmd-${i}`,
+    kind: "at_command",
+    status: "succeeded",
+    completed_at: i + 100,
+    payload: { modem_imei: "867018069509705" },
+    result: null,
+  }));
+  const beyondWindow: TestRow = {
+    id: "cmd-esim",
+    kind: "read_esim_info",
+    status: "failed",
+    completed_at: 50,
+    payload: { modem_imei: "867018069509705" },
+    result: { status: "failed", reason: REAL_ISDR_REFUSAL },
+  };
+
+  // Without kind-filter (today's unfiltered-only behavior): failure invisible.
+  assert.equal(esimReadFailures(window60).length, 0);
+
+  // With kind-filter merged in: failure is recovered and correctly classified.
+  const merged = mergeCommandBatches(window60, [beyondWindow]);
+  const failures = esimReadFailures(merged);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].cause, "no-euicc");
+  assert.equal(failures[0].modemImei, "867018069509705");
 });
 
 test("a card that refused the notification query says so rather than looking empty", () => {

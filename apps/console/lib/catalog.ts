@@ -1129,7 +1129,7 @@ export type EsimChipReading = {
 };
 
 /** The two eSIM commands that open an ISD-R channel and can fail doing it. */
-const ESIM_CHIP_COMMANDS = new Set(["read_esim_info", "list_esim_profiles"]);
+export const ESIM_CHIP_COMMANDS = new Set(["read_esim_info", "list_esim_profiles"]);
 
 /**
  * The most recent successful chip reading per EID.
@@ -1393,6 +1393,31 @@ export function esimReadFailures(
           : ("read-failed" as const),
     }))
     .sort((left, right) => left.modemImei.localeCompare(right.modemImei));
+}
+
+/**
+ * Merges multiple command batches, removing duplicates by id.
+ *
+ * The eSIM panel fetches the last 60 commands without a kind filter and, in
+ * addition, the last 60 commands per kind in ESIM_CHIP_COMMANDS.  Older eSIM
+ * failures that have scrolled out of the unfiltered window are still present
+ * in the kind-filtered result.  This function combines all batches so that
+ * esimReadFailures sees the full picture without double-counting a command
+ * that appears in both.
+ */
+export function mergeCommandBatches<T extends { id: string }>(
+  ...batches: readonly (readonly T[])[]
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const batch of batches) {
+    for (const row of batch) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row);
+    }
+  }
+  return out;
 }
 
 function parseEsimNotification(value: unknown): EsimNotificationRow | null {
