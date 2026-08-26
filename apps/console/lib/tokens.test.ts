@@ -874,12 +874,25 @@ const WASHES = ["accent-wash", "ok-wash"] as const;
  * sites that exist today, so a page built next month is covered without anyone
  * remembering to come back here.
  *
- * The stacked entries are not hypothetical. `components/conversation.tsx:377`
- * puts a `bg-ok-wash` delivery badge inside `INBOX.messageOut`, which is
- * `bg-accent-wash` — a green pill on a green bubble on a surface, and the
- * darkest backdrop any green word actually lands on. A green badge on a
- * *hovered* table row (`TABLE.row` is `hover:bg-surface-hover`) is the other
- * one, and both are darker than the plain white that a naive check would use.
+ * One stacked entry is real and the description of it used to be wrong twice
+ * over. `components/conversation.tsx:377` does put a `bg-ok-wash` delivery
+ * badge inside `INBOX.messageOut`, so a badge inside a bubble is a genuine
+ * nesting — but T001 took the hue out of `--accent-wash`, so **it is a green
+ * pill on a NEUTRAL bubble, not "a green pill on a green bubble"**, and that
+ * is a lighter backdrop than the phrase implies.
+ *
+ * The other one was never real at all. "A green badge on a *hovered* table
+ * row" reads as an observed site and is not: `TABLE.row` does carry
+ * `hover:bg-surface-hover`, but the conversation is an `ol`/`li` outside that
+ * subtree, so no badge is ever on a hovered row. `lib/contrast.test.ts`
+ * §456-465 struck the same sentence.
+ *
+ * ⇒ The cross product below is a **deliberate superset**, and it stays one.
+ * Which wash ends up inside which is a fact about JSX and no test in this app
+ * can read a `.tsx`; a superset can only ever measure a colour somewhere
+ * darker than it really lands, which is the safe direction. What it must not
+ * do is claim to be a census of rendered sites — that claim is what let a
+ * non-existent stack be reported to a user as a defect.
  */
 function everyBackdrop(
   colours: Record<string, { readonly dark: string; readonly light: string }>,
@@ -1207,11 +1220,20 @@ test("the status four are pinned as hexes and the accent is four identities", ()
  *
  * ⚠️ **The stacked entries are a deliberate superset and were not narrowed to
  * make this pass.** The literal red site today is a `bg-bad-wash text-bad`
- * badge inside `INBOX.messageOut` (`bg-accent-wash`) on a hovered row, which
- * composites to #4e3a3b and now measures 5.784 — easier than #284f3e. Trimming
- * the set to the sites that exist this month is the move that produced the
- * defect in the first place, one level further out, so the superset stands and
- * the colours were moved to meet it.
+ * badge inside `INBOX.messageOut` (`bg-accent-wash`), which composites to
+ * #413030 and is easier than #284f3e. Trimming the set to the sites that exist
+ * this month is the move that produced the defect in the first place, one
+ * level further out, so the superset stands and the colours were moved to meet
+ * it.
+ *
+ * ⚠️ **This used to read "… on a hovered row, which composites to #4e3a3b".
+ * There is no such row.** The conversation is an `ol`/`li` with no hover
+ * variant; the only `hover:bg-surface-hover` is `TABLE.row`, which is not in
+ * that subtree. `lib/contrast.test.ts` §456-465 struck the same sentence and
+ * the correction did not reach here. The hue is what mattered and it is
+ * unchanged: the deepest stack that really is painted is the badge on the
+ * neutral bubble, and the defect these two colours were moved for was real
+ * without it.
  *
  * 🔴 **How the two were re-derived.** Each holds its hue and has its saturation
  * at the sRGB ceiling, so only lightness moved, and it moved the least that

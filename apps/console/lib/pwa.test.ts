@@ -26,6 +26,7 @@ import {
   type ConnectionHost,
   type FetchLike,
 } from "./pwa.ts";
+import * as ALL_TOKENS from "./tokens.ts";
 import { COLOR_TOKENS, PWA, SAFE_AREA } from "./tokens.ts";
 
 /**
@@ -940,77 +941,391 @@ test("the install dialog has a screenshot of each shape, at the declared size", 
  * the layout has to have been done at the frame's own width.
  */
 
-/** Every dark-theme token colour, packed, so a pixel costs one lookup. */
-function darkTokenPalette(): Map<number, string> {
-  const packed = new Map<number, string>();
-  for (const value of Object.values(COLOR_TOKENS)) {
-    const hex = value.dark.toLowerCase();
-    // The soft tints are rgba() and never land on an exact pixel; skip them
-    // rather than pretend a translucent token has a colour of its own.
-    if (!/^#[0-9a-f]{6}$/.test(hex)) continue;
-    const [r, g, b] = rgbOf(hex);
-    packed.set((r << 16) | (g << 8) | b, hex);
+const COLOURS: Record<string, Record<string, string>> = COLOR_TOKENS;
+const pack = (r: number, g: number, b: number) => (r << 16) | (g << 8) | b;
+const unpack = (v: number): [number, number, number] => [v >> 16, (v >> 8) & 0xff, v & 0xff];
+const hexOf = (v: number) => "#" + v.toString(16).padStart(6, "0");
+
+/**
+ * Every colour the palette this console ships can put on a dark screen.
+ *
+ * Derived from COLOR_TOKENS and nothing else — no list of names anywhere in
+ * this file. Two kinds go in:
+ *
+ *   - the opaque values, deduplicated BY VALUE, because a pixel cannot tell
+ *     `--fg` from `--accent` when both are #f5f5f5;
+ *   - every wash composited over every opaque value, and over those
+ *     composites, because a wash is a tint and lands as the blend rather than
+ *     as its own rgba(). Two deep is the same superset lib/contrast.test.ts
+ *     reasons about, and it is the depth the console can actually stack.
+ */
+function paintableColours(): Map<number, string> {
+  const opaque: [string, [number, number, number]][] = [];
+  const washes: [string, [number, number, number], number][] = [];
+  for (const [name, value] of Object.entries(COLOURS)) {
+    const dark = value.dark.toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(dark)) {
+      opaque.push([name, rgbOf(dark)]);
+      continue;
+    }
+    const parts = dark.match(/rgba\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+([0-9.]+)\s*\)/);
+    if (parts) {
+      washes.push([name, [Number(parts[1]), Number(parts[2]), Number(parts[3])], Number(parts[4])]);
+    }
   }
-  return packed;
+  assert.ok(opaque.length > 0 && washes.length > 0, "COLOR_TOKENS parsed to nothing");
+
+  // Two roundings, because the browser and the arithmetic disagree by one.
+  // Chromium quantises alpha to 8 bits BEFORE compositing, so `--accent-wash`
+  // at 0.1 is 26/255 and lands on #252525 over `--surface`, where exact
+  // arithmetic says #242424. Measured off the real capture, not assumed —
+  // #252525 covers 1,876 px of the wide frame and was the largest colour the
+  // first draft of this could not explain.
+  const roundings: ((
+    tint: [number, number, number],
+    alpha: number,
+    base: [number, number, number],
+  ) => [number, number, number])[] = [
+    (tint, alpha, base) => [
+      Math.round(alpha * tint[0] + (1 - alpha) * base[0]),
+      Math.round(alpha * tint[1] + (1 - alpha) * base[1]),
+      Math.round(alpha * tint[2] + (1 - alpha) * base[2]),
+    ],
+    (tint, alpha, base) => {
+      const a8 = Math.round(alpha * 255);
+      return [
+        Math.round((a8 * tint[0] + (255 - a8) * base[0]) / 255),
+        Math.round((a8 * tint[1] + (255 - a8) * base[1]) / 255),
+        Math.round((a8 * tint[2] + (255 - a8) * base[2]) / 255),
+      ];
+    },
+  ];
+
+  const found = new Map<number, string>();
+  let layer: [string, [number, number, number]][] = [];
+  for (const [name, rgb] of opaque) {
+    const key = pack(...rgb);
+    if (!found.has(key)) found.set(key, `--${name}`);
+    layer.push([`--${name}`, rgb]);
+  }
+  for (let depth = 0; depth < 2; depth++) {
+    const next: [string, [number, number, number]][] = [];
+    for (const [why, base] of layer) {
+      for (const [name, tint, alpha] of washes) {
+        for (const round of roundings) {
+          const blended = round(tint, alpha, base);
+          const key = pack(...blended);
+          if (!found.has(key)) {
+            found.set(key, `--${name} over ${why}`);
+            next.push([`--${name} over ${why}`, blended]);
+          }
+        }
+      }
+    }
+    layer = next;
+  }
+  return found;
 }
 
 /**
- * The tokens this page genuinely paints, and therefore the ones a stale file
- * would betray. Measured when these images were made — narrow / wide:
- * bg 279271/198705, surface 913047/721768, surface-raised 34956/50845,
- * surface-hover 16134/3892, line 17121/16238, fg 5746/2716,
- * fg-muted 6077/1346, fg-faint 3780/1200.
+ * Antialiasing slack. A glyph edge is a straight blend between the ink and
+ * whatever is behind it, so it lands ON the segment joining two paintable
+ * colours — one shared fraction for all three channels.
  *
- * `fg-strong` (3 px / 0 px) and `line-strong` (528 / 132) are deliberately out.
- * A token the overview does not paint cannot make the screenshot stale, and
- * demanding it would only make this red the day a layout stops using it.
+ * 🔴 **That is only true because the capture disables LCD text.** At dpr=1
+ * Chromium subpixel-antialiases by default: R, G and B interpolate
+ * INDEPENDENTLY, which fills the whole axis-aligned box between ink and
+ * backdrop rather than the segment across it. Measured consequence — the
+ * retired #63a4ff is a perfectly legal per-channel blend of #0d0d0d and the
+ * current #97c3ff, so under subpixel antialiasing no arithmetic can tell a
+ * dead token from a live glyph edge. The capture recipe records the flag and
+ * the reason; if these files are ever recaptured without it this test goes red
+ * on hundreds of colour fringes, which is the safe direction.
  */
-const SCREENSHOT_TOKENS = [
-  "bg",
-  "surface",
-  "surface-raised",
-  "surface-hover",
-  "line",
-  "fg",
-  "fg-muted",
-  "fg-faint",
-] as const;
+const BLEND_SLACK = 3;
 
-test("the install dialog's screenshots are painted in the palette this console ships", () => {
-  const palette = darkTokenPalette();
-  for (const shot of consoleManifest().screenshots) {
-    const image = pngPixels(readPublic(shot.src.slice(1)));
-    const counts = new Map<string, number>();
-    let tokenPixels = 0;
-    for (let y = 0; y < image.height; y++) {
-      for (let x = 0; x < image.width; x++) {
-        const p = image.at(x, y);
-        const hex = palette.get((p[0] << 16) | (p[1] << 8) | p[2]);
-        if (hex === undefined) continue;
-        counts.set(hex, (counts.get(hex) ?? 0) + 1);
-        tokenPixels++;
+/** Is `c` on a straight blend between two paintable colours? */
+function isGlyphEdge(c: [number, number, number], palette: [number, number, number][]): boolean {
+  for (let i = 0; i < palette.length; i++) {
+    const a = palette[i];
+    for (let j = i + 1; j < palette.length; j++) {
+      const b = palette[j];
+      // Bounding box first; it rejects almost every pair for almost no work.
+      if (c[0] < Math.min(a[0], b[0]) - BLEND_SLACK || c[0] > Math.max(a[0], b[0]) + BLEND_SLACK) continue;
+      if (c[1] < Math.min(a[1], b[1]) - BLEND_SLACK || c[1] > Math.max(a[1], b[1]) + BLEND_SLACK) continue;
+      if (c[2] < Math.min(a[2], b[2]) - BLEND_SLACK || c[2] > Math.max(a[2], b[2]) + BLEND_SLACK) continue;
+      // Take the shared fraction off the channel with the most to say.
+      let axis = 0;
+      let span = Math.abs(a[0] - b[0]);
+      for (let k = 1; k < 3; k++) {
+        const d = Math.abs(a[k] - b[k]);
+        if (d > span) {
+          span = d;
+          axis = k;
+        }
+      }
+      if (span < 8) continue;
+      const t = (c[axis] - a[axis]) / (b[axis] - a[axis]);
+      if (t < -0.02 || t > 1.02) continue;
+      if (
+        Math.abs(a[0] + t * (b[0] - a[0]) - c[0]) <= BLEND_SLACK &&
+        Math.abs(a[1] + t * (b[1] - a[1]) - c[1]) <= BLEND_SLACK &&
+        Math.abs(a[2] + t * (b[2] - a[2]) - c[2]) <= BLEND_SLACK
+      ) {
+        return true;
       }
     }
+  }
+  return false;
+}
 
-    // Read off COLOR_TOKENS rather than written down here: a hex typed into
-    // this file would go on passing after the palette moved, which is the
-    // exact failure these images already shipped once.
-    for (const name of SCREENSHOT_TOKENS) {
-      const hex = COLOR_TOKENS[name].dark.toLowerCase();
-      assert.ok(
-        (counts.get(hex) ?? 0) >= 500,
-        `${shot.src} has ${counts.get(hex) ?? 0} pixels of --${name} (${hex}) — ` +
-          `the palette moved and this file was not recaptured with it`,
-      );
+/** Every distinct colour in a screenshot, with its pixel count. */
+function colourCensus(name: string): { counts: Map<number, number>; width: number; height: number } {
+  const image = pngPixels(readPublic(name));
+  const counts = new Map<number, number>();
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const p = image.at(x, y);
+      const key = pack(p[0], p[1], p[2]);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
+  }
+  return { counts, width: image.width, height: image.height };
+}
 
-    // The counterweight: every named token could be present while most of the
-    // frame was something else entirely. 96.9% / 97.4% when captured.
-    const share = tokenPixels / (image.width * image.height);
+/*
+ * 🔴 THERE USED TO BE A HAND-WRITTEN LIST OF EIGHT TOKEN NAMES HERE, AND IT IS
+ * WHY A RETIRED COLOUR SHIPPED.
+ *
+ * The list named the tokens the overview paints and deliberately left the four
+ * status colours out, on the reasoning that a token the page does not paint
+ * cannot make the screenshot stale. The reasoning is sound and the list was
+ * accurate the day it was written. Then T010 retired `--info` #63a4ff, nobody
+ * rescanned, and the install dialog went on showing 26 pixels of a dead colour
+ * with every check green — because no listed token had moved, and the 0.9
+ * token-share floor cannot feel 26 pixels against a measured 97.4%.
+ *
+ * The replacement asks the question the other way round, which needs no list
+ * at all: instead of "are the tokens I remember still here?", it asks **"is
+ * every colour in this file one the palette can still produce?"** A retired
+ * value fails that on its first pixel. 26 is as red as 26,000.
+ *
+ * This is the third time on this board that a hand-enumerated set under-
+ * reported, and the first time it happened inside a guard written specifically
+ * to stop palette drift.
+ */
+
+test("no colour in the install dialog's screenshots is outside the palette this console ships", () => {
+  const paintable = paintableColours();
+  const list = [...paintable.keys()].map(unpack);
+  // Non-vacuity: a palette that derived to nothing would pass everything.
+  assert.ok(paintable.size > 40, `only ${paintable.size} paintable colours derived`);
+
+  for (const shot of consoleManifest().screenshots) {
+    const { counts, width, height } = colourCensus(shot.src.slice(1));
+    const foreign: [number, number][] = [];
+    let exact = 0;
+    for (const [key, n] of counts) {
+      if (paintable.has(key)) {
+        exact += n;
+        continue;
+      }
+      if (isGlyphEdge(unpack(key), list)) continue;
+      foreign.push([key, n]);
+    }
+    foreign.sort((a, b) => b[1] - a[1]);
+
+    assert.deepEqual(
+      foreign.map(([key, n]) => `${hexOf(key)} x${n}`),
+      [],
+      `${shot.src} contains colours this palette cannot produce — either a token was retired ` +
+        `and this file was not recaptured, or the capture used subpixel antialiasing`,
+    );
+
+    // The counterweight, kept: every colour could be legal while the frame was
+    // mostly something else. 96.9% / 97.4% when T013 captured; 97.0% / 97.1% now.
+    const share = exact / (width * height);
     assert.ok(
       share >= 0.9,
-      `only ${(share * 100).toFixed(1)}% of ${shot.src} is a token colour — it is not this palette`,
+      `only ${(share * 100).toFixed(1)}% of ${shot.src} is an exact palette colour`,
     );
+  }
+});
+
+/**
+ * The pairing rule, and the one that would have caught this card's defect on
+ * its own — including in a frame captured with subpixel antialiasing.
+ *
+ * A status wash is only ever painted behind that status token's own word:
+ * `BADGE.tone.info` is `bg-info-wash text-info`, and the four tones are built
+ * the same way. So a wash and its ink travel together, and a frame that shows
+ * `--info-wash` while showing no `--info` is a frame whose blue word is some
+ * other blue — which is exactly what shipped.
+ *
+ * Derived by name from the `-wash` suffix, the same convention lib/contrast
+ * .test.ts classifies roles by, so a fifth status tone is covered the day it
+ * is added. Silent for a wash that does not appear; a wash the overview never
+ * paints cannot say anything about the ink.
+ */
+test("a status wash never appears in a screenshot without the word it sits behind", () => {
+  const opaque: [string, [number, number, number]][] = [];
+  const washes: [string, [number, number, number], number][] = [];
+  for (const [name, value] of Object.entries(COLOURS)) {
+    const dark = value.dark.toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(dark)) opaque.push([name, rgbOf(dark)]);
+    const parts = dark.match(/rgba\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+([0-9.]+)\s*\)/);
+    if (parts) {
+      washes.push([name, [Number(parts[1]), Number(parts[2]), Number(parts[3])], Number(parts[4])]);
+    }
+  }
+  const surfaces = opaque.filter(([name]) => /^(bg|surface)(-|$)/.test(name));
+  assert.ok(surfaces.length >= 4, `only ${surfaces.length} surface tiers found`);
+  assert.ok(washes.length >= 4, `only ${washes.length} washes found`);
+
+  // Both frames together: the narrow one crops the page higher up, so a badge
+  // can be in one and not the other, and neither alone is the whole answer.
+  const total = new Map<number, number>();
+  for (const shot of consoleManifest().screenshots) {
+    for (const [key, n] of colourCensus(shot.src.slice(1)).counts) {
+      total.set(key, (total.get(key) ?? 0) + n);
+    }
+  }
+
+  for (const [washName, tint, alpha] of washes) {
+    const inkName = washName.replace(/-wash$/, "");
+    const ink = COLOURS[inkName];
+    if (!ink || !/^#[0-9a-f]{6}$/.test(ink.dark.toLowerCase())) continue;
+    let washPixels = 0;
+    for (const [, base] of surfaces) {
+      const key = pack(
+        Math.round(alpha * tint[0] + (1 - alpha) * base[0]),
+        Math.round(alpha * tint[1] + (1 - alpha) * base[1]),
+        Math.round(alpha * tint[2] + (1 - alpha) * base[2]),
+      );
+      washPixels += total.get(key) ?? 0;
+    }
+    if (washPixels === 0) continue;
+    const inkPixels = total.get(pack(...rgbOf(ink.dark.toLowerCase()))) ?? 0;
+    assert.ok(
+      inkPixels > 0,
+      `the screenshots show ${washPixels} pixels of --${washName} but not one pixel of ` +
+        `--${inkName} (${ink.dark}) — the word inside that badge is painted in some other ` +
+        `colour, so these files predate the current --${inkName}`,
+    );
+  }
+});
+
+/**
+ * Presence, and it is not the same question as the one above.
+ *
+ * 🔴 The blend rule has a blind spot, found by mutation rather than by
+ * reasoning: a NEUTRAL token can move and its stale pixels stay explicable,
+ * because every neutral grey lies on the segment between `--fg` and `--bg`.
+ * Four mutants walked through it — `--fg-faint`, `--fg-strong`, `--fg-muted`
+ * and a one-step nudge — all green. The hand-written list this replaced would
+ * have caught every one of them, and trading one hole for another is not a
+ * repair.
+ *
+ * Nor can area separate them: the largest innocent antialiasing grey in these
+ * frames is 2,136 px and a stale `--fg-faint` would leave 1,967. Nor can mere
+ * presence of the new value, because the ramp is continuous — #a8a8a8 already
+ * occurs 79 times without being anybody's token.
+ *
+ * What works is the floor the old check used, kept: a token that really paints
+ * type or chrome covers HUNDREDS of pixels, and a value that moved covers
+ * essentially none of them. So the floor stays at 500. What changes is that
+ * the SET is now derived, by two rules applied together:
+ *
+ *   ① its ROLE is surface, line or text — the patterns lib/contrast.test.ts
+ *     already classifies by. Status fills and inks are out: a status colour
+ *     appears only when that state occurs, and a demo fleet has no duty to
+ *     exhibit every state at once. `--ok`, `--bad` and `--bad-ink` really are
+ *     absent here. They are guarded instead by the wash pairing above and by
+ *     the blend rule, both of which see a status colour move.
+ *
+ *   ② SOME RECIPE PAINTS IT. This is what excuses `--fg-strong`, and it is a
+ *     reason rather than an exemption: no recipe in this design system paints
+ *     `--fg-strong` at all — zero `text-fg-strong` anywhere — so demanding it
+ *     in a photograph of a page is demanding something the page cannot
+ *     contain. The day a recipe starts using it, this starts requiring it,
+ *     with nobody editing this file.
+ *
+ * Where the floor is applied is itself decided by role, and the difference is
+ * load-bearing rather than tidy:
+ *
+ *   surface / text — 500 IN EACH FRAME. Surfaces are regions and type is type;
+ *     both are on every page at both widths.
+ *   line           — 500 ACROSS THE PAIR, because a hairline genuinely can be
+ *     scarce in one frame. `--line-strong` is 528 narrow against 132 wide, and
+ *     that is the whole reason the old list dropped it.
+ *
+ * 🔴 Taking the count across the pair for EVERYTHING was a draft of this, and
+ * mutation caught it: `--fg-faint` -> #8a8a8a survived, because #8a8a8a occurs
+ * as innocent antialiasing 485 times in the narrow frame and 437 in the wide
+ * one — under the floor in each, over it when added. The old guard caught that
+ * mutant and this one did not, which made it a regression rather than a
+ * repair, so the floor went back per-frame for the two roles that can bear it.
+ */
+test("the install dialog's screenshots show the chrome this console is built from", () => {
+  // Which tokens any recipe paints, scanned out of the recipe strings the same
+  // way lib/contrast.test.ts does it, rather than listed here.
+  const painted = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") {
+      for (const m of value.matchAll(
+        /(?:^|\s)(?:[a-z-]+:)*(?:text|bg|border|from|to|via|fill|stroke|ring|outline)-([a-z0-9-]+)(?=\s|$)/g,
+      )) {
+        if (Object.hasOwn(COLOURS, m[1])) painted.add(m[1]);
+      }
+    } else if (Array.isArray(value)) for (const v of value) walk(v);
+    else if (value && typeof value === "object") for (const v of Object.values(value)) walk(v);
+  };
+  walk(ALL_TOKENS);
+  assert.ok(painted.size >= 10, `only ${painted.size} painted tokens found — recipe scan broke`);
+
+  const isChrome = (name: string) =>
+    /^(bg|surface)(-|$)/.test(name) || /^line(-|$)/.test(name) || /^fg(-|$)/.test(name);
+  const required = Object.entries(COLOURS).filter(
+    ([name]) => isChrome(name) && painted.has(name),
+  );
+  assert.ok(required.length >= 9, `only ${required.length} chrome tokens are painted by a recipe`);
+  assert.ok(
+    !required.some(([name]) => name === "fg-strong"),
+    "a recipe now paints --fg-strong, so it should be required — update the note, not this rule",
+  );
+
+  const surfaces = required.filter(([name]) => /^(bg|surface)(-|$)/.test(name));
+  assert.equal(surfaces.length, 4, "the surface ladder is no longer four tiers");
+
+  const perShot = new Map<string, Map<number, number>>();
+  const total = new Map<number, number>();
+  for (const shot of consoleManifest().screenshots) {
+    const { counts } = colourCensus(shot.src.slice(1));
+    perShot.set(shot.src, counts);
+    for (const [key, n] of counts) total.set(key, (total.get(key) ?? 0) + n);
+  }
+
+  const FLOOR = 500;
+  for (const [name, value] of required) {
+    const hex = value.dark.toLowerCase();
+    const key = pack(...rgbOf(hex));
+    if (/^line(-|$)/.test(name)) {
+      const n = total.get(key) ?? 0;
+      assert.ok(
+        n >= FLOOR,
+        `--${name} (${hex}) covers ${n} pixels across the two screenshots — the palette moved ` +
+          `and these files were not recaptured with it`,
+      );
+      continue;
+    }
+    for (const [src, counts] of perShot) {
+      const n = counts.get(key) ?? 0;
+      assert.ok(
+        n >= FLOOR,
+        `${src} has ${n} pixels of --${name} (${hex}) — the palette moved and this file was ` +
+          `not recaptured with it`,
+      );
+    }
   }
 });
 
@@ -1065,6 +1380,72 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
       `${shot.src}: the content column sits ${left}px from the left and ${right}px from the ` +
         `right — a centred column cannot do that, so this frame is a crop of a differently ` +
         `sized layout`,
+    );
+  }
+});
+
+/**
+ * 🔴 The fourth seam: "these start at the document origin" was written in the
+ * note and the receipt, and NOTHING CHECKED IT.
+ *
+ * Both assertions above are horizontal — they catch a frame laid out at the
+ * wrong width, which is the defect five icons shipped with. Neither can see a
+ * frame that is the right width, in the right palette, and simply starts part
+ * way down the page. Swept exhaustively: the narrow file could lose its first
+ * 513 rows and the wide one its first 116 with the whole suite green, and the
+ * only thing holding the origin was `clip: {x: 0, y: 0}` in a scratchpad
+ * capture script that is not on the test path.
+ *
+ * What the top of a document has that no other offset does is the shell
+ * header: a full-bleed band of padding, the page's first `--fg` text inside
+ * it, and its closing `--line` rule underneath. Three row offsets, all read
+ * off the pixels, all keyed to token colours rather than to sampled hexes.
+ *
+ * The numbers are measured geometry, not a palette, and they are the one thing
+ * in this file that a legitimate layout change will turn red — deliberately.
+ * Regenerate them with `scratchpad/t014/theme-black/origin2.cjs`, which also
+ * prints the sweep: over all 1,647 narrow and 759 wide vertical offsets, the
+ * TRIPLE matches at ZERO of them. Each row on its own survives at 2-10
+ * offsets, so all three are load-bearing.
+ */
+const TOP_PROFILE: Record<string, { fg: number; line: number; content: number }> = {
+  "/screenshot-mobile.png": { fg: 29, line: 88, content: 16 },
+  "/screenshot-wide.png": { fg: 26, line: 8, content: 8 },
+};
+
+test("each screenshot starts at the top of the document, not part way down it", () => {
+  const fg = pack(...rgbOf(COLOR_TOKENS.fg.dark));
+  const line = pack(...rgbOf(COLOR_TOKENS.line.dark));
+  for (const shot of consoleManifest().screenshots) {
+    const want = TOP_PROFILE[shot.src];
+    assert.ok(want, `no top profile recorded for ${shot.src}`);
+    const image = pngPixels(readPublic(shot.src.slice(1)));
+
+    let firstFg = -1;
+    let firstLine = -1;
+    let firstContent = -1;
+    for (let y = 0; y < image.height; y++) {
+      const opening = image.at(0, y);
+      let uniform = true;
+      for (let x = 0; x < image.width; x++) {
+        const p = image.at(x, y);
+        const key = pack(p[0], p[1], p[2]);
+        if (firstFg < 0 && key === fg) firstFg = y;
+        if (firstLine < 0 && key === line) firstLine = y;
+        if (uniform && (p[0] !== opening[0] || p[1] !== opening[1] || p[2] !== opening[2])) {
+          uniform = false;
+        }
+      }
+      if (firstContent < 0 && !uniform) firstContent = y;
+      if (firstFg >= 0 && firstLine >= 0 && firstContent >= 0) break;
+    }
+
+    assert.deepEqual(
+      { fg: firstFg, line: firstLine, content: firstContent },
+      want,
+      `${shot.src}: the shell header is not where the top of this page puts it. The frame is ` +
+        `the right size and the right palette, so this is a vertical crop — the capture must ` +
+        `clip from y=0`,
     );
   }
 });
