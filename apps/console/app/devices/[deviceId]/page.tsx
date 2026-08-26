@@ -286,12 +286,16 @@ function OverviewPanel({
  *
  * 🔴 It is drawn from the composed card parts rather than `CardPanel` for one
  * reason: the danger zone is a wash behind the header and a red title, and
- * `CardPanel` has nowhere to put a class on its header. **A red border was the
- * first answer and it would not have rendered** — `CARD.root` asks for a
- * border width and computes to `none 0px` on this build, which is the whole of
- * `BORDER_WIDTH_WITHOUT_A_STYLE`, and shipping markup that reviews as a warning
- * and paints nothing is the exact defect this card was sent to fix on the
- * USB-net button.
+ * `CardPanel` has nowhere to put a class on its header. **A red border was
+ * the first answer and, when this was written, it would not have
+ * rendered** — `CARD.root` asked for a border width and computed to
+ * `none 0px` on that build, which was the whole of
+ * `BORDER_WIDTH_WITHOUT_A_STYLE`, and shipping markup that reviewed as a
+ * warning and painted nothing was the exact defect this card was sent to fix
+ * on the USB-net button. **That reason is gone**: the reset in
+ * `app/globals.css` now carries the style `CARD.root` was missing, and a red
+ * border would draw today. `CardPanel`'s header still takes no class of its
+ * own, though, so the composed parts are still what this needs regardless.
  *
  * `device-admin.tsx` itself is untouched: T010 migrated it and its
  * confirmation — typing the device's name verbatim, the strongest guard in
