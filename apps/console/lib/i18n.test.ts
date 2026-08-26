@@ -416,10 +416,11 @@ test("every catalogue key a component asks t() for exists in both locales", () =
  * ---------------------------------------------------------------------------
  * The source link.
  *
- * T091 licensed the edge repository; nothing said so on the page anyone
- * actually visits. The link added to the shell is the whole of that change,
- * which makes it exactly the kind of change that rots quietly: a string in a
- * catalogue nobody renders, or a URL that was translated.
+ * T091 licensed the edge repository and T038 licensed this one; nothing said
+ * so on the page anyone actually visits. The links added to the shell are the
+ * whole of that change, which makes it exactly the kind of change that rots
+ * quietly: a string in a catalogue nobody renders, a URL that was translated,
+ * or a licence link that points at the wrong repository.
  *
  * Both tests read the catalogue rather than restating it. A list of keys
  * retyped here would agree with whatever its author believed, which is the
@@ -440,7 +441,7 @@ test("the source URLs are one URL, not one per locale", () => {
   const urlKeys = sourceKeys().filter((key) => key.endsWith("Url"));
 
   // Without a floor this passes loudest when the keys are gone.
-  assert.ok(urlKeys.length >= 3, `only found ${urlKeys.length} source URL keys`);
+  assert.ok(urlKeys.length >= 4, `only found ${urlKeys.length} source URL keys`);
 
   // A URL is not prose. Holding it in the catalogue is how it stays out of the
   // markup, but it also means two copies of it -- and a typo in the locale the
@@ -469,7 +470,7 @@ test("the source URLs are one URL, not one per locale", () => {
 
 test("a server component renders every source.* string, so JavaScript-off sees the link", () => {
   const keys = new Set(sourceKeys());
-  assert.ok(keys.size >= 6, `only found ${keys.size} source keys`);
+  assert.ok(keys.size >= 9, `only found ${keys.size} source keys`);
 
   // Two failures at once. A string that no component asks for is a link that
   // exists only in a JSON file; a string asked for only by a "use client"
@@ -492,4 +493,48 @@ test("a server component renders every source.* string, so JavaScript-off sees t
     .map((key) => `${key} -> ${(renderedBy.get(key) ?? ["nowhere"]).join(", ")}`)
     .sort();
   assert.deepEqual(missing, []);
+});
+
+/**
+ * Every repository the footer names links its own terms, inside itself.
+ *
+ * The first version of this footer linked one licence -- the edge
+ * repository's -- because at the time this repository declared none. That is
+ * no longer true, and what it leaves behind fails silently in both
+ * directions. A repository that is linked with no licence beside it reads as
+ * "nobody has said", which is now wrong. A licence URL copied from the
+ * neighbouring pair reads as a confident wrong answer, and every test above
+ * passes it: source.consoleLicenseUrl pointing at vodoge-edge's LICENSE is
+ * absolute https, byte-identical across locales, and server-rendered. It
+ * would simply tell every visitor the wrong terms -- and the two repositories
+ * genuinely differ, so being wrong about which one you are reading is not a
+ * cosmetic error.
+ *
+ * The pairing is derived from the catalogue rather than restated here:
+ * source.<name>Url is a repository, and source.<name>LicenseUrl has to live
+ * under that repository.
+ */
+test("every repository the footer links states its own terms, in its own repository", () => {
+  const zh = catalogs.zh as Record<string, string>;
+  const urlKeys = sourceKeys().filter((key) => key.endsWith("Url"));
+  const repoKeys = urlKeys.filter((key) => !key.endsWith("LicenseUrl"));
+
+  // Two repositories are linked: this one and the edge. Without a floor this
+  // passes loudest when the pairs have been deleted.
+  assert.ok(repoKeys.length >= 2, `only found ${repoKeys.length} repository URL keys`);
+
+  const faults: string[] = [];
+  for (const repoKey of repoKeys) {
+    const licenceKey = `${repoKey.slice(0, -"Url".length)}LicenseUrl`;
+    const repoUrl = zh[repoKey];
+    const licenceUrl = zh[licenceKey];
+    if (licenceUrl === undefined) {
+      faults.push(`${repoKey} is linked, but ${licenceKey} does not exist`);
+      continue;
+    }
+    if (!licenceUrl.startsWith(`${repoUrl}/`)) {
+      faults.push(`${licenceKey} (${licenceUrl}) is not inside ${repoKey} (${repoUrl})`);
+    }
+  }
+  assert.deepEqual(faults, []);
 });

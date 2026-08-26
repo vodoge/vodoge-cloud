@@ -613,6 +613,8 @@
   "source.label": "源码",
   "source.console": "控制台",
   "source.consoleUrl": "https://github.com/yuanshuai1122/vodoge-cloud",
+  "source.consoleLicense": "控制台许可",
+  "source.consoleLicenseUrl": "https://github.com/yuanshuai1122/vodoge-cloud/blob/main/LICENSE",
   "source.edge": "边缘端",
   "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
   "source.edgeLicense": "边缘端许可",
