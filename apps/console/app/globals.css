@@ -87,11 +87,25 @@
   --accent-wash: rgba(245, 245, 245, 0.1);
 
   /* Status. These carry meaning, so they are never used decoratively, and
-     after this card they are the only hue left. All four are unchanged. */
+     they are the only hue left in the console.
+
+     --bad and --info were raised by T010 to clear 4.5 on every backdrop the
+     contrast guard derives -- a deliberate superset of the stacks that are
+     really painted, so this is a stronger claim than "readable where it is
+     used" and a weaker one than "every site was broken": the old red was in
+     fact short on a real stack (#413030, 4.127), the old blue was not short
+     anywhere real and moved for the superset alone. --ok and --warn already
+     cleared the bar and are untouched.
+     Each of the two kept its hue and had its saturation pushed to
+     the sRGB ceiling, so only the lightness moved. See lib/tokens.ts for the
+     derivation and lib/tokens.test.ts for the pinned ratios.
+
+     🔴 These two are shared with the edge panel's :root. Changing them here
+     without changing them there breaks oracle 1. */
   --ok: #4ade9b;
   --warn: #f0b429;
-  --bad: #f2686d;
-  --info: #63a4ff;
+  --bad: #ffa9ac;
+  --info: #97c3ff;
   /* The ink on the one solid button filled with the red above. Themed, as the
      accent's ink now also is, because this red is pale here and deep in the
      light theme: the ink is the opposite pole of the fill, in each theme. */
