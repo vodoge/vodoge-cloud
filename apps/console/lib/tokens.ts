@@ -50,16 +50,31 @@ export const COLOR_TOKENS = {
   fg: { dark: "#e7ecf3", light: "#1a2030" },
   "fg-muted": { dark: "#93a1b5", light: "#5a6579" },
   "fg-faint": { dark: "#64708a", light: "#8b96a9" },
+  // The accent when it is being read rather than filled, and a fourth entry in
+  // this family rather than a fifth in the accent one below, because here the
+  // prefix is the role: everything in this block is text, everything in that
+  // one is a fill, a border or a tint. One green cannot do both jobs on a
+  // light background — light enough to carry the dark ink of a button is too
+  // light to read on white, and the sweep that establishes it is in
+  // lib/tokens.test.ts along with every ratio. In the dark theme one green
+  // does do both, so this equals the accent there and the dark theme is
+  // unchanged.
+  "fg-accent": { dark: "#4ade9b", light: "#0a704c" },
 
   // One accent. A second colour competing for attention is how dashboards
-  // turn into noise.
+  // turn into noise. The four below are the accent as a surface: a fill, its
+  // hover, the ink painted on that fill, and a tint to sit behind something.
+  // None of them is legible as text on a light background; the entry above is.
   accent: { dark: "#4ade9b", light: "#10b47a" },
   "accent-strong": { dark: "#22c47f", light: "#0fa36f" },
   "accent-ink": { dark: "#06251a", light: "#06251a" },
   "accent-wash": { dark: "rgba(74, 222, 155, 0.12)", light: "rgba(16, 180, 122, 0.1)" },
 
   // Status. These carry meaning, so they are never used decoratively.
-  ok: { dark: "#4ade9b", light: "#10b47a" },
+  // The green one is only ever read, never filled — what sits behind it is the
+  // separate wash below — so its light value is the readable green and not the
+  // brand one. Its dark value is unchanged, where the two greens coincide.
+  ok: { dark: "#4ade9b", light: "#0a704c" },
   warn: { dark: "#f0b429", light: "#b8860b" },
   bad: { dark: "#f2686d", light: "#d64550" },
   info: { dark: "#63a4ff", light: "#2b6fd4" },
@@ -496,7 +511,7 @@ export const PAGE = {
    * removes the underline as well, so there is no version of this file's
    * future in which the anchor gets one for free.
    */
-  link: "font-semibold text-accent underline",
+  link: "font-semibold text-fg-accent underline",
   /**
    * The blocks of a page below its heading, one under the other.
    *
@@ -723,7 +738,7 @@ export const TABLE = {
    * layer goes; it hands the browser's own blue-and-underlined default back.
    * Saying it here is both the migration and the fix.
    */
-  cellLink: "font-medium text-accent hover:underline",
+  cellLink: "font-medium text-fg-accent hover:underline",
   /**
    * A column of text with no width limit, allowed to be narrower than its
    * longest word.
@@ -907,7 +922,7 @@ export const SHELL = {
    */
   navLink:
     "inline-flex min-h-touch items-center rounded px-s2 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg sm:px-s3 sm:text-sm",
-  navLinkCurrent: "bg-accent-wash font-semibold text-accent",
+  navLinkCurrent: "bg-accent-wash font-semibold text-fg-accent",
   main: "mx-auto w-full max-w-page flex-1 px-s3 py-s4 sm:px-s5 sm:py-s5",
   footer:
     "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s4 text-sm text-fg-muted sm:px-s5",
