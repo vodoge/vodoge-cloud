@@ -535,52 +535,118 @@ function allUsedClasses(): string[] {
   return classesIn(lists);
 }
 
-/* ── Reading the legacy layer ────────────────────────────────────────── */
+/* ── Reading app/globals.css ─────────────────────────────────── */
 
-/** The body of `@layer legacy { … }`, comments removed. */
-function legacyLayer(): string {
-  return blockBody(stripComments(globalsCss), "@layer legacy {");
+/**
+ * Every rule in the stylesheet, as a selector head and a declaration body.
+ *
+ * This used to read `@layer legacy` alone, because that was the part that
+ * needed watching and the rest was tokens. The layer is gone and the reading
+ * widened to the whole file, which is strictly stronger: a hand-written rule
+ * that comes back is now found wherever in the file somebody puts it.
+ */
+function rulesOf(css: string): { head: string; body: string }[] {
+  const rules: { head: string; body: string }[] = [];
+  for (const match of stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.push({ head: match[1], body: match[2] });
+  }
+  return rules;
 }
 
-/** Every class name the old stylesheet defines. */
-function legacyClassNames(): Set<string> {
+/** Every class name a sheet defines. */
+function classNamesOf(css: string): Set<string> {
   const names = new Set<string>();
-  for (const chunk of legacyLayer().matchAll(/([^{}]+)\{/g)) {
-    for (const match of chunk[1].matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) names.add(match[1]);
+  for (const { head } of rulesOf(css)) {
+    if (head.includes("@")) continue;
+    for (const match of head.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) names.add(match[1]);
   }
   return names;
 }
 
-/**
- * Every element the old stylesheet styles by *name* rather than by class.
- *
- * This is the leak no class-based check can see, and it is the bigger half.
- * `table` gets a width and a font size, `th` a colour and a sticky position,
- * `input, select, textarea` an entire box. A migrated page that renders a bare
- * one of these looks finished and is being painted by the stylesheet it was
- * moved off — and Tailwind's preflight, which arrives when `@layer legacy` is
- * deleted, does not put any of it back. It zeroes cell padding and strips the
- * input border instead.
- *
- * Derived from the stylesheet rather than listed, so a new bare-element rule
- * is covered the moment it is written.
- */
-function legacyBareElements(): Set<string> {
-  const names = new Set<string>();
-  for (const chunk of legacyLayer().matchAll(/([^{}]+)\{/g)) {
-    const head = chunk[1];
+/** Every element a sheet styles by name, and the properties it sets on it. */
+function elementRulesOf(css: string): Map<string, Set<string>> {
+  const byElement = new Map<string, Set<string>>();
+  for (const { head, body } of rulesOf(css)) {
     if (head.includes("@")) continue;
     for (const selector of head.split(",")) {
       const trimmed = selector.trim();
       if (!trimmed || /[.#[]/.test(trimmed)) continue;
       for (const part of trimmed.split(/[\s>+~]+/)) {
         const name = /^([a-z][a-z0-9]*)/.exec(part)?.[1];
-        if (name) names.add(name);
+        if (!name) continue;
+        const properties = byElement.get(name) ?? new Set<string>();
+        for (const one of body.split(";")) {
+          const colon = one.indexOf(":");
+          if (colon !== -1) properties.add(one.slice(0, colon).trim());
+        }
+        byElement.set(name, properties);
       }
     }
   }
-  return names;
+  return byElement;
 }
+
+/**
+ * The three above, pointed at `app/globals.css`.
+ *
+ * Thin on purpose. Each check below asserts that the real sheet gives the
+ * empty answer and that a probe sheet does not, and the two claims are only
+ * worth anything together if they go through the same code: a mutation that
+ * broke a duplicated extractor left the probe green and the answer empty.
+ */
+function stylesheetRules(): { head: string; body: string }[] {
+  return rulesOf(globalsCss);
+}
+
+/**
+ * Every class name the stylesheet defines.
+ *
+ * **Empty.** `app/globals.css` is tokens, a reset and two `@tailwind`
+ * directives; every class in this console comes from the Tailwind build. The
+ * function is kept rather than deleted because three checks below are
+ * comparisons against what it returns, and a comparison against a deleted
+ * function is a check that stops running.
+ */
+function stylesheetClassNames(): Set<string> {
+  return classNamesOf(globalsCss);
+}
+
+/**
+ * Every element the stylesheet styles by *name*, and the properties it sets.
+ *
+ * A rule that selects by element name reaches every element of that name
+ * whatever classes it carries, so no class-based check can see it and a
+ * cascade layer does not hold it back — a layer only settles the properties
+ * two rules both declare. That is the shape that made deleting the old
+ * stylesheet a change rather than a no-op: `button, input, select, textarea`
+ * had `font: inherit` by element name, nothing in any recipe replaced it, and
+ * a grep for the old class names could not have found it.
+ *
+ * A reset is allowed to do this and is the only thing that is; the test below
+ * pins exactly which elements and exactly which properties.
+ */
+function stylesheetElementRules(): Map<string, Set<string>> {
+  return elementRulesOf(globalsCss);
+}
+
+/**
+ * A sample sheet the extractors above have to find things in.
+ *
+ * Every assertion in this file about `stylesheetClassNames` and
+ * `stylesheetElementRules` is now an assertion that they return *nothing*,
+ * and an extractor that has quietly stopped working returns nothing too. So
+ * each of those tests runs the same extractor over this, where the answer is
+ * known and is not empty.
+ */
+const PROBE_SHEET = [
+  "@layer legacy {",
+  ".card { border: 1px solid red; }",
+  ".button-row button.risk { color: red; }",
+  ".card-span-all { grid-column: 1 / -1; }",
+  "th, td { padding: 4px; border-bottom: 1px solid red; }",
+  "}",
+].join("\n");
+
 
 /* ── The stylesheet agrees with this file ────────────────────────────── */
 
@@ -620,29 +686,189 @@ test("every var() the Tailwind theme references is a declared token", () => {
 /**
  * The arrangement the whole migration rests on.
  *
- * If `@tailwind utilities` ever ends up inside a layer, or the legacy
- * stylesheet ends up outside one, utilities stop outranking the old rules and
- * migrated pages start being painted by the stylesheet they were moved off —
- * in hover and focus states first, which is where nobody looks.
+ * If `@tailwind utilities` ever ends up inside a layer, the reset stops being
+ * outranked by the utilities and starts painting things the recipes decided.
+ * That arrangement is what the whole migration rested on while there was a
+ * second stylesheet to keep away from migrated pages; it still matters with
+ * one, because the reset styles `button`, `input`, `select` and `textarea` by
+ * element name and a recipe's `text-sm` on a button has to win.
+ *
+ * 🔴 **And the layer that is *not* here is the point of this card.** The
+ * 862-line hand-written stylesheet lived in `@layer legacy` in this file. It
+ * is gone, and the assertion that it is gone is the measurable form of
+ * criterion ①. A card that reintroduces it — under that name or any other —
+ * fails here.
  */
-test("the legacy stylesheet is layered and the utilities are not", () => {
+test("the stylesheet is one layer of reset, the utilities are not layered at all", () => {
   const css = stripComments(globalsCss);
-  const legacyAt = css.indexOf("@layer legacy {");
+  const tokensAt = css.indexOf("@layer tokens {");
   const utilitiesAt = css.indexOf("@tailwind utilities;");
 
-  assert.notEqual(legacyAt, -1, "the legacy stylesheet must stay inside @layer legacy");
+  assert.notEqual(tokensAt, -1, "the reset must stay inside @layer tokens");
   assert.notEqual(utilitiesAt, -1);
-  assert.ok(utilitiesAt > legacyAt, "@tailwind utilities has to come after the legacy layer");
+  assert.ok(utilitiesAt > tokensAt, "@tailwind utilities has to come after the reset");
 
   // Unlayered means: not inside any block. Every brace before it is closed.
   const before = css.slice(0, utilitiesAt);
   const depth = before.split("{").length - before.split("}").length;
   assert.equal(depth, 0, "@tailwind utilities is inside a block, so it is layered");
 
+  // The deleted layer, by name and by shape. `legacy` is the name it had;
+  // `@layer` with anything other than `tokens` is the shape, so bringing the
+  // old stylesheet back under a new name does not slip past.
+  const layers = [...css.matchAll(/@layer\s+([\w-]+)/g)].map((match) => match[1]);
+  assert.deepEqual(layers, ["tokens"], "a second cascade layer is back in globals.css");
+
+  // 🔴 And nothing may sit outside it. A rule written after the layer closes is
+  // unlayered, which beats every utility whatever the specificity — the same
+  // hazard as an unlayered preflight, arriving one rule at a time instead of
+  // all at once. Only the three `@tailwind` directives are allowed out there.
+  const outside: string[] = [];
+  let nesting = 0;
+  let head = "";
+  for (const character of css) {
+    if (character === "{") {
+      // Everything since the last `;` — the `@tailwind` directives are
+      // statements, not rules, and they sit in front of the layer's own brace.
+      if (nesting === 0) outside.push((head.split(";").pop() ?? "").replace(/\s+/g, " ").trim());
+      nesting += 1;
+      head = "";
+    } else if (character === "}") {
+      nesting -= 1;
+      head = "";
+    } else if (nesting === 0) {
+      head += character;
+    }
+  }
+  assert.deepEqual(
+    outside.filter((one) => !one.startsWith("@layer ")),
+    [],
+    "a rule in globals.css is outside @layer tokens, so it outranks every utility",
+  );
+
   assert.equal(
     tailwindConfig.corePlugins?.preflight,
     false,
-    "preflight is unlayered and would outrank the whole legacy layer",
+    "preflight is unlayered and would outrank the reset; switching it on moved 886 " +
+      "elements when this card measured it, and is a decision with its own card",
+  );
+});
+
+/**
+ * 🔴 The stylesheet defines no class. This is criterion ① as one assertion.
+ *
+ * Every other check in this section is a comparison against an empty set, and
+ * they are all empty *because of this*: `app/globals.css` is `:root` tokens, a
+ * reset that selects `*` and a handful of element names, and two `@tailwind`
+ * directives. There is nowhere for a class rule to hide, so there is no
+ * collision with a utility name, no class that only works under an ancestor,
+ * and no rule that only works inside a grid.
+ *
+ * The extractor is proved on `PROBE_SHEET` in the same test, because finding
+ * nothing and being broken look identical from here.
+ */
+test("app/globals.css defines no class selector at all", () => {
+  assert.deepEqual(
+    [...stylesheetClassNames()].sort(),
+    [],
+    "a hand-written class rule is back in globals.css; classes come from lib/tokens.ts",
+  );
+
+  // The same extractor, on a sheet shaped like the one that was deleted.
+  assert.deepEqual(
+    [...classNamesOf(PROBE_SHEET)].sort(),
+    ["button-row", "card", "card-span-all", "risk"],
+    "the class extractor has stopped finding classes, so every check above is vacuous",
+  );
+
+  // And the sheet is not empty either: it still has to be styling something.
+  assert.ok(stylesheetRules().length > 5, "globals.css has stopped containing rules");
+});
+
+/**
+ * 🔴 What the stylesheet is allowed to say about a bare element, exactly.
+ *
+ * This is the guard that replaces the family of `the legacy layer styles
+ * table / th / label by name` checks, and it is the one that matters most,
+ * because an element-name rule is the leak no class-based check can see. A
+ * cascade layer settles the properties two rules both declare and nothing
+ * else, so a rule keyed on `input` reaches every input in the console whatever
+ * classes it carries.
+ *
+ * Measured, not argued: deleting the old stylesheet without replacing its
+ * `font: inherit` on these four elements moved 176 buttons, 78 inputs, 12
+ * selects and 4 textareas across the fifteen pages, and a grep for the old
+ * class names sees none of it.
+ *
+ * So both halves are pinned. A new element name here fails; a new *property*
+ * on an element already here fails too, which is the half that catches a
+ * `th, td` padding rule coming back one declaration at a time.
+ */
+const RESET_TYPE = [
+  "font-family",
+  "font-feature-settings",
+  "font-variation-settings",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+  "color",
+  "padding",
+];
+
+const RESET_ELEMENTS: Record<string, string[]> = {
+  // The type and box normalisation a form control does not inherit on its own.
+  // Copied from what this config compiles preflight to, minus `margin: 0` —
+  // the deleted stylesheet never set a margin either, and adding one moves
+  // both of this console's checkboxes off the user agent's 3px.
+  button: RESET_TYPE,
+  input: RESET_TYPE,
+  optgroup: RESET_TYPE,
+  select: RESET_TYPE,
+  textarea: RESET_TYPE,
+  // The document.
+  html: ["margin", "padding"],
+  body: [
+    "margin",
+    "padding",
+    "background",
+    "color",
+    "font-family",
+    "font-size",
+    "line-height",
+    "-webkit-font-smoothing",
+    "padding-bottom",
+  ],
+  // An anchor inherits its colour and carries no underline. This is in the
+  // reset rather than in a recipe because it is a decision about every link in
+  // the console, and `PAGE.link` is what a link in running text adds back.
+  a: ["color", "text-decoration"],
+};
+
+test("the stylesheet styles bare elements only where a reset is allowed to", () => {
+  const rules = stylesheetElementRules();
+  assert.deepEqual(
+    [...rules.keys()].sort(),
+    Object.keys(RESET_ELEMENTS).sort(),
+    "globals.css names an element nobody has said a reset may name",
+  );
+  for (const [element, allowed] of Object.entries(RESET_ELEMENTS)) {
+    assert.deepEqual(
+      [...(rules.get(element) ?? [])].sort(),
+      [...allowed].sort(),
+      `globals.css declares something new on bare <${element}>, and that reaches every one of them`,
+    );
+  }
+
+  // The extractor finds element rules when there are element rules to find —
+  // the same function, not a copy of it.
+  const probe = elementRulesOf(PROBE_SHEET);
+  assert.deepEqual(
+    // `.button-row button.risk` is skipped on purpose: a compound carrying a
+    // class is not styling the bare element, so the class goes when the rule does.
+    [...probe.keys()].sort(),
+    ["td", "th"],
+    "the element-rule extractor has broken, so the assertions above are vacuous",
   );
 });
 
@@ -677,70 +903,87 @@ test("migrated files use no arbitrary values and no dark: variant", () => {
   );
 });
 
-test("migrated files do not use the classes that collide with the old stylesheet", () => {
-  const used = new Set(allUsedClasses());
-  const offenders = FORBIDDEN_IN_MIGRATED_SOURCES.filter((name) => used.has(name));
-  assert.deepEqual(offenders, [], `${offenders.join(", ")} — see LEGACY_UTILITY_COLLISIONS`);
-});
-
 /**
- * The collision list is derived, not remembered.
+ * The collision list is derived, not remembered — and it is now empty.
  *
  * A cascade layer settles which rule wins a property both rules declare. It
- * does nothing about the properties only the legacy rule declares: `.grid`
- * also sets `gap` and `grid-template-columns`, and Tailwind's `grid` utility
- * says nothing about either, so they leak into any migrated element carrying
- * it. Adding a class to the old stylesheet that happens to share a name with a
- * utility would open a new hole silently, so the set is recomputed here.
+ * does nothing about the properties only the layered rule declares, and that
+ * is not a subtlety: the deleted stylesheet's grid rule also set a gap and a
+ * column template, Tailwind's utility of the same name sets a display and
+ * nothing else, and those two declarations reached every element carrying the
+ * utility for the whole of the refactor.
+ *
+ * The set is still recomputed from `app/globals.css` and the real Tailwind
+ * build on every run, because “empty” has to keep being true rather than
+ * having been true once. It is empty for a structural reason: that file
+ * defines no class selector at all.
  */
-test("the legacy stylesheet collides with Tailwind on exactly the known names", async () => {
-  const names = legacyClassNames();
-  assert.ok(names.size > 40, `only ${names.size} legacy classes found — the extractor is broken`);
-
-  const generated = await generatedClasses([...names]);
+test("the stylesheet collides with Tailwind on exactly the known names", async () => {
+  const names = stylesheetClassNames();
+  const generated = await generatedClasses([...names, "p-s4"]);
   const collisions = [...names].filter((name) => generated.has(name)).sort();
   assert.deepEqual(collisions, [...LEGACY_UTILITY_COLLISIONS].sort());
-});
 
-test("migrated files carry no class from the old stylesheet", () => {
-  const legacyNames = legacyClassNames();
-  // The three names Tailwind also generates are utilities in a migrated file,
-  // not legacy classes; the dangerous two are rejected by their own test.
-  for (const shared of LEGACY_UTILITY_COLLISIONS) legacyNames.delete(shared);
-
-  const offenders = allUsedClasses().filter((name) => legacyNames.has(name));
-  assert.deepEqual(offenders, [], `still reading the old stylesheet: ${offenders.join(", ")}`);
+  // The derivation is the check, so it has to be able to find one. On a sheet
+  // shaped like the deleted one, the same two lines produce the collision that
+  // was live in this repository until this card.
+  const probe = classNamesOf("@layer legacy {\n.grid { gap: 1rem; }\n.card { border: 0; }\n}");
+  const probeGenerated = await generatedClasses([...probe]);
+  assert.deepEqual(
+    [...probe].filter((name) => probeGenerated.has(name)).sort(),
+    ["grid"],
+    "the collision derivation has broken, so the empty answer above means nothing",
+  );
 });
 
 /**
- * The collision is between class *names*, so the way out is a different name.
+ * No file carries a class the stylesheet defines, because it defines none.
  *
- * This test exists because the codebase used to give two answers. `tokens.ts`
- * and the migration note both said "use `flex`, or spell out `grid-cols-*` and
- * `gap-*`", while `FORBIDDEN_IN_MIGRATED_SOURCES` rejected the second one
- * outright — so a card that followed the written advice got a red test and no
- * explanation. The escape hatch that actually works was written down nowhere:
- * `sm:grid` puts `sm:grid` in the class attribute, and `.grid` does not match
- * that, so none of the legacy declarations reach the element.
- *
- * "Spell out every property the legacy rule sets" was rejected as the answer
- * on purpose. It is true of the two declarations `.grid` happens to set today,
- * it has to be re-audited whenever the stylesheet changes, and no test can
- * check it. This can be checked in one line.
+ * Kept as its own test rather than folded into the one above, because the two
+ * fail for different reasons: that one fails when the stylesheet grows a rule
+ * that shadows a utility, this one fails when a `.tsx` or a recipe starts
+ * asking for a name only the stylesheet would answer.
  */
-test("a variant-prefixed grid is the way out, and a bare grid is not", async () => {
-  const forbidden = new Set<string>(FORBIDDEN_IN_MIGRATED_SOURCES);
-  assert.ok(forbidden.has("grid"), "the bare utility has to stay forbidden");
-  assert.ok(!forbidden.has("sm:grid"), "whole class names, so a variant is a different name");
+test("no file carries a class from the stylesheet", () => {
+  const defined = stylesheetClassNames();
+  for (const shared of LEGACY_UTILITY_COLLISIONS) defined.delete(shared);
 
-  const legacy = legacyClassNames();
-  assert.ok(legacy.has("grid"), "the legacy .grid rule is what this is all about");
-  assert.ok(!legacy.has("sm:grid"), "nothing in the old stylesheet matches sm:grid");
+  const offenders = allUsedClasses().filter((name) => defined.has(name));
+  assert.deepEqual(offenders, [], `reading a hand-written rule: ${offenders.join(", ")}`);
 
-  // And the way out has to actually produce CSS, or it is not a way out.
-  const generated = await generatedClasses(["sm:grid", "max-sm:grid", "grid-cols-3", "gap-s4"]);
-  for (const name of ["sm:grid", "max-sm:grid", "grid-cols-3", "gap-s4"]) {
-    assert.ok(generated.has(name), `${name} generates nothing, so the documented escape hatch is a lie`);
+  // Self-proof in both directions: the class extractor for `.tsx` and recipes
+  // still finds classes, and the set it is filtered against is really empty.
+  assert.ok(allUsedClasses().length > 50, "the class extractor has stopped finding classes");
+  assert.equal(defined.size, 0, "globals.css defines a class again");
+});
+
+/**
+ * The escape hatch is gone with the thing it was an escape from.
+ *
+ * For most of this refactor a bare grid utility was forbidden, because the
+ * deleted stylesheet had a rule under the same name whose extra declarations
+ * leaked through the cascade layer. The way out was a variant-prefixed name,
+ * which puts a different string in the class attribute. Both the ban and the
+ * hatch are now unnecessary, and the empty ban is asserted rather than
+ * deleted — a card that puts a name back into
+ * `FORBIDDEN_IN_MIGRATED_SOURCES` has to explain itself, and until then a
+ * page card may lay something out with a grid like any other project.
+ *
+ * What is kept is the *check*, not the prohibition: the utilities a layout
+ * needs still have to generate CSS on this closed set of scales, which is
+ * where an off-token class silently produces nothing.
+ */
+test("a grid is available to lay something out with, and nothing is forbidden", async () => {
+  assert.deepEqual(
+    [...FORBIDDEN_IN_MIGRATED_SOURCES],
+    [],
+    "a class name is banned again; say here what rule it collides with",
+  );
+
+  const wanted = ["grid", "sm:grid", "grid-cols-3", "gap-s4", "grow"];
+  const generated = await generatedClasses(wanted);
+  for (const name of wanted) {
+    assert.ok(generated.has(name), `${name} generates nothing, so a layout cannot ask for it`);
   }
 });
 
@@ -802,9 +1045,9 @@ test("a class list in a migrated file cannot hide in a variable", async () => {
   // `p-s4` is a sentinel: without one class it knows about, Tailwind warns on
   // stderr that it found no utilities, which reads like a broken test run.
   const generated = await generatedClasses([...found.flatMap((f) => f.words), "p-s4"]);
-  const legacy = legacyClassNames();
+  const defined = stylesheetClassNames();
   const offenders = found
-    .filter((f) => f.words.some((word) => generated.has(word) || legacy.has(word)))
+    .filter((f) => f.words.some((word) => generated.has(word) || defined.has(word)))
     .map((f) => `${f.relative}: ${JSON.stringify(f.list)}`);
   assert.deepEqual(offenders, [], "a class list belongs in lib/tokens.ts, not in a local");
 });
@@ -916,27 +1159,34 @@ test("every export of lib/tokens.ts is either walked as a recipe or named as dat
 });
 
 /**
- * A migrated file gives every legacy-styled element a class of its own.
+ * Every element the stylesheet names gets a class of its own in the markup.
  *
- * `@layer legacy` styles `table`, `th`, `td`, `form`, `label`, `input`,
- * `select`, `textarea` and `button` by element name. A migrated page that
- * renders a bare one of them looks correct today for the wrong reason, and
- * there was no assertion against it at all — a bare
- * `<form><label><select><textarea>` dropped into a migrated page passed
- * everything. It stops looking correct on the day `@layer legacy` is deleted,
- * because preflight replaces none of that: it zeroes the cell padding and
- * strips the input's border.
+ * The deleted stylesheet styled `table`, `th`, `td`, `form`, `label`, `input`,
+ * `select`, `textarea` and `button` by element name, and a page that rendered
+ * a bare one of them looked correct for the wrong reason. There was no
+ * assertion against it at all: a bare `<form><label><select><textarea>`
+ * dropped into a migrated page passed everything and would have gone bare the
+ * day the layer was deleted.
+ *
+ * The list the stylesheet names is now much shorter — a reset's worth — but
+ * the rule is the same one and it has not been relaxed: an element the
+ * stylesheet mentions is an element whose appearance is decided in two places,
+ * so the markup has to say which it wants. `html` and `body` are excluded
+ * because no `.tsx` here writes either of them; `a` is not excluded, and the
+ * anchors in this console do all carry a class.
  */
-test("a migrated file gives every legacy-styled element a class of its own", () => {
-  const bare = legacyBareElements();
-  for (const expected of ["table", "th", "td", "form", "label", "input", "select", "textarea"]) {
-    assert.ok(bare.has(expected), `the element-rule extractor stopped finding ${expected}`);
-  }
+test("a file gives every element the stylesheet names a class of its own", () => {
+  const named = new Set(stylesheetElementRules().keys());
+  for (const notMarkup of ["html", "body"]) named.delete(notMarkup);
+  assert.ok(
+    ["button", "input", "select", "textarea", "a"].every((one) => named.has(one)),
+    "the element-rule extractor stopped finding the reset's own elements",
+  );
 
   const offenders: string[] = [];
   for (const relative of MIGRATED_SOURCES) {
     for (const tag of openingTags(readSource(relative))) {
-      if (!bare.has(tag.name)) continue;
+      if (!named.has(tag.name)) continue;
       if (/\bclassName\s*=/.test(tag.text)) continue;
       offenders.push(`${relative}: <${tag.name}>`);
     }
@@ -944,13 +1194,26 @@ test("a migrated file gives every legacy-styled element a class of its own", () 
   assert.deepEqual(
     offenders,
     [],
-    "these are being painted by @layer legacy and go bare when it is deleted",
+    "this element is styled by the reset and by nothing else; say what it should look like",
   );
 });
 
-/** And there has to be a recipe to give them. */
-test("there is a form recipe for every form element the legacy layer styles bare", () => {
-  const bare = legacyBareElements();
+/**
+ * And there has to be a recipe to give them — all five, not just the three
+ * the reset happens to name.
+ *
+ * This used to derive the list from the stylesheet: whichever elements
+ * `@layer legacy` styled bare were the ones that needed a recipe. That
+ * derivation would now answer `input`, `select` and `textarea` and quietly
+ * drop `form` and `label`, which is the wrong direction — the reason those
+ * two need a recipe is precisely that **nothing** styles them any more. A
+ * `<form>` with no class is a block with no gap between its fields, and a
+ * `<label>` with no class is body text.
+ *
+ * So the list is stated, and the test that it is complete is the one above:
+ * a bare form element in any file fails there.
+ */
+test("there is a form recipe for every form element this console renders", () => {
   const recipeFor: Record<string, string> = {
     form: "root",
     label: "label",
@@ -959,10 +1222,19 @@ test("there is a form recipe for every form element the legacy layer styles bare
     textarea: "textarea",
   };
   const missing = Object.entries(recipeFor)
-    .filter(([element]) => bare.has(element))
     .filter(([, key]) => typeof (FORM as Record<string, unknown>)[key] !== "string")
     .map(([element]) => element);
   assert.deepEqual(missing, [], "a page that needs one of these has nowhere to get it from");
+
+  // And every one of them has to be a real class list, not an empty string:
+  // an empty recipe passes the check above and draws nothing.
+  for (const [element, key] of Object.entries(recipeFor)) {
+    const recipe = (FORM as Record<string, unknown>)[key] as string;
+    assert.ok(
+      recipe.split(/\s+/).filter(Boolean).length > 1,
+      `FORM.${key} is empty, so a bare <${element}> is what a page still gets`,
+    );
+  }
 });
 
 /**
@@ -994,11 +1266,15 @@ test("every .tsx is on exactly one side of the migration ledger", () => {
     "a .tsx is on both lists, on neither, or has been renamed — an unlisted file is unchecked",
   );
 
-  // Twenty-one to go. This number only goes down; a card that adds a page
-  // rendered by the old stylesheet has to say so here.
-  assert.ok(
-    UNMIGRATED_SOURCES.length <= 21,
-    `the unmigrated list grew to ${UNMIGRATED_SOURCES.length}`,
+  // Nought to go, and this is the end of the ratchet rather than a step on
+  // it. There is no second stylesheet left for a file to be rendered by, so a
+  // name appearing here would be a claim that something outside the design
+  // system is painting a page — which is the thing criterion ① says is
+  // finished. Pinned exactly, not bounded.
+  assert.deepEqual(
+    [...UNMIGRATED_SOURCES],
+    [],
+    `the unmigrated list is not empty: ${[...UNMIGRATED_SOURCES].join(", ")}`,
   );
 });
 
@@ -1265,24 +1541,31 @@ test("the journal's payload row spans every column the table has", () => {
   );
 });
 
-test("a file on the unmigrated list is really still unmigrated", () => {
-  const legacyNames = legacyClassNames();
-  const done: string[] = [];
-  for (const relative of UNMIGRATED_SOURCES) {
-    const source = readSource(relative);
-    // A file that writes no class at all cannot be told apart this way, and
-    // app/unknown-tenant/page.tsx is one: it calls notFound() and renders
-    // nothing. Promoting a file with no markup would be migration progress
-    // with no migration in it, so it stays here and is skipped.
-    if (!/\bclassName\s*=/.test(scan(source).masked)) continue;
-    const names = classesIn(classListsIn(source));
-    if (!names.some((name) => legacyNames.has(name))) done.push(relative);
-  }
-  assert.deepEqual(
-    done,
-    [],
-    "these carry no legacy class any more — migrated in fact, unchecked in law; move them to MIGRATED_SOURCES",
+/**
+ * The ledger has one side now, and this is what is left of the other.
+ *
+ * This test used to read every file on the unmigrated list and check it really
+ * did still carry a class from the old stylesheet — so that a page migrated
+ * without being moved across failed rather than going unchecked. The list is
+ * empty, which makes the loop vacuous, so what is asserted instead is the fact
+ * that made it vacuous: every `.tsx` under `app/` and `components/` is on the
+ * checked side, and the number of them is pinned so that a file quietly
+ * disappearing from both lists is not mistaken for progress.
+ */
+test("every .tsx in the console is on the checked side of the ledger", () => {
+  assert.deepEqual([...UNMIGRATED_SOURCES], []);
+  assert.equal(
+    MIGRATED_SOURCES.length,
+    45,
+    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 45 — ` +
+      "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
+
+  // And the files really are read: a name on the list that does not exist
+  // would make every check that iterates it throw, but a name that exists and
+  // is empty would not.
+  const empty = MIGRATED_SOURCES.filter((relative) => readSource(relative).trim().length === 0);
+  assert.deepEqual(empty, [], "a listed file is empty, so every check that reads it passes on nothing");
 });
 
 /**
@@ -1522,72 +1805,102 @@ test("every independent Tailwind scale is either replaced or listed as still ope
  * renders as nothing.
  */
 
-test("a class in any .tsx is defined by the build or by the old stylesheet", async () => {
+test("a class in any .tsx is defined by the build, and there is nothing else", async () => {
   const asked = new Set<string>();
   for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
     for (const name of classesIn(classListsIn(readSource(relative)))) asked.add(name);
   }
-  // Low, and correctly so: the migrated files hold no class literals at all —
-  // a guard above enforces that — so everything counted here comes from the
-  // pages still on the old stylesheet.
-  // PM merge note: this is zero now, and that is the milestone. Every page is
-  // off the legacy stylesheet; the one file left on UNMIGRATED_SOURCES is
-  // `app/unknown-tenant/page.tsx`, which calls notFound() and renders no markup
-  // at all. A floor cannot tell "genuinely zero" from "the extractor broke", so
-  // the count is pinned exactly and the extractor is proved separately below.
-  assert.equal(asked.size, 0, `a migrated file has a class literal again: ${[...asked].join(", ")}`);
+  // Zero, and that is the milestone rather than a low number: no `.tsx` in
+  // this console writes a class of its own, so the Tailwind build is the only
+  // thing that has to define anything. A floor cannot tell genuinely-zero from
+  // extractor-broke, so the count is pinned exactly and the extractor is proved
+  // on a probe below.
+  assert.equal(asked.size, 0, `a file has a class literal again: ${[...asked].join(", ")}`);
 
   // The extractor still works — the assertion above would also pass if it had
   // stopped finding anything at all.
   const probe = classesIn(classListsIn(`<div className="probe-a probe-b" />`));
   assert.deepEqual([...probe].sort(), ["probe-a", "probe-b"], "the class extractor has broken");
 
-  const generated = await generatedClasses([...asked, "p-s4"]);
-  const legacy = legacyClassNames();
+  // The second half of the old title is gone with the stylesheet: a class the
+  // build does not generate is now defined by *nothing*, full stop. Recipes are
+  // where every class comes from, so they are what is put to the build.
+  const recipeClasses = allUsedClasses();
+  const generated = await generatedClasses([...recipeClasses, "p-s4"]);
+  const defined = stylesheetClassNames();
   const allowed = new Set<string>(NON_UTILITY_CLASSES);
-  const dead = [...asked]
-    .filter((name) => !generated.has(name) && !legacy.has(name) && !allowed.has(name))
+  const dead = [...recipeClasses]
+    .filter((name) => !generated.has(name) && !defined.has(name) && !allowed.has(name))
     .sort();
 
   assert.deepEqual(
     dead,
-    [...CLASSES_WITH_NO_STYLESHEET].sort(),
+    [],
     "a class nothing defines: it has never rendered, and nobody would see that in review",
+  );
+  assert.deepEqual(
+    [...CLASSES_WITH_NO_STYLESHEET],
+    [],
+    "the frozen list of classes nothing defines is closed at empty",
   );
 });
 
 /**
- * `.risk` is not a rule, and the button that needed it most never got it.
+ * `.risk` was not a rule, and the button that needed it most never got it.
  *
- * The stylesheet declares it only as `.button-row button.risk` and
- * `.row-actions button.risk`, so it colours a button in those two containers
- * and does nothing anywhere else. `device-console.tsx:663` — the USB-net mode
- * switch, which takes a module out of the device list — sits in an
- * `<form className="inline-form">`, and its warning colour has never once been
- * drawn. A written guard that does not render is worse than none: it is on the
+ * The deleted stylesheet declared it only as `.button-row button.risk` and
+ * `.row-actions button.risk`, so it coloured a button in those two containers
+ * and did nothing anywhere else. `device-console.tsx:663` — the USB-net mode
+ * switch, which takes a module out of the device list — sat in a form whose
+ * class was `inline-form`, and its warning colour was never once drawn. A
+ * written guard that does not render is worse than none: it is on the
  * checklist.
  *
- * Both halves are derived rather than remembered. The stylesheet is read for
- * the claim, and the replacement is put to the real Tailwind build standing on
- * its own, with no ancestor at all.
+ * Both halves are still derived rather than remembered. The stylesheet is read
+ * for the claim — which now finds nothing, because there is no class rule left
+ * in it to hide under an ancestor — and the replacement is put to the real
+ * Tailwind build standing on its own, with no ancestor at all. The second half
+ * is the part that has to keep working: `BUTTON.variant.risk` is what a
+ * dangerous button is coloured by today, on every page.
  */
 test("a class that needs an ancestor has a variant that does not", async () => {
-  const layer = legacyLayer();
-  for (const name of CLASSES_NEEDING_AN_ANCESTOR) {
-    const heads = [...layer.matchAll(/([^{}]+)\{/g)].map((match) => match[1]);
-    const selectors = heads
-      .flatMap((head) => head.split(","))
-      .map((selector) => selector.trim())
-      .filter((selector) => new RegExp(`\\.${name}\\b`).test(selector));
-    assert.ok(selectors.length > 0, `.${name} is not in the stylesheet at all any more`);
-    for (const selector of selectors) {
-      assert.notEqual(
-        selector,
-        `.${name}`,
-        `.${name} is a rule of its own now — take it off CLASSES_NEEDING_AN_ANCESTOR`,
-      );
+  // Derived: every class name the stylesheet declares *only* in a compound or
+  // descendant selector, never as a rule of its own.
+  const alone = new Set<string>();
+  const under = new Set<string>();
+  for (const { head } of stylesheetRules()) {
+    if (head.includes("@")) continue;
+    for (const selector of head.split(",")) {
+      const trimmed = selector.trim();
+      for (const match of trimmed.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) {
+        (trimmed === `.${match[1]}` ? alone : under).add(match[1]);
+      }
     }
   }
+  const ancestorOnly = [...under].filter((name) => !alone.has(name)).sort();
+  assert.deepEqual(
+    ancestorOnly,
+    [...CLASSES_NEEDING_AN_ANCESTOR].sort(),
+    "a class in globals.css only bites under an ancestor, which is a guard that may not render",
+  );
+
+  // The derivation has to be able to find one, or the empty answer is noise.
+  const probeAlone = new Set<string>();
+  const probeUnder = new Set<string>();
+  for (const { head } of rulesOf(PROBE_SHEET)) {
+    if (head.includes("@")) continue;
+    for (const selector of head.split(",")) {
+      const trimmed = selector.trim();
+      for (const match of trimmed.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) {
+        (trimmed === `.${match[1]}` ? probeAlone : probeUnder).add(match[1]);
+      }
+    }
+  }
+  assert.deepEqual(
+    [...probeUnder].filter((name) => !probeAlone.has(name)).sort(),
+    ["button-row", "risk"],
+    "the ancestor-only derivation has broken, so the empty answer above means nothing",
+  );
 
   // And the way out has to render. `buttonClass` takes no ancestor and no
   // container; this is the whole difference between the variant and the class.
@@ -3568,14 +3881,21 @@ test("the settings page lays its cards out with something that exists", () => {
  * nuisance that gets deleted. Prose about a design system contains the words
  * "table", "inline", "block", "collapse", "filter", "outline", "ring",
  * "shrink" and "visible", and Tailwind ships a bare utility named after every
- * one of them. Three more come from the *documentation of the escape hatch* —
- * `sm:grid`, `max-sm:grid` and `sr-only` are named in `LEGACY_UTILITY_COLLISIONS`
- * and asserted to generate by the test above, so they are wanted.
+ * one of them. `lib/tokens.ts` is Tailwind content, so its comments compile.
  *
- * Every entry was already shipping before this card. Five more were added
- * during it and removed again — four filter utilities from an array of scale
- * names and one direction utility from a sentence explaining the difference
- * between a scale and a utility of the same name.
+ * **Four entries came off under T018 and the reason is worth keeping.** They
+ * were not prose: `grow` and `sr-only` were spelled out in
+ * `FORBIDDEN_IN_MIGRATED_SOURCES` and `LEGACY_UTILITY_COLLISIONS`, and
+ * `sm:grid` and `max-sm:grid` were the documented escape hatch from the
+ * collision those lists existed for. The rules were built out of the ledger
+ * that existed to forbid them. Both ledgers are pinned empty now and the
+ * escape hatch has nothing to escape, so the four rules stopped being
+ * generated — which is the list shrinking for the right reason rather than
+ * somebody deleting a name to quieten a test.
+ *
+ * `grid` stayed, and it is no longer a ledger that keeps it: six comments in
+ * `lib/tokens.ts` use the word in ordinary English — three about tables, and
+ * three about this deletion itself.
  *
  * The list may shrink. It may not grow without somebody saying why here.
  */
@@ -3594,25 +3914,10 @@ const RULES_SHIPPED_UNASKED = [
   // `components/esim-panel.tsx:918`, `static` from `app/manifest.ts:4`.
   "invisible",
   "static",
-  // Wanted: the documented way to lay something out in a grid before the
-  // legacy layer is deleted, plus the collision name that is safe to use.
-  "max-sm:grid",
-  "sm:grid",
-  "sr-only",
-  // `grid` itself, added by T014 and for the same reason as the two above it:
-  // `LEGACY_UTILITY_COLLISIONS` and `FORBIDDEN_IN_MIGRATED_SOURCES` both spell
-  // the name out in `lib/tokens.ts`, which is Tailwind content, so the rule is
-  // built from the ledger that exists to forbid it. It became unasked rather
-  // than newly shipped: `app/inbox/page.tsx:54` was the last `className="grid
-  // grid-wide"` in the console, and migrating that page took the last caller
-  // away. Deleting the name from the ledger is not the fix — the ledger is
-  // what the guard reads.
+  // Ordinary English in six comments in `lib/tokens.ts`: three about tables (a
+  // wide one scrolls sideways in its card, and a definition list is not one),
+  // three about the stylesheet this deletion removed. Prose, not a ledger.
   "grid",
-  // `grow` joined it under T011 for exactly the same reason, one merge later:
-  // it is spelled out in both ledgers in `lib/tokens.ts`, and the last caller
-  // went away when the device console was migrated. Same rule as above —
-  // deleting the name from the ledger is not the fix.
-  "grow",
 ];
 
 test("the stylesheet contains no rule that no file asks for", async () => {
@@ -4190,7 +4495,66 @@ test("a recipe that asks for a border width says what kind of border it is", () 
     [],
     "this list is closed at empty: the reset is what supplies the style now",
   );
+});
 
+/**
+ * 🔴 The other half of the reset, and the values, not only the property names.
+ *
+ * The test above pins which elements `app/globals.css` may name and which
+ * properties it may set on them. That is what stops a hand-written rule coming
+ * back. It says nothing about what the declarations are *worth*, and a form
+ * control reset whose values were wrong would pass it: `font-family: Arial`
+ * has the same property name as `font-family: inherit`.
+ *
+ * These are Tailwind's own preflight declarations for these elements, and
+ * copying them rather than inventing them is the point — preflight is off, is
+ * unlayered, and outranks this block the day it is switched on. Any value here
+ * that is not preflight's is a value that silently changes on that day.
+ *
+ * `margin: 0` is preflight's and is deliberately **not** here. The stylesheet
+ * this replaced never set a margin either, so both of this console's
+ * checkboxes still carry the user agent's `margin: 3px 3px 3px 4px`; stating
+ * it would have moved them, which is the one thing deleting a stylesheet is
+ * not allowed to do. It is asserted absent so that adding it is a decision
+ * somebody makes on purpose.
+ */
+test("the form-control reset says what preflight says, in preflight's values", () => {
+  const css = stripComments(globalsCss);
+  const at = css.indexOf("button,");
+  assert.notEqual(at, -1, "globals.css no longer resets form controls at all");
+  const open = css.indexOf("{", at);
+  const close = css.indexOf("}", open);
+  const selector = css.slice(at, open).replace(/\s+/g, " ").trim();
+  assert.equal(
+    selector,
+    "button, input, optgroup, select, textarea",
+    "preflight covers these five; a reset that covers fewer leaves one of them to the user agent",
+  );
+
+  const declarations: Record<string, string> = {};
+  for (const one of css.slice(open + 1, close).split(";")) {
+    const colon = one.indexOf(":");
+    if (colon === -1) continue;
+    declarations[one.slice(0, colon).trim()] = one.slice(colon + 1).trim();
+  }
+
+  assert.deepEqual(declarations, {
+    "font-family": "inherit",
+    "font-feature-settings": "inherit",
+    "font-variation-settings": "inherit",
+    "font-size": "100%",
+    "font-weight": "inherit",
+    "line-height": "inherit",
+    "letter-spacing": "inherit",
+    color: "inherit",
+    padding: "0",
+  });
+
+  assert.ok(!("margin" in declarations), "margin: 0 moves both checkboxes; see the note above");
+
+  // In the layer, like the border half: a later layer wins whatever the
+  // specificity, and this rule is one element name against a utility's class.
+  assert.ok(css.lastIndexOf("@layer tokens {", at) !== -1, "the form reset left @layer tokens");
 });
 
 /**
@@ -4256,43 +4620,36 @@ test("a recipe that says border-solid states a width for all four sides", () => 
 });
 
 /**
- * Every border the legacy layer draws by element name is also asked for by the
- * recipe that draws that element.
+ * No border in this console is drawn by `app/globals.css` on a bare element.
  *
- * 🔴 **This is the precondition for T018.** `@layer legacy` styles `button`,
- * `input`, `select`, `textarea` and `th, td` by element name, so a recipe can
- * look correct while the thing painting it is the stylesheet the refactor is
- * removing. Measured with the layer emptied, before the reset landed: `th` fell
- * to `none 0px`, and `button` and `input` kept the width and colour their
- * recipes asked for but fell back to the user agent's 3D bevels. The reset
- * fixes the style; this fixes the ownership.
+ * 🔴 **This was the precondition for deleting the old stylesheet, and it is
+ * now the receipt for it.** That stylesheet styled `button`, `input`,
+ * `select`, `textarea` and `th, td` by element name, so five recipes looked
+ * correct while the thing painting them was the layer being removed. T035
+ * measured it with the layer emptied: `th` fell to `none 0px`, and `button`
+ * and `input` kept the width and colour their recipes asked for but fell back
+ * to the user agent's 3D bevels. It then gave the reset the border style, the
+ * zero width and the colour, so all five drew from their own recipes.
  *
- * The left-hand side is derived from the stylesheet, so a bare-element border
- * added to the legacy layer tomorrow fails here rather than being discovered on
- * the day the layer is deleted. A declaration that *removes* a border does not
- * count — `tbody tr:last-child td { border-bottom: none }` is the legacy way of
- * saying `last:border-0`, and the recipes say it themselves.
+ * The layer is gone. Measured across the fifteen pages at 390px and 1100px in
+ * both themes, the only border that changed is the one on 40 `<td>` elements,
+ * which `TABLE.row` had been sharing a pixel with under `border-collapse` —
+ * no row changed height. The derivation is kept and inverted: the answer has
+ * to be *nothing*, and a bare-element border added to `globals.css` tomorrow
+ * fails here rather than repainting a page nobody is looking at.
+ *
+ * A declaration that *removes* a border does not count, and neither does the
+ * reset's `border-width: 0` — that is the whole point of it.
  */
-const LEGACY_BORDERED_ELEMENTS: Record<string, string> = {
-  button: "BUTTON.base",
-  input: "FORM.input",
-  select: "FORM.select",
-  textarea: "FORM.textarea",
-  th: "TABLE.headerCell",
-  // The cell rule is what drew the line between rows for this console's whole
-  // life; `TABLE.row` is where it lives now. `border-collapse` makes the two
-  // share one pixel, which is why turning the row's border on changed no row
-  // height on any of the fifteen pages.
-  td: "TABLE.row",
-};
+const LEGACY_BORDERED_ELEMENTS: Record<string, string> = {};
 
-test("no recipe's border is being drawn by the layer T018 deletes", () => {
+/** The border-giving extractor, over any sheet. */
+function borderedElements(rules: { head: string; body: string }[]): Set<string> {
   const BORDER = /^border(-(top|right|bottom|left))?(-(width|style|color))?$/;
   const drawn = new Set<string>();
-  for (const rule of legacyLayer().matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const head = rule[1];
+  for (const { head, body } of rules) {
     if (head.includes("@")) continue;
-    const gives = rule[2].split(";").some((one) => {
+    const gives = body.split(";").some((one: string) => {
       const colon = one.indexOf(":");
       if (colon === -1) return false;
       const name = one.slice(0, colon).trim();
@@ -4303,26 +4660,48 @@ test("no recipe's border is being drawn by the layer T018 deletes", () => {
     for (const selector of head.split(",")) {
       const trimmed = selector.trim();
       // A compound carrying a class, an id or an attribute is not styling the
-      // bare element, so deleting the layer takes the class with it.
-      if (!trimmed || /[.#[]/.test(trimmed)) continue;
+      // bare element, and `*` is the reset rather than an element.
+      if (!trimmed || /[.#[*]/.test(trimmed)) continue;
       const last = trimmed.split(/[\s>+~]+/).pop() ?? "";
       const name = /^([a-z][a-z0-9]*)/.exec(last)?.[1];
       if (name) drawn.add(name);
     }
   }
+  return drawn;
+}
 
-  // Derived, not remembered.
-  assert.ok(drawn.size > 0, "the legacy border extractor found nothing; this check is vacuous");
+test("no border in this console is drawn by the stylesheet on a bare element", () => {
   assert.deepEqual(
-    [...drawn].sort(),
+    [...borderedElements(stylesheetRules())].sort(),
     Object.keys(LEGACY_BORDERED_ELEMENTS).sort(),
-    "the legacy layer gives a border to an element nobody has claimed a recipe for",
+    "globals.css gives a bare element a border again, which reaches every one of them",
   );
 
+  // The extractor finds one when there is one to find. Without this, the
+  // assertion above passes on a broken regex.
+  assert.deepEqual(
+    [...borderedElements(rulesOf(PROBE_SHEET))].sort(),
+    ["td", "th"],
+    "the bare-element border extractor has broken, so the empty answer means nothing",
+  );
+
+  // And the five recipes that used to be propped up by it still ask for their
+  // own border, which is what makes the empty answer above safe rather than
+  // merely true. Each is a path into the recipe table, read here.
   const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
   const table = TOKENS as unknown as Record<string, unknown>;
   const orphans: string[] = [];
-  for (const [element, path] of Object.entries(LEGACY_BORDERED_ELEMENTS)) {
+  const drawnByRecipe: Record<string, string> = {
+    button: "BUTTON.base",
+    input: "FORM.input",
+    select: "FORM.select",
+    textarea: "FORM.textarea",
+    th: "TABLE.headerCell",
+    // The cell rule drew the line between rows for this console's whole life.
+    // `TABLE.row` draws it now, and it is the only thing drawing it.
+    td: "TABLE.row",
+  };
+  for (const [element, path] of Object.entries(drawnByRecipe)) {
     const recipe = path.split(".").reduce<unknown>((value, key) => {
       return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
     }, table);
@@ -4338,7 +4717,7 @@ test("no recipe's border is being drawn by the layer T018 deletes", () => {
   assert.deepEqual(
     orphans,
     [],
-    "this element's border comes from @layer legacy alone and goes to zero when it does",
+    "this element had its border taken over by a recipe when the stylesheet went; the recipe has stopped asking for it",
   );
 });
 
@@ -4699,47 +5078,71 @@ test("the device page's widest column is marked secondary on both of its cells",
 /**
  * A class that only means something inside a grid, used outside one.
  *
- * 🔴 This is a third kind of dead class, and neither of the two ledgers above
- * can see it. `card-grid` is a name **no stylesheet defines**. `.risk` is a
- * name that is only ever declared **under an ancestor**. `card-span-all` is
- * neither: `.card-span-all { grid-column: 1 / -1 }` is a real, unconditional
- * rule — it does nothing because every container it was put in is `display:
- * block`. The device detail page carried two of them, and the proxy page's
- * migration found the shape and had no guard to hand it to.
+ * 🔴 T012 called this a third kind of dead class and neither ledger could see
+ * it. `card-grid` was a name **no stylesheet defined**. `.risk` was a name
+ * declared **only under an ancestor**. `card-span-all` was neither:
+ * `.card-span-all { grid-column: 1 / -1 }` was a real, unconditional rule, and
+ * it did nothing because every container it was put in was `display: block`.
+ *
+ * **The ruling this card was asked for, with the geometry behind it.** The
+ * claim “it does nothing” is a claim about every container in the console, not
+ * only about the pages that carried it, so it was measured that way: under the
+ * stylesheet that still had the rule, the class was put on **every element of
+ * all fifteen pages**, one class at a time, and every box compared. Nothing
+ * moved, at 390px or 1100px. 56 of the 78 class names in that stylesheet did
+ * move something under the same treatment, which is what makes the zero a
+ * measurement rather than a broken probe. And the direct fact underneath it:
+ * across the fifteen pages at both widths there are **0 grid containers**, so
+ * `grid-column` had nothing to place.
+ *
+ * It had referrers to the end — comments in three files and the assertion
+ * below — but no element carried it, so it counted as zero-consumer and went
+ * with the rest.
  *
  * Derived from the stylesheet rather than listed, so the next rule of this
- * shape is covered the day it is written. It bites on migrated files only,
- * which makes it a ratchet: `app/proxy` and `app/settings` still carry one
- * each, and each becomes covered by being migrated.
+ * shape is covered the day it is written. It now finds nothing, and the probe
+ * underneath is what says so honestly.
  */
-test("a migrated file does not use a class that only works inside a grid", () => {
+/** Class names whose whole rule is grid placement, over any sheet. */
+function gridOnlyClasses(rules: { head: string; body: string }[]): Set<string> {
   const names = new Set<string>();
-  for (const rule of legacyLayer().matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const declarations = rule[2]
+  for (const { head, body } of rules) {
+    const declarations = body
       .split(";")
-      .map((one) => one.trim())
+      .map((one: string) => one.trim())
       .filter(Boolean);
     if (declarations.length === 0) continue;
-    if (!declarations.every((one) => /^grid-(column|row|area)\s*:/.test(one))) continue;
-    for (const name of rule[1].matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) names.add(name[1]);
+    if (!declarations.every((one: string) => /^grid-(column|row|area)\s*:/.test(one))) continue;
+    for (const name of head.matchAll(/\.(-?[A-Za-z_][\w-]*)/g)) names.add(name[1]);
   }
-  // Derived, not remembered: if the extractor stops finding the one known
-  // instance, the check below is passing because it is looking at nothing.
-  assert.ok(
-    names.has("card-span-all"),
+  return names;
+}
+
+test("no file uses a class that only works inside a grid", () => {
+  const names = gridOnlyClasses(stylesheetRules());
+  assert.deepEqual(
+    [...names].sort(),
+    [],
+    "globals.css has a grid-placement rule again; nothing in this console is a grid container",
+  );
+
+  // Derived, not remembered: on a sheet shaped like the deleted one, the same
+  // extractor finds the instance it was written for.
+  assert.deepEqual(
+    [...gridOnlyClasses(rulesOf(PROBE_SHEET))].sort(),
+    ["card-span-all"],
     "the grid-only-rule extractor found nothing; every assertion under it is vacuous",
   );
 
+  // The ratchet is kept pointing at both places a class name can come from:
+  // a `className` in a `.tsx`, and a recipe in `lib/tokens.ts` that reaches
+  // every file using it.
   const offenders: string[] = [];
   for (const relative of MIGRATED_SOURCES) {
     for (const used of classesIn(classListsIn(readSource(relative)))) {
       if (names.has(used)) offenders.push(`${relative}: ${used}`);
     }
   }
-  // 🔴 And the recipes, which are the other place a class name comes from and
-  // were not covered. `MIGRATED_SOURCES` catches a grid-only class typed into a
-  // `.tsx`; a recipe in `lib/tokens.ts` reaches every file that uses it, and
-  // `classListsIn` never looks there. The same ratchet, one layer deeper.
   const table = TOKENS as unknown as Record<string, unknown>;
   const inRecipes: string[] = [];
   const walk = (value: unknown, path: string) => {

@@ -306,7 +306,8 @@ export const TAILWIND_WIDTH = {
  *
  * Tailwind's default goes to twelve; six is past the point where a table is the
  * right control. `auto-fill`/`minmax` layouts need an arbitrary value, which
- * this system rejects — that is what `LEGACY_UTILITY_COLLISIONS` is about.
+ * this system rejects, so a layout that wants one says it with a breakpoint
+ * and a fixed count instead.
  */
 export const TAILWIND_GRID_TEMPLATE_COLUMNS = {
   none: "none",
@@ -365,7 +366,7 @@ export const TAILWIND_MIN_HEIGHT = {
 /**
  * One height: how tall a block of verbatim output may get before it scrolls.
  *
- * 22rem is what `.output` in the legacy stylesheet has always used, so the
+ * 22rem is what the deleted stylesheet's verbatim-output block used, so the
  * three payload blocks keep their size. It is a scroll threshold rather than a
  * measure, which is why it is not in `TAILWIND_MAX_WIDTH`.
  */
@@ -420,9 +421,8 @@ export const TAILWIND_INSET = {
  *
  * ⚠️ This is the `flex` *shorthand* scale. It is not the display utility of
  * the same name, and not the direction utilities either — those come from
- * `display` and `flexDirection`, which nothing here touches. The pattern this
- * design system settled on ("flex, never grid", see
- * `LEGACY_UTILITY_COLLISIONS`) is unaffected by anything in this table.
+ * `display` and `flexDirection`, which nothing here touches. Nothing in this
+ * table decides how anything is laid out.
  */
 export const TAILWIND_FLEX = {
   "1": "1 1 0%",
@@ -489,10 +489,12 @@ export const PAGE = {
   /**
    * A link inside a sentence.
    *
-   * `globals.css:162` sets `a { text-decoration: none }` for every anchor, so a
+   * `globals.css:258` sets `a { text-decoration: none }` for every anchor, so a
    * link in running text is indistinguishable from the text around it and has
-   * to say it is a link itself. Deleting the legacy layer does not fix that
-   * either — preflight removes the underline too.
+   * to say it is a link itself. That rule is in the reset, not in the
+   * stylesheet that was deleted, so it did not go with it — and preflight
+   * removes the underline as well, so there is no version of this file's
+   * future in which the anchor gets one for free.
    */
   link: "font-semibold text-accent underline",
   /**
@@ -540,11 +542,14 @@ export const CARD = {
   actions: "ml-auto flex gap-s2",
   content: "p-s4",
   /**
-   * `flex flex-col`, not `grid`. The old stylesheet has a `.grid` class of its
-   * own that also sets `gap` and `grid-template-columns`, and those two
-   * declarations leak into any element that carries Tailwind's `grid`
-   * utility — cascade layers cannot help, because nothing in the utility
-   * overrides them. See LEGACY_UTILITY_COLLISIONS.
+   * A centred column, laid out with flex.
+   *
+   * It was flex originally because it had to be: the deleted stylesheet had a
+   * rule of its own under the same name as Tailwind's display utility, and it
+   * also set a gap and a column template that leaked through the cascade layer
+   * into anything carrying the utility. That constraint is gone. This is
+   * unchanged anyway — one centred column is what flex says plainly, and
+   * re-laying it out to prove a point would be a change nothing measured.
    */
   empty: "flex flex-col items-center gap-s2 px-s5 py-s7 text-center text-fg-muted",
   emptyTitle: "font-semibold text-fg",
@@ -560,9 +565,9 @@ export const CARD = {
    * group; folding had nothing, which would have meant that card editing a
    * shared component while six others were in flight.
    *
-   * `<details>`, so it works with JavaScript off and needs no state. The
-   * stylesheet styles neither `details` nor `summary`, so nothing here is
-   * fighting the legacy layer. `list-none` removes the disclosure triangle's
+   * `<details>`, so it works with JavaScript off and needs no state. Nothing
+   * in `app/globals.css` names `details` or `summary`, so this recipe is the
+   * whole of what draws them. `list-none` removes the disclosure triangle's
    * default marker; the caller supplies its own affordance in the summary.
    */
   disclosureSummary:
@@ -611,11 +616,12 @@ export const CARD = {
 /**
  * One number per card, in a row that becomes a column on a phone.
  *
- * `flex`, never `grid` — see LEGACY_UTILITY_COLLISIONS. The old stylesheet
- * asked for `repeat(auto-fill, minmax(min(100%, 260px), 1fr))`, which cannot be
- * written with the token spacing scale and would need an arbitrary value. Three
- * equal columns above `sm` and a stack below it says the same thing for the
- * counts this console actually shows, and it says it without a magic number.
+ * Laid out with flex, and it stays that way now the collision that forced it
+ * is gone. The deleted stylesheet asked for
+ * `repeat(auto-fill, minmax(min(100%, 260px), 1fr))`, which cannot be written
+ * with the token spacing scale and would need an arbitrary value. Equal
+ * columns above `sm` and a stack below say the same thing for the counts this
+ * console actually shows, and say it without a magic number.
  */
 export const STAT = {
   row: "flex flex-col gap-s4 sm:flex-row",
@@ -651,13 +657,14 @@ export const TABLE = {
    * `border-collapse`, a row border renders, and `last:border-0` on a row is
    * reachable with a plain variant where "every cell of the last row" is not.
    *
-   * 🔴 **Until the reset in `app/globals.css` learned to carry a border style,
-   * this row drew nothing and the line an operator saw between rows came from
-   * `@layer legacy`'s `th, td` rule** — the stylesheet this refactor exists to
-   * delete. Both draw now, and `border-collapse` makes them share one pixel, so
-   * turning the row's on changed no row height on any of the fifteen pages
-   * (measured at 390px and 1100px). When the legacy layer goes, the cell's line
-   * goes with it and this one is what is left.
+   * 🔴 **This row drew nothing for the whole of this console's life, and the
+   * line an operator saw between rows came from the deleted stylesheet's
+   * `th, td` rule.** The reset learned to carry a border style first, so both
+   * drew for one commit and `border-collapse` had them sharing a pixel; then
+   * the cell's line went with the stylesheet and this one was what was left.
+   * Measured at both ends: no row on any of the fifteen pages changes height,
+   * at 390px or 1100px, in either theme. 40 cells lose a computed bottom
+   * border and nothing moves.
    */
   row: "border-b border-line last:border-0 hover:bg-surface-hover",
   headRow: "",
@@ -875,7 +882,7 @@ export const SHELL = {
   tenantSlug: "font-semibold text-fg",
   tenantRegion: "text-fg-faint",
   /**
-   * `flex flex-wrap`, never `grid` — see LEGACY_UTILITY_COLLISIONS.
+   * Laid out with flex, wrapping.
    *
    * The gaps are split: groups need horizontal room to read as groups, but a
    * matching vertical gap only makes a wrapped nav taller. On a 390px phone in
@@ -967,17 +974,23 @@ export const CENTERED = {
 /**
  * Form parts.
  *
- * Preflight is off and the legacy stylesheet still styles bare `form`, `label`,
- * `input`, `select` and `textarea` elements, so every property that has to
- * differ is spelled out rather than left to inherit. `focus` deliberately says
- * nothing about `outline`: the global `:focus-visible` ring comes back on its
- * own when the legacy layer goes.
+ * Preflight is off, and nothing else styles a bare `form`, `label`, `input`,
+ * `select` or `textarea` any more — the stylesheet that did has been deleted.
+ * So every property that has to differ is spelled out here rather than left
+ * to inherit, and there is no second answer anywhere for what a control looks
+ * like.
  *
- * There is a recipe here for **every** element the legacy layer styles bare,
- * and `tokens.test.ts` checks that from the stylesheet rather than from memory.
- * A `select` or a `textarea` with no recipe is not a gap that shows up now — it
- * looks perfectly fine today, because `@layer legacy` is painting it. It shows
- * up on the day that layer is deleted, on whichever pages happened to use one.
+ * The one thing a control does *not* get from this table is its type. A user
+ * agent gives a form control Arial at 13.33px with `line-height: normal`
+ * whatever its ancestors say, and the deleted stylesheet was quietly handing
+ * all four elements `font: inherit` by element name. The reset in
+ * `app/globals.css` says it now, once, in preflight's own words. That is not
+ * an aesthetic point: measured across the fifteen pages, taking it away moves
+ * 176 buttons, 78 inputs, 12 selects and 4 textareas, and the boxes that size
+ * to their text move with them.
+ *
+ * `focus` deliberately says nothing about `outline`: the global
+ * `:focus-visible` ring is what draws it.
  */
 export const FORM = {
   root: "flex flex-col gap-s3",
@@ -1000,7 +1013,8 @@ export const FORM = {
    * control there widens a five-column table by whatever the widest option is.
    * `w-auto` puts it back to its content, and the height comes down to match
    * the small buttons the other cells in that row carry. It stays above 32px,
-   * which is the smallest thing the legacy stylesheet asks a finger to hit.
+   * which is the smallest thing the deleted stylesheet ever asked a finger to
+   * hit.
    */
   selectCompact: "min-h-s6 w-auto px-s2 text-xs",
   /**
@@ -1017,21 +1031,21 @@ export const FORM = {
   /**
    * A checkbox and its label on one line.
    *
-   * 🔴 The checkbox needs its *own* size, and this is not cosmetic. Today a
-   * checkbox escapes `input { width: 100% }` (`globals.css:613-622`) only
-   * because `.field-inline input` (`:920`) pins it to 1rem — and `.field-inline`
-   * is itself in the layer that gets deleted. The day `@layer legacy` goes,
-   * both of this console's checkboxes (`card-policies.tsx:89` inside a table
-   * cell, `settings-form.tsx:153`) stretch to fill their container unless the
-   * size is stated here.
+   * 🔴 The checkbox needs its *own* size, and this is not cosmetic. Before the
+   * stylesheet went, a checkbox escaped its `input { width: 100% }` rule only
+   * because a second rule pinned one to 1rem inside a class that was in the
+   * same doomed layer. Both of this console's checkboxes
+   * (`card-policies.tsx:89` inside a table cell, `settings-form.tsx:153`) would
+   * have stretched to fill their container the day it was deleted. They did
+   * not, because the size is stated here.
    */
   inlineLabel: "flex items-center gap-s2 text-sm font-medium text-fg",
   /**
    * `min-h-s4` as well as `size-s4`, and it is not redundant.
    *
-   * The legacy rule is `input, select, textarea { min-height: var(--touch) }`
-   * (`globals.css:613-622`), and `min-height` beats `height` no matter which
-   * layer either comes from. Measured at 390px with only `size-s4`, the
+   * The deleted rule was `input, select, textarea { min-height: var(--touch) }`,
+   * and `min-height` beats `height` no matter which layer either comes from.
+   * Measured at 390px with only `size-s4`, the
    * checkbox rendered **16px wide and 44px tall** — a stretched box in a table
    * cell, which is the same defect as the `width: 100%` one, on the other axis.
    * Found by measuring, not by reading.
@@ -1049,9 +1063,9 @@ export const FORM = {
    * The field inside an inline form: the whole row on a phone, the remainder
    * of the row above `sm`.
    *
-   * The legacy rule was `.inline-form .grow { flex: 1 1 16rem }`, which cannot
-   * be written here — `grow` is one of the class names that collides with the
-   * old stylesheet, and 16rem is not on any scale. Saying it as a breakpoint
+   * The deleted rule was a 16rem flex basis under an ancestor class, which
+   * could not be written here: 16rem is not on any scale. Saying it as a
+   * breakpoint
    * instead is both expressible and better: below `sm` the button wraps under
    * a full-width field rather than being squeezed beside it.
    */
@@ -1125,9 +1139,10 @@ export const LOG = {
  * One recipe for both elements. A tab that changes the URL is an `<a>`, which
  * keeps a server-rendered page a server component and keeps a tab
  * deep-linkable; a tab that switches a pane inside an already-client component
- * is a `<button>`. `border-x-0 border-t-0` is not decoration: preflight is off
- * and the legacy layer gives every bare `button` a 1px border on all four
- * sides.
+ * is a `<button>`. `border-x-0 border-t-0` was not decoration when it was
+ * written: preflight was off and the stylesheet that has since been deleted
+ * gave every bare `button` a 1px border on all four sides. It is belt over
+ * braces now, for the same reason as the two below.
  *
  * 🔴 **`border-solid` and `border-0` here are history, and they are kept on
  * purpose.** They were the fix for a real defect and they are now belt over
@@ -1140,9 +1155,10 @@ export const LOG = {
  * on a tab both reported no border at all — **the rule under the tab strip and
  * the accent underline that says which tab is selected were not being drawn.**
  * The tab that renders as a `<button>` was fine and the one that renders as an
- * `<a>` was not, because `@layer legacy` hands every bare `button` a border
- * shorthand and hands `a` nothing. One recipe, two elements, and the defect was
- * invisible in exactly the half that was tried first.
+ * `<a>` was not, because the deleted stylesheet handed every bare `button` a
+ * border shorthand and handed `a` nothing. One recipe, two elements, and the
+ * defect was invisible in exactly the half that was tried first. Both halves
+ * are drawn by the reset now, so there is no half left to be lucky in.
  *
  * And the second half of the fix, which the first version missed: saying only
  * that the border is solid turns all four sides on, and the initial per-side
@@ -2504,26 +2520,37 @@ export function secretInputProps(value: unknown): SecretInputProps {
 
 /* ── Migration guards ────────────────────────────────────────────────────
  *
- * `app/globals.css` still carries the hand-written stylesheet the other
- * fourteen pages render with. It is wrapped in `@layer legacy` so that every
- * Tailwind utility outranks it whatever the selector specificity, and it gets
- * deleted once every page is migrated. Until then these two lists say what a
- * migrated file is not allowed to do.
+ * **The stylesheet these guarded against is gone.** `app/globals.css` held
+ * 862 lines of hand-written rules in a `legacy` cascade layer; it now holds
+ * tokens, a reset and two `@tailwind` directives, and `tokens.test.ts`
+ * asserts it defines no class selector at all.
+ *
+ * The lists below are kept and pinned rather than deleted, and the difference
+ * matters. `tokens.test.ts` derives each of them from the stylesheet and the
+ * real Tailwind build — which class names the sheet defines, which of those
+ * Tailwind also generates, which are declared only under an ancestor. Every
+ * one of those derivations now yields the empty set, and asserting that it
+ * equals an empty list is a live check that it stays empty. Deleting the
+ * lists would delete the derivation with them, and the first hand-written
+ * rule to reappear in `globals.css` would be found by nobody.
  */
 
 /**
- * Files that must be free of the old stylesheet. Each page card appends to it.
+ * Every `.tsx` under `app/` and `components/`. All of them, now.
  *
- * A file that is not on this list is not checked, so adding the file is part
- * of migrating it. Two of the entries below — `pwa.tsx` and `live-reload.tsx`
- * — render `null` and never carried a class; they are listed so that the
- * guard, not a reader's memory, is what keeps them that way.
+ * This list *is* criterion ①, and it is complete: `UNMIGRATED_SOURCES` below
+ * is empty and pinned empty, and `tokens.test.ts` asserts the two together
+ * account for every `.tsx` under `app/` and `components/`. A new file has to
+ * be added here or the ledger test fails, which is what stops a page being
+ * written that no guard in this file reads.
  *
- * This list *is* criterion ①, so it cannot be opt-in. `tokens.test.ts` asserts
- * that it and `UNMIGRATED_SOURCES` together account for every `.tsx` under
- * `app/` and `components/`, and that every file still on the unmigrated list
- * really does still carry a legacy class. A page migrated without being moved
- * across is therefore a failing test rather than a page nothing checks.
+ * Three entries draw nothing and are listed anyway, so that the guard rather
+ * than a reader's memory is what keeps them that way: `pwa.tsx` and
+ * `live-reload.tsx` render `null`, and `app/unknown-tenant/page.tsx` calls
+ * `notFound()`. That last one was the only name left on the unmigrated side
+ * until the stylesheet was deleted — kept there because promoting a file
+ * with no markup would have counted as migration progress with none in it.
+ * There is nothing left to be unmigrated *from*, so it moved.
  */
 export const MIGRATED_SOURCES = [
   "app/audit/page.tsx",
@@ -2542,6 +2569,7 @@ export const MIGRATED_SOURCES = [
   "app/schedule/page.tsx",
   "app/sessions/page.tsx",
   "app/settings/page.tsx",
+  "app/unknown-tenant/page.tsx",
   "components/card-policies.tsx",
   "components/connection-status.tsx",
   "components/conversation.tsx",
@@ -2684,115 +2712,102 @@ export const UI_PRIMITIVES = {
 } as const;
 
 /**
- * Class names a `.tsx` asks for that nothing anywhere defines.
+ * Class names a `.tsx` asks for that nothing anywhere defines. Empty.
  *
- * Not the legacy stylesheet, not the Tailwind build — nothing. They render as
- * plain unstyled markup and always have.
+ * Not a stylesheet, not the Tailwind build — nothing. Markup carrying one
+ * renders as plain unstyled markup, reviews perfectly, and is invisible to
+ * every other check in this file, because every other check asks whether a
+ * class is *allowed* rather than whether it does anything.
  *
- * The list is frozen and `tokens.test.ts` asserts the *computed* set equals it,
- * which cuts both ways: a card that fixes one has to shorten the list, and a
- * card that invents a new dead class fails immediately rather than shipping
- * markup that reviews perfectly and renders as nothing.
+ * The list is frozen at empty and `tokens.test.ts` asserts the *computed* set
+ * equals it, which cuts both ways: a card that invents a new dead class fails
+ * immediately. The five it was frozen with are worth keeping written down,
+ * because none of them was found by reading:
  *
- * - **`card-grid`** — now only `app/settings/page.tsx:129`.
- *   The stylesheet has `.grid` and `.grid-wide`; it has never had `.card-grid`.
- *   That page is stacking its cards in ordinary block flow while its markup
- *   says it is laying them out in a grid.
- *   **This one was not on any survey** — it was found by running the check
- *   rather than by reading, which is the only way any of these have ever been
- *   found.
+ * - **`card-grid`**, on three pages. The deleted stylesheet had rules named
+ *   `.grid` and `.grid-wide`; it never had `.card-grid`. Those pages stacked
+ *   their cards in ordinary block flow while their markup said they were
+ *   laying them out in a grid. Found by running the check.
+ * - **`panel`, `primary`**, on `components/send-sms.tsx`. The one form in this
+ *   console that sends a text message was an unstyled block with an unstyled
+ *   button from the day it was written until T014.
  *
- *   PM merge note: the device detail page (T010) and the proxy page (T012)
- *   were the other two sites and are both migrated; each stacks with
- *   `PAGE.stack`, which is a real rule rather than a name. The entry comes off
- *   this list entirely when `/settings` (T013) lands.
- * - **`panel`, `primary`** — `components/send-sms.tsx:34` and `:53`. The one
- *   form in this console that sends a text message has been an unstyled block
- *   with an unstyled button since it was written.
- *
- * Of the five sites this list was frozen with, three are gone: the device detail
- * page. The remaining `card-grid` site belongs to T013 (/settings), and
- * `send-sms.tsx` to T014, and the entry stays until the last of them is fixed.
+ * A sixth of the same family did not come through here, because the class
+ * *did* exist: `card-span-all` was a real rule (`grid-column: 1 / -1`) that
+ * placed nothing, because no container in this console has ever been a grid.
+ * `tokens.test.ts` has its own derivation for that shape.
  */
 export const CLASSES_WITH_NO_STYLESHEET = [] as const;
 
 /**
- * Legacy class names that only ever appear under an ancestor.
+ * Class names the stylesheet declares only under an ancestor. Empty, pinned.
  *
- * A subtler version of the list above, and the one that has actually cost
- * something. `.risk` looks like a class. It is not: the stylesheet declares it
- * only as `.button-row button.risk` (`globals.css:851`) and
- * `.row-actions button.risk` (`:946`), so it colours a button in those two
- * containers and does nothing at all anywhere else. The USB-net mode switch
- * put a `.risk` button inside `<form className="inline-form">` — a warning
- * colour that was never once drawn, on the control that takes a module off the
- * device list. T011 replaced it; the four sites left are on pages that have
- * not been migrated yet.
+ * The one entry this ever held is worth keeping written down, because it is
+ * the failure mode the list exists to catch and no amount of reading finds
+ * it. `.risk` looked like a class. It was not: the stylesheet declared it only
+ * as `.button-row button.risk` and `.row-actions button.risk`, so it coloured
+ * a button in those two containers and did nothing anywhere else. The USB-net
+ * mode switch — the control that takes a module off the device list — put a
+ * `.risk` button inside a form whose class was `inline-form`, and its warning
+ * colour was never once drawn.
  *
- * `tokens.test.ts` derives the claim from the stylesheet, so it is checked
- * rather than remembered, and asserts the replacement — `BUTTON.variant.risk`
- * — generates CSS standing on its own.
+ * `tokens.test.ts` re-derives the set from `app/globals.css` every run and
+ * asserts it equals this list, so the check is live rather than historical: a
+ * rule added to that file tomorrow that only bites under an ancestor turns it
+ * red. It also holds `BUTTON.variant.risk` to the standard the class failed —
+ * it has to generate CSS standing on its own, with no container.
  */
-export const CLASSES_NEEDING_AN_ANCESTOR = ["risk"] as const;
+export const CLASSES_NEEDING_AN_ANCESTOR: readonly string[] = [];
 
 /**
- * The other side of the same ledger: files still rendered by the old stylesheet.
+ * The other side of the same ledger. Empty, and it can only ever be empty.
  *
- * Every `.tsx` under `app/` and `components/` is on exactly one of these two
- * lists — `tokens.test.ts` walks the directories and checks it, so a new file
- * has to be classified rather than quietly escaping both. Migrating a page
- * means moving its name up, and the test that every file down here still uses a
- * legacy class is what makes forgetting to move it fail.
+ * This held the files still rendered by the hand-written stylesheet. That
+ * stylesheet has been deleted, so there is nothing for a file to be unmigrated
+ * *from*, and the last name on it — `app/unknown-tenant/page.tsx`, which calls
+ * `notFound()` and renders nothing — moved up.
  *
- * `app/unknown-tenant/page.tsx` calls `notFound()` and renders nothing at all.
- * It is left here rather than promoted, because promoting a file that has no
- * markup would count as migration progress without any having happened.
+ * Kept rather than removed for the same reason as the lists below it: several
+ * tests iterate both ledgers together, and `tokens.test.ts` pins the length of
+ * this one at zero. A page added here would be a page declaring that some
+ * stylesheet outside the design system is painting it, which is the thing
+ * criterion ① says is finished.
  */
-export const UNMIGRATED_SOURCES = [
-  "app/unknown-tenant/page.tsx",
-];
+export const UNMIGRATED_SOURCES: readonly string[] = [];
 
 /**
- * Of those, the ones a migrated file may not use at all.
+ * Utility names a file may not use at all. Empty, pinned, and derived.
  *
- * Matched as whole class names, which is what makes `sm:grid` a way out and
- * `grid` not one. `sr-only` is absent because the legacy rule and the utility
- * say the same thing.
+ * This held two names for most of the refactor, and the reason is the one
+ * piece of cascade-layer behaviour that cost this board real time: a layer
+ * settles which rule wins a property *both* rules declare, and does nothing
+ * whatever about the properties only the layered rule declares. The old
+ * stylesheet's grid rule set a gap and a column template; the utility of the
+ * same name sets a display and nothing else. So those two declarations
+ * reached every element carrying the utility, through a layer that was
+ * supposed to be keeping the old stylesheet away from migrated pages.
+ *
+ * The rule that could not be written down was “override every property the
+ * old rule sets”: true of whatever it happened to set that week, and
+ * checkable by nothing. “Do not use the colliding name” was one line of test,
+ * and that line is still here — `tokens.test.ts` recomputes the collision set
+ * from `app/globals.css` and the real Tailwind build every run. It is empty
+ * because that file now defines no class selector at all.
  */
-export const FORBIDDEN_IN_MIGRATED_SOURCES = ["grid", "grow"] as const;
+export const FORBIDDEN_IN_MIGRATED_SOURCES: readonly string[] = [];
 
 /**
- * Class names that exist in *both* the legacy stylesheet and Tailwind.
+ * Class names `app/globals.css` defines that Tailwind also generates.
  *
- * These are the dangerous ones. A cascade layer decides who wins when both
- * declare the same property; it does nothing about the properties only the
- * legacy rule declares. `.grid` sets `gap` and `grid-template-columns` that
- * Tailwind's `grid` utility says nothing about, so those leak into any
- * migrated element carrying the utility.
- *
- * **How to lay something out in a grid before the legacy layer is deleted.**
- * The collision is between *class names*, not between display modes, so the
- * escape hatch is any name the legacy selector does not match:
- *
- * - `flex` / `flex-col`, which is what almost every case here wants; or
- * - a variant-prefixed grid — `sm:grid`, `max-sm:grid` — because the class
- *   attribute then reads `sm:grid` and `.grid` does not match it. Pair it with
- *   `grid-cols-*` and `gap-*` from the token scales as usual.
- *
- * Earlier advice in this comment said a bare `grid` was fine as long as
- * `grid-cols-*` and `gap-*` were spelled out. That is true of the two
- * declarations `.grid` happens to set *today*, and `FORBIDDEN_IN_MIGRATED_SOURCES`
- * rejected it anyway, so the file argued with itself and the tests won. It is
- * gone for a better reason than the argument: "override every property the
- * legacy rule sets" is an audit that has to be redone every time the legacy
- * rule changes, and nothing can check it. "Do not use the colliding name" is
- * one line of test.
- *
- * `tokens.test.ts` derives the real collision set from the stylesheet and the
- * Tailwind build, so a new one cannot appear unnoticed. Delete this list with
- * the stylesheet.
+ * Empty, and empty for a structural reason rather than a lucky one: that file
+ * defines no class selector at all any more, which `tokens.test.ts` asserts
+ * separately. The set is still recomputed from the stylesheet and the real
+ * build on every run and compared with this list, so a hand-written rule
+ * added to `globals.css` tomorrow that shares a name with a utility fails
+ * here — which is the shape of the defect that was live in this repository
+ * for the whole of the refactor and was found by measuring, not by reading.
  */
-export const LEGACY_UTILITY_COLLISIONS = ["grid", "grow", "sr-only"] as const;
+export const LEGACY_UTILITY_COLLISIONS: readonly string[] = [];
 
 /**
  * Classes that legitimately generate no CSS.
