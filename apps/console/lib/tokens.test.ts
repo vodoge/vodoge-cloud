@@ -4089,13 +4089,15 @@ test("the shell still carries the source footer, for every account", () => {
     "source.edgeUrl",
     "source.edgeLicense",
     "source.edgeLicenseUrl",
+    "source.consoleLicense",
+    "source.consoleLicenseUrl",
   ]) {
     assert.ok(code.includes(`"${key}"`), `the footer no longer renders ${key}`);
   }
   assert.equal(
     (code.match(/target="_blank"/g) ?? []).length,
-    3,
-    "three source links: console, edge, edge licensing",
+    4,
+    "four source links: console, console licensing, edge, edge licensing",
   );
 
   const footerAt = masked.indexOf("<footer");
