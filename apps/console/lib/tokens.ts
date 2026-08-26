@@ -1084,12 +1084,26 @@ export const SHELL = {
   /**
    * Sticky from `sm` up, not below it.
    *
-   * The four groups show all nine destinations without a horizontal scroller,
+   * The four groups show all ten destinations without a horizontal scroller,
    * which costs about three wrapped rows on a phone. Pinning that to the top
    * would hand a quarter of a 390px screen to navigation permanently. Above
    * `sm` the same nav is one or two rows, so it stays pinned there. The
    * alternative — keeping it sticky and hiding destinations behind a scroller
    * — is the arrangement this card was written to replace.
+   *
+   * ⚠️ This read "nine destinations" until 2026-08-27, and the count was never
+   * nine. `NAV_GROUPS` below holds 4 + 4 + 1 + 1 = ten hrefs, all different,
+   * and that array is byte-identical to the pre-refactor baseline — so nothing
+   * removed one and nothing is missing. The sentence was simply wrong from the
+   * day it was written, which is the hard kind of wrong: it describes the file
+   * it sits in, so it reads as observed rather than remembered.
+   *
+   * It is corrected rather than deleted because the wrong number travelled.
+   * "Four groups, nine destinations" reappeared in a goal document and in a
+   * review note, and this is the most likely place it was copied from. A count
+   * written down as an expectation is a check that can never go green: whoever
+   * verifies the navigation against nine will report a defect that nobody
+   * introduced and that no change can fix. Recount from the array, not here.
    */
   header: "z-20 border-b border-line bg-surface sm:sticky sm:top-0",
   bar: "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s2 sm:px-s5",

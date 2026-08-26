@@ -115,11 +115,38 @@ export type ConsoleManifest = {
  *
  * Chromium only shows the richer install dialog when there is at least one
  * `narrow` and one `wide` screenshot; with none it falls back to a one-line
- * bar. Both are checked in by this card, and how they were produced is written
- * down in `docs/goals/vodoge-ui-refactor/notes/T016-pwa-install-offline.md` —
- * they are rendered from this design system's own tokens with demo data, not
- * captured from a tenant, because no real fleet's numbers belong in an install
- * dialog and this card has no session to capture one with.
+ * bar.
+ *
+ * ⚠️ Until 2026-08-27 this paragraph said the two files "are rendered from
+ * this design system's own tokens with demo data, not captured from a tenant".
+ * That was true of the originals `12b1ef7` added and has not been true since:
+ * T013 replaced them with real captures, and T014 reshot both. There is no
+ * rendering step and no renderer — the sentence described a pipeline that does
+ * not exist, which is why it survived so long. It reads as provenance, so
+ * nobody thought to check it against anything.
+ *
+ * It is worth more than the usual stale comment because `lib/pwa.test.ts`
+ * reasons about ANTIALIASING in these very files: a guard there requires every
+ * pixel to be ink, backdrop, or a blend between two colours that meet on the
+ * page. Antialiasing is a property of a capture, not of a drawing. A reader
+ * who believed this paragraph would conclude that guard was measuring
+ * something its input could not contain — and would have been right to.
+ *
+ * What is actually true. Both are viewport captures of the signed-in overview
+ * at `/`, taken with headless Chrome over CDP at their own widths — 390x844 at
+ * dpr 2 giving 780x1688, and 1280x800 at dpr 1 — against a local standalone
+ * build fed by a stub gateway that serves an obviously synthetic fleet
+ * (`DEMO-01`..`DEMO-12`, documentation-block MSISDNs, a session cookie that
+ * says in words that it is not a real token). So the part worth keeping still
+ * holds: no real fleet's numbers are in an install dialog. What changed is
+ * that the page in the picture is now the page, rather than a drawing of it.
+ *
+ * The recipe is in `docs/goals/vodoge-theme-black/notes/T013-manifest-
+ * screenshots.md`; why the wide frame is captured with `--disable-lcd-text`,
+ * without which no arithmetic can separate a retired token from a live glyph
+ * fringe, is in `T014-screenshot-drift.md` beside it. The pointer this
+ * paragraph used to carry — `docs/goals/vodoge-ui-refactor/notes/
+ * T016-pwa-install-offline.md` — documents the drawn originals only.
  */
 export function consoleManifest(): ConsoleManifest {
   return {

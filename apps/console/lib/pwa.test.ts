@@ -1044,43 +1044,176 @@ function paintableColours(): Map<number, string> {
  */
 const BLEND_SLACK = 3;
 
-/** Is `c` on a straight blend between two paintable colours? */
-function isGlyphEdge(c: [number, number, number], palette: [number, number, number][]): boolean {
-  for (let i = 0; i < palette.length; i++) {
-    const a = palette[i];
-    for (let j = i + 1; j < palette.length; j++) {
-      const b = palette[j];
-      // Bounding box first; it rejects almost every pair for almost no work.
-      if (c[0] < Math.min(a[0], b[0]) - BLEND_SLACK || c[0] > Math.max(a[0], b[0]) + BLEND_SLACK) continue;
-      if (c[1] < Math.min(a[1], b[1]) - BLEND_SLACK || c[1] > Math.max(a[1], b[1]) + BLEND_SLACK) continue;
-      if (c[2] < Math.min(a[2], b[2]) - BLEND_SLACK || c[2] > Math.max(a[2], b[2]) + BLEND_SLACK) continue;
-      // Take the shared fraction off the channel with the most to say.
-      let axis = 0;
-      let span = Math.abs(a[0] - b[0]);
-      for (let k = 1; k < 3; k++) {
-        const d = Math.abs(a[k] - b[k]);
-        if (d > span) {
-          span = d;
-          axis = k;
+/**
+ * 🔴 WHICH SEGMENTS EXIST — and why the palette was the wrong set to draw them
+ * between. This is the repair for four blind spots, and it does not move
+ * BLEND_SLACK by so much as a hundredth.
+ *
+ * The slack above says how far OFF a segment a pixel may sit. It said nothing
+ * about which segments there are, and the rule offered the whole palette: all
+ * 701 values, every one paired with every other, **245,350 segments** ruled
+ * across the colour cube. At that density a dead colour does not have to be
+ * plausible, only lucky — and four of them were. T016 §4 injected one pixel of
+ * each into the real capture and watched the rule stay green:
+ *
+ *     #0b0e14   #64708a   #93a1b5   #e7ecf3
+ *
+ * `#64708a` is the worst of them, and not by accident: it is the 2.688
+ * `--fg-faint` this whole board was opened to fix. It sits on the segment
+ * `#404a59` -> `#acbcec` at t=1/3 and hits ALL THREE CHANNELS EXACTLY —
+ * r 64+(172-64)/3 = 100, g 74+(188-74)/3 = 112, b 89+(236-89)/3 = 138, maxerr
+ * 0.000. **A tolerance cannot separate a colour that is not off the segment at
+ * all**, so tightening the slack was never available as a repair, and lowering
+ * it to the measured innocent ceiling would have changed nothing here.
+ *
+ * What is wrong with that segment is not arithmetic, it is physics.
+ * **#404a59 and #acbcec are not in the screenshot — neither of them, not one
+ * pixel, in either frame.** They are two colours the palette CAN mix, joined
+ * by a line that happens to pass through a dead value. An antialiased pixel is
+ * coverage blending at a boundary between two things that are both ON THE
+ * PAGE, so its endpoints have to be on the page too.
+ *
+ * Presence alone is still not it, and the wide frame is what says so: #0b0e14
+ * lies 0.400 off `#010102` -> `#19222f` and BOTH of those are present. But
+ * `#010102` is the page canvas and `#19222f` is the fill inside an info badge,
+ * and there is nowhere on this page those two touch. A boundary needs its two
+ * sides in the same place.
+ *
+ * So the endpoints are derived from the frame's own pixels: two paintable
+ * colours may explain a blend only where the frame contains somewhere they
+ * MEET. Nothing is enumerated, nothing is named, no history is read. Retire a
+ * token and it stops being able to explain anything the same day, with nobody
+ * editing this file — which is the property the hand-written list of eight
+ * token names did not have, and the reason a retired colour shipped.
+ *
+ * Measured on these two frames (narrow / wide):
+ *
+ *   candidate segments      245,350  ->     321  /    290
+ *   worst INNOCENT residual   0.682  ->   1.000  /  1.019     (slack is 3)
+ *   #0b0e14                   0.253  ->   5.300  /  4.471
+ *   #64708a                   0.000  ->  33.167  / 12.718
+ *   #93a1b5                   0.115  ->  30.733  / 30.733
+ *   #e7ecf3                   0.462  ->  11.533  / 11.533
+ *   #63a4ff (already caught) 39.000  -> 151.133  / 52.000
+ *
+ * 🔴 **BLEND_SLACK IS UNCHANGED AT 3, and no assertion anywhere was loosened.**
+ * Only the set of admissible endpoints moved. That is deliberate: "the guard
+ * got stricter" and "the guard got correct" are different claims, and a guard
+ * that catches dead colours by refusing legitimate antialiasing has not been
+ * repaired, it has been broken in the direction nobody notices until a
+ * recapture goes red and somebody widens the tolerance back. The innocent
+ * ceiling is 1.019 against a slack of 3, so real glyph edges keep 2.9x of
+ * room, while the tightest dead colour now needs 4.471.
+ *
+ * The tile size is not a tuned knob. Swept at 4, 8, 16, 32 and 64 px, with and
+ * without the ring — ten settings, and at every one of them all four dead
+ * colours are red and ZERO innocent colours are; the tightest margin (#0b0e14
+ * in the wide frame) does not move at all. Regenerate the sweep, and the
+ * synthetic-antialiasing control below, with `scratchpad/t017/probe4.mjs`.
+ */
+const MEET_TILE = 16;
+
+/**
+ * Which paintable colours meet somewhere in this image.
+ *
+ * Tiles rather than exact neighbourhoods: a boundary is one to three pixels of
+ * ramp, so the two sides only have to be NEAR one another, and the one-tile
+ * ring keeps a boundary that straddles a tile edge counted. Both choices lean
+ * the same way on purpose — MISSING a real meeting is what would turn an
+ * honest recapture red, and that is the failure that gets a guard deleted.
+ */
+function meetingPairs(
+  image: { width: number; height: number; at(x: number, y: number): [number, number, number, number] },
+  paintable: Map<number, string>,
+): [number, number, number][][] {
+  const cols = Math.ceil(image.width / MEET_TILE);
+  const rows = Math.ceil(image.height / MEET_TILE);
+  const tiles = new Map<number, Set<number>>();
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const p = image.at(x, y);
+      const key = pack(p[0], p[1], p[2]);
+      if (!paintable.has(key)) continue;
+      let seen = tiles.get(key);
+      if (!seen) tiles.set(key, (seen = new Set()));
+      seen.add(((y / MEET_TILE) | 0) * cols + ((x / MEET_TILE) | 0));
+    }
+  }
+  const reach = new Map<number, Set<number>>();
+  for (const [key, seen] of tiles) {
+    const grown = new Set<number>();
+    for (const t of seen) {
+      const ty = (t / cols) | 0;
+      const tx = t % cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = ty + dy;
+          const nx = tx + dx;
+          if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) grown.add(ny * cols + nx);
         }
       }
-      if (span < 8) continue;
-      const t = (c[axis] - a[axis]) / (b[axis] - a[axis]);
-      if (t < -0.02 || t > 1.02) continue;
-      if (
-        Math.abs(a[0] + t * (b[0] - a[0]) - c[0]) <= BLEND_SLACK &&
-        Math.abs(a[1] + t * (b[1] - a[1]) - c[1]) <= BLEND_SLACK &&
-        Math.abs(a[2] + t * (b[2] - a[2]) - c[2]) <= BLEND_SLACK
-      ) {
-        return true;
+    }
+    reach.set(key, grown);
+  }
+  const present = [...tiles.keys()];
+  const pairs: [number, number, number][][] = [];
+  for (let i = 0; i < present.length; i++) {
+    const mine = tiles.get(present[i])!;
+    for (let j = i + 1; j < present.length; j++) {
+      const theirs = reach.get(present[j])!;
+      for (const t of mine) {
+        if (theirs.has(t)) {
+          pairs.push([unpack(present[i]), unpack(present[j])]);
+          break;
+        }
       }
+    }
+  }
+  return pairs;
+}
+
+/** Is `c` on a straight blend between two paintable colours that meet here? */
+function isGlyphEdge(c: [number, number, number], pairs: [number, number, number][][]): boolean {
+  for (const [a, b] of pairs) {
+    // Bounding box first; it rejects almost every pair for almost no work.
+    if (c[0] < Math.min(a[0], b[0]) - BLEND_SLACK || c[0] > Math.max(a[0], b[0]) + BLEND_SLACK) continue;
+    if (c[1] < Math.min(a[1], b[1]) - BLEND_SLACK || c[1] > Math.max(a[1], b[1]) + BLEND_SLACK) continue;
+    if (c[2] < Math.min(a[2], b[2]) - BLEND_SLACK || c[2] > Math.max(a[2], b[2]) + BLEND_SLACK) continue;
+    // Take the shared fraction off the channel with the most to say.
+    let axis = 0;
+    let span = Math.abs(a[0] - b[0]);
+    for (let k = 1; k < 3; k++) {
+      const d = Math.abs(a[k] - b[k]);
+      if (d > span) {
+        span = d;
+        axis = k;
+      }
+    }
+    if (span < 8) continue;
+    const t = (c[axis] - a[axis]) / (b[axis] - a[axis]);
+    if (t < -0.02 || t > 1.02) continue;
+    if (
+      Math.abs(a[0] + t * (b[0] - a[0]) - c[0]) <= BLEND_SLACK &&
+      Math.abs(a[1] + t * (b[1] - a[1]) - c[1]) <= BLEND_SLACK &&
+      Math.abs(a[2] + t * (b[2] - a[2]) - c[2]) <= BLEND_SLACK
+    ) {
+      return true;
     }
   }
   return false;
 }
 
-/** Every distinct colour in a screenshot, with its pixel count. */
-function colourCensus(name: string): { counts: Map<number, number>; width: number; height: number } {
+/**
+ * Every distinct colour in a screenshot, with its pixel count. The decoded
+ * image comes back too, so a caller that also needs the geometry — which
+ * colours MEET which — does not pay for a second inflate.
+ */
+function colourCensus(name: string): {
+  counts: Map<number, number>;
+  width: number;
+  height: number;
+  image: ReturnType<typeof pngPixels>;
+} {
   const image = pngPixels(readPublic(name));
   const counts = new Map<number, number>();
   for (let y = 0; y < image.height; y++) {
@@ -1090,7 +1223,7 @@ function colourCensus(name: string): { counts: Map<number, number>; width: numbe
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }
-  return { counts, width: image.width, height: image.height };
+  return { counts, width: image.width, height: image.height, image };
 }
 
 /*
@@ -1117,12 +1250,17 @@ function colourCensus(name: string): { counts: Map<number, number>; width: numbe
 
 test("no colour in the install dialog's screenshots is outside the palette this console ships", () => {
   const paintable = paintableColours();
-  const list = [...paintable.keys()].map(unpack);
   // Non-vacuity: a palette that derived to nothing would pass everything.
   assert.ok(paintable.size > 40, `only ${paintable.size} paintable colours derived`);
 
   for (const shot of consoleManifest().screenshots) {
-    const { counts, width, height } = colourCensus(shot.src.slice(1));
+    const { counts, width, height, image } = colourCensus(shot.src.slice(1));
+    const pairs = meetingPairs(image, paintable);
+    // Non-vacuity for the new half, and it fails the safe way round: with no
+    // meeting pairs nothing could be explained and every antialiased pixel in
+    // the file would be reported, so this floor is about a broken derivation
+    // rather than about a clean frame. 321 narrow / 290 wide when written.
+    assert.ok(pairs.length > 50, `only ${pairs.length} meeting pairs in ${shot.src}`);
     const foreign: [number, number][] = [];
     let exact = 0;
     for (const [key, n] of counts) {
@@ -1130,7 +1268,7 @@ test("no colour in the install dialog's screenshots is outside the palette this 
         exact += n;
         continue;
       }
-      if (isGlyphEdge(unpack(key), list)) continue;
+      if (isGlyphEdge(unpack(key), pairs)) continue;
       foreign.push([key, n]);
     }
     foreign.sort((a, b) => b[1] - a[1]);
@@ -1150,6 +1288,123 @@ test("no colour in the install dialog's screenshots is outside the palette this 
       `only ${(share * 100).toFixed(1)}% of ${shot.src} is an exact palette colour`,
     );
   }
+});
+
+/**
+ * 🔴 The mutation test for the rule above, kept in the suite instead of in a
+ * scratchpad, because the hole it closes was found by mutation and NOTHING IN
+ * THE REPOSITORY WOULD HAVE SHOWN IT. Every check was green, twice, across two
+ * gates, while one pixel of the colour this board exists to retire could have
+ * walked straight through.
+ *
+ * These four hexes are a FIXTURE, not the rule. Nothing above consults them
+ * and nothing above would change if they were deleted — the repair is that
+ * endpoints must meet on the page, and it names no colours at all. They are
+ * here for the same reason TOP_PROFILE is: they are a measurement somebody
+ * made on a real capture (T016 §4), and a measurement nobody re-runs is a
+ * measurement that quietly stops being true.
+ *
+ * 🔴 What makes this a mutation test rather than a restatement is the SECOND
+ * half. Catching dead colours is easy if you are willing to reject real
+ * antialiasing too, and a guard that does that gets its tolerance widened back
+ * by the next person who hits a false red — so the control is not decorative.
+ * There are two of them and they are NOT of equal strength, which is worth
+ * saying plainly rather than reporting one big number:
+ *
+ *   REAL (the strong one). Every non-exact colour in the two captures — 401
+ *     narrow and 383 wide, 784 actual antialiasing values off a real page —
+ *     must still be explained. These come from the PNG, not from this file,
+ *     so nothing about how the rule is built can flatter them. Worst residual
+ *     measured across all 784 is 1.019 against a slack of 3.
+ *
+ *   SYNTHETIC (the weak one, and weak in a specific way). Every 8-bit coverage
+ *     step across every meeting pair, ~69,400 narrow and ~64,100 wide. Note
+ *     what this can and cannot show: the blends are generated FROM the pair
+ *     set and then handed back to it, so it is close to a self-consistency
+ *     check. It is kept because self-consistency is exactly what dies if
+ *     somebody squeezes BLEND_SLACK — at slack 0 the compositing rounding
+ *     alone would fail it — and it covers coverage fractions the real capture
+ *     never happened to produce. It is not evidence that the rule handles
+ *     antialiasing it has not been told about; the 784 above are.
+ *
+ * Both halves have to hold at once. Only the pairing of them says the rule
+ * found the real difference rather than a smaller tolerance.
+ *
+ * Every branch is counted rather than assumed, and the counts are separate. A
+ * loop that skipped every case reports the same silent success as one that
+ * caught every case — the shape that has already produced a false clean sweep
+ * twice on this repository.
+ */
+const WAS_BLIND_T016 = ["#0b0e14", "#64708a", "#93a1b5", "#e7ecf3"];
+const ALREADY_CAUGHT_T016 = ["#63a4ff", "#f2686d", "#10b47a"];
+
+test("one pixel of a retired colour cannot hide in the install dialog's screenshots", () => {
+  const paintable = paintableColours();
+  let injected = 0;
+  let real = 0;
+  let blends = 0;
+
+  for (const shot of consoleManifest().screenshots) {
+    const { counts, image } = colourCensus(shot.src.slice(1));
+    const pairs = meetingPairs(image, paintable);
+
+    // ── 🔴 POSITIVE CONTROL, the strong one: real antialiasing off the page ──
+    // Also the baseline. Against a frame that is already dirty every injection
+    // below "passes" for the wrong reason and the whole test means nothing.
+    for (const [key] of counts) {
+      if (paintable.has(key)) continue;
+      real++;
+      assert.ok(
+        isGlyphEdge(unpack(key), pairs),
+        `${shot.src}: ${hexOf(key)} is a colour this capture actually contains and the rule can ` +
+          `no longer explain it — the pair restriction has started rejecting honest antialiasing`,
+      );
+    }
+
+    // ── CAUGHT: a single pixel of a retired value has to be visible ────────
+    for (const hex of [...WAS_BLIND_T016, ...ALREADY_CAUGHT_T016]) {
+      const c = rgbOf(hex);
+      // If a retired value ever returns to the palette this stops being a
+      // mutant and starts being a legal colour, and saying so beats failing
+      // with a message about antialiasing.
+      assert.ok(!paintable.has(pack(...c)), `${hex} is a palette colour again — this fixture is stale`);
+      injected++;
+      assert.ok(
+        !isGlyphEdge(c, pairs),
+        `${shot.src}: one pixel of the retired ${hex} is explicable as a glyph edge, so this ` +
+          `guard cannot see it. That is the T016 §4 blind spot reopening — the endpoints of ` +
+          `a blend must be two colours that MEET in this frame`,
+      );
+    }
+
+    // ── POSITIVE CONTROL, the weak one: self-consistency at every coverage ──
+    for (const [a, b] of pairs) {
+      for (let a8 = 1; a8 < 255; a8++) {
+        const c: [number, number, number] = [
+          Math.round((a8 * b[0] + (255 - a8) * a[0]) / 255),
+          Math.round((a8 * b[1] + (255 - a8) * a[1]) / 255),
+          Math.round((a8 * b[2] + (255 - a8) * a[2]) / 255),
+        ];
+        // Exact palette hits never reach the blend rule at all.
+        if (paintable.has(pack(...c))) continue;
+        blends++;
+        assert.ok(
+          isGlyphEdge(c, pairs),
+          `${shot.src}: ${hexOf(pack(...c))} is ${a8}/255 coverage of ${hexOf(pack(...b))} over ` +
+            `${hexOf(pack(...a))}, two colours this frame says meet — rejecting it means the ` +
+            `rule now turns honest antialiasing red`,
+        );
+      }
+    }
+  }
+
+  // Counted apart, so a skipped branch cannot read as a passing one.
+  // CAUGHT: 7 retired values x 2 frames. SKIP would show up here as a shortfall.
+  assert.equal(injected, 14, `only ${injected} of 14 single-pixel injections were made`);
+  // GREEN, real: 401 narrow + 383 wide when written.
+  assert.ok(real > 700, `only ${real} real antialiasing colours were checked`);
+  // GREEN, synthetic: ~133,500 when written.
+  assert.ok(blends > 100000, `only ${blends} synthetic antialiasing steps were tested`);
 });
 
 /**
