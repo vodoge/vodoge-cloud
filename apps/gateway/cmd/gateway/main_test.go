@@ -43,6 +43,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/telegram"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
+	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
 func TestHealthEndpointsAreNoStoreJSON(t *testing.T) {
@@ -2964,5 +2965,163 @@ func TestAuditRowsSurviveAConsoleShapedRead(t *testing.T) {
 	sort.Strings(actions)
 	if want := []string{"auth.login", "create_enrollment_code"}; !equalStrings(actions, want) {
 		t.Fatalf("actions = %v, want %v", actions, want)
+	}
+}
+
+// The card policy push is the one command kind the gateway builds by hand from
+// a database row instead of from the generated contract type, and that is how
+// it came to send a field the edge refuses.
+//
+// contract.CardPolicy is deny_unknown_fields over four names. cards.Policy is
+// the stored row and has six. Every push this deployment made carried
+// updated_at inside each policy object, and the device answered none of them:
+// on 2026-08-26 the bench logged
+//
+//	command: invalid envelope: unknown field `updated_at`,
+//	expected one of `iccid`, `cellular_enabled`, `vertical`, `apn`
+//
+// with no receipt at all, while the same set sent in the contract's shape was
+// accepted in two seconds.
+func TestACardPolicyPushCarriesOnlyWhatTheContractDefines(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+	}
+	handler := proc.handler()
+
+	// A note is stored and shown by the console. It has no place on the wire.
+	body := `{"cellular_enabled":true,"vertical":"intl","apn":"cmnet","note":"bench card"}`
+	request := authorize(httptest.NewRequest(http.MethodPut,
+		"http://a.vodoge.com/v1/cards/8985200014632179571/policy", strings.NewReader(body)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	queued := proc.queue.(*commands.Memory).Items
+	if len(queued) != 1 {
+		t.Fatalf("queued commands = %d, want one per device", len(queued))
+	}
+	payload := string(queued[0].Payload)
+	for _, absent := range []string{"updated_at", "note"} {
+		if strings.Contains(payload, absent) {
+			t.Errorf("payload carries %q, which the edge answers with "+
+				"`invalid envelope: unknown field`: %s", absent, payload)
+		}
+	}
+
+	var command contract.UpdateCardPolicyCommand
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&command); err != nil {
+		t.Fatalf("payload does not parse as the contract command, which is what "+
+			"the edge does to it: %v\n%s", err, payload)
+	}
+	if command.Kind != "UpdateCardPolicy" || len(command.Policies) != 1 {
+		t.Fatalf("payload = %s", payload)
+	}
+	policy := command.Policies[0]
+	if policy.Iccid != "8985200014632179571" || !policy.CellularEnabled ||
+		policy.Vertical != "intl" || policy.Apn == nil || *policy.Apn != "cmnet" {
+		t.Errorf("the four contract fields must survive: %+v", policy)
+	}
+	if command.PolicyVersion == "" {
+		t.Error("policy_version is empty; the device cannot tell whether what it holds is current")
+	}
+}
+
+// The key used to end in time.Now().UnixNano(), so app.enqueue_command's
+// deduplication on (tenant_id, idempotency_key) was unreachable: two pushes of
+// one unchanged set were two rows that could never collapse. It is also where
+// the redelivery on resume reads how many attempts this intent has had, so a
+// clock reading in here would restart that count on every push.
+func TestACardPolicyPushKeyIsDerivedFromWhatWasSent(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {
+			{ID: "d-a", Name: "lab-a", State: "online"},
+			{ID: "d-b", Name: "lab-b", State: "offline"},
+		}},
+	}
+	handler := proc.handler()
+
+	request := authorize(httptest.NewRequest(http.MethodPut,
+		"http://a.vodoge.com/v1/cards/8985200014632179571/policy",
+		strings.NewReader(`{"cellular_enabled":true,"vertical":"intl"}`)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	queued := proc.queue.(*commands.Memory).Items
+	if len(queued) != 2 {
+		t.Fatalf("queued commands = %d, want one per device: a policy is keyed "+
+			"by ICCID and any device might be holding that card", len(queued))
+	}
+	seen := map[string]bool{}
+	for _, item := range queued {
+		var command contract.UpdateCardPolicyCommand
+		if err := json.Unmarshal(item.Payload, &command); err != nil {
+			t.Fatalf("payload: %v", err)
+		}
+		// Recomputed from the command's own device and payload. Anything else
+		// in the key -- a clock, a counter, a random -- fails here.
+		want := commands.CardPolicyKey(item.DeviceID, command.PolicyVersion, item.Payload)
+		if item.IdempotencyKey != want {
+			t.Errorf("key = %q, want %q (a function of the intent alone)",
+				item.IdempotencyKey, want)
+		}
+		if seen[item.IdempotencyKey] {
+			t.Errorf("two devices share the key %q; app.enqueue_command would "+
+				"give the second device the first one's command", item.IdempotencyKey)
+		}
+		seen[item.IdempotencyKey] = true
+		if item.Kind != commands.CardPolicyKind {
+			t.Errorf("kind = %q, want %q", item.Kind, commands.CardPolicyKind)
+		}
+	}
+}
+
+// The window is the shared constant, not a literal at the call site. The
+// redelivery on resume re-arms an intent for a bounded number of attempts, and
+// both halves have to agree on how long one attempt lasts.
+func TestACardPolicyPushUsesTheSharedWindow(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+	}
+	handler := proc.handler()
+
+	before := time.Now()
+	request := authorize(httptest.NewRequest(http.MethodPut,
+		"http://a.vodoge.com/v1/cards/8985200014632179571/policy",
+		strings.NewReader(`{"cellular_enabled":false,"vertical":"cn"}`)))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	queued := proc.queue.(*commands.Memory).Items
+	if len(queued) != 1 {
+		t.Fatalf("queued commands = %d, want 1", len(queued))
+	}
+	window := queued[0].ExpiresAt.Sub(before)
+	if window < commands.CardPolicyTTL || window > commands.CardPolicyTTL+time.Minute {
+		t.Fatalf("expiry window = %v, want commands.CardPolicyTTL (%v)",
+			window, commands.CardPolicyTTL)
 	}
 }

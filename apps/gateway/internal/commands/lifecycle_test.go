@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/dispatch"
+	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
 // These tests drive SQLLifecycle through a real *sql.DB backed by a recording
@@ -45,6 +47,11 @@ type execRecorder struct {
 	// spans two transactions can be caught keeping or losing the first one's
 	// result.
 	fail func(query string) error
+	// answers serves real rows for a statement that reads more than one
+	// column. singleIntRows below covers the counting functions; the card
+	// policy redelivery reads a row back and then writes one, and a test that
+	// could not shape that row could only assert that a query was sent.
+	answers func(query string) driver.Rows
 }
 
 func (r *execRecorder) record(query string, args []driver.NamedValue) int64 {
@@ -298,6 +305,9 @@ func (c recordingConn) QueryContext(
 	if err := c.rec.errorFor(query); err != nil {
 		return nil, err
 	}
+	if rows := c.rec.answerFor(query); rows != nil {
+		return rows, nil
+	}
 	return &singleIntRows{value: c.rec.countFor(query)}, nil
 }
 
@@ -469,4 +479,314 @@ func TestAFailedHousekeepingPassStillReportsTheWorkThatCommitted(t *testing.T) {
 		t.Fatalf("pruned = %d, want 0 when the prune never returned a count",
 			swept.PrunedIngress)
 	}
+}
+
+// answerFor is the row set a statement returns, when a test has shaped one.
+func (r *execRecorder) answerFor(query string) driver.Rows {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.answers == nil {
+		return nil
+	}
+	return r.answers(query)
+}
+
+// valueRows serves rows a test wrote out by hand.
+type valueRows struct {
+	cols []string
+	rows [][]driver.Value
+	next int
+}
+
+func (v *valueRows) Columns() []string { return v.cols }
+func (*valueRows) Close() error        { return nil }
+func (v *valueRows) Next(dest []driver.Value) error {
+	if v.next >= len(v.rows) {
+		return io.EOF
+	}
+	copy(dest, v.rows[v.next])
+	v.next++
+	return nil
+}
+
+// The payload production really stored, from the last card policy push the
+// console made (app.commands, 2026-08-22 08:10:15). updated_at is the field the
+// edge refuses: contract.CardPolicy is deny_unknown_fields over four names.
+const storedCardPolicyPayload = `{"kind": "UpdateCardPolicy", "policies": [{"apn": "cmnet", ` +
+	`"iccid": "8985200014632179571", "vertical": "intl", "updated_at": 1787386215557, ` +
+	`"cellular_enabled": true}], "policy_version": "1-1787386215"}`
+
+const legacyCardPolicyKey = "update_card_policy:b0000000-0000-4000-8000-00000000000b:" +
+	"1-1787386215:1787386215573111733"
+
+var cardPolicyNow = time.Date(2026, 8, 26, 5, 11, 0, 0, time.UTC)
+
+// newestCardPolicyRows shapes the answer to newestCardPolicySQL.
+func newestCardPolicyRows(key, status string, expiresAt time.Time, accepted, late bool, payload string) *valueRows {
+	return &valueRows{
+		cols: []string{"idempotency_key", "status", "expires_at", "accepted", "late", "payload"},
+		rows: [][]driver.Value{{key, status, expiresAt, accepted, late, []byte(payload)}},
+	}
+}
+
+// pendingRows shapes the answer to the durable pending read.
+func pendingRows(ids ...string) *valueRows {
+	rows := make([][]driver.Value, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, []driver.Value{
+			id, "d-1", "run_at_command", []byte(`{}`),
+			cardPolicyNow.Add(-time.Minute), cardPolicyNow.Add(time.Minute), int64(1),
+		})
+	}
+	return &valueRows{
+		cols: []string{"id", "device_id", "kind", "payload", "issued_at", "expires_at", "attempt"},
+		rows: rows,
+	}
+}
+
+// cardPolicyRecorder wires a database whose newest card policy row is the one
+// the test names, and whose other statements behave normally.
+func cardPolicyRecorder(t *testing.T, newest *valueRows, pending *valueRows) (*sql.DB, *execRecorder) {
+	t.Helper()
+	db, rec := newRecordingDB(t, nil)
+	rec.answers = func(query string) driver.Rows {
+		switch {
+		case strings.Contains(query, "AND c.kind = 'update_card_policy'"):
+			if newest == nil {
+				return &valueRows{cols: []string{"idempotency_key"}}
+			}
+			return newest
+		case strings.Contains(query, "LEFT JOIN app.command_outbox"):
+			if pending == nil {
+				return pendingRows()
+			}
+			return pending
+		case strings.Contains(query, "app.enqueue_command"):
+			return &valueRows{
+				cols: []string{"id"},
+				rows: [][]driver.Value{{"c0000000-0000-4000-8000-00000000000c"}},
+			}
+		}
+		return nil
+	}
+	return db, rec
+}
+
+// The defect this card exists for: a card policy that expired without ever
+// reaching the device is nobody else's job to re-issue. The console pushed it
+// once, four days ago, and that row is still the last word on the subject.
+func TestAResumedDeviceIsGivenBackTheCardPolicyItNeverTook(t *testing.T) {
+	t.Parallel()
+
+	db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+		legacyCardPolicyKey, "expired", cardPolicyNow.Add(-4*24*time.Hour),
+		false, false, storedCardPolicyPayload), nil)
+
+	(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	enqueue := rec.find(t, "app.enqueue_command")
+	if got, want := len(enqueue.args), 6; got != want {
+		t.Fatalf("enqueue args = %d, want %d: %+v", got, want, enqueue.args)
+	}
+	if got := enqueue.args[2].Value; got != CardPolicyKind {
+		t.Errorf("kind = %v, want %v", got, CardPolicyKind)
+	}
+	key, _ := enqueue.args[4].Value.(string)
+	if key != legacyCardPolicyKey+":r1" {
+		t.Errorf("redelivery key = %q, want the original intent at attempt 1", key)
+	}
+	expires, _ := enqueue.args[5].Value.(time.Time)
+	if want := cardPolicyNow.Add(CardPolicyTTL); !expires.Equal(want) {
+		t.Errorf("expires_at = %v, want %v (a fresh window, not the lapsed one)", expires, want)
+	}
+}
+
+// The stored payload is unreadable by the device it is addressed to, so
+// replaying it verbatim would only reproduce the failure. Re-rendering through
+// the contract type repairs rows written by the code that caused this.
+func TestARedeliveredCardPolicyIsRepairedToTheContractShape(t *testing.T) {
+	t.Parallel()
+
+	db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+		legacyCardPolicyKey, "expired", cardPolicyNow.Add(-time.Hour),
+		false, false, storedCardPolicyPayload), nil)
+
+	(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	payload, _ := rec.find(t, "app.enqueue_command").args[3].Value.(string)
+	if strings.Contains(payload, "updated_at") {
+		t.Errorf("redelivered payload still carries updated_at, which the edge "+
+			"answers with `invalid envelope: unknown field`: %s", payload)
+	}
+	var command contract.UpdateCardPolicyCommand
+	if err := json.Unmarshal([]byte(payload), &command); err != nil {
+		t.Fatalf("redelivered payload is not a card policy command: %v", err)
+	}
+	if len(command.Policies) != 1 {
+		t.Fatalf("policies = %d, want the one that was stored", len(command.Policies))
+	}
+	policy := command.Policies[0]
+	if policy.Iccid != "8985200014632179571" || !policy.CellularEnabled ||
+		policy.Vertical != "intl" || policy.Apn == nil || *policy.Apn != "cmnet" {
+		t.Errorf("the four contract fields must survive the repair verbatim: %+v", policy)
+	}
+	if command.PolicyVersion != "1-1787386215" {
+		t.Errorf("policy_version = %q, want the stored one", command.PolicyVersion)
+	}
+}
+
+// The bound. Without one this is a machine for filling a device's session with
+// a command it has already refused three times.
+func TestCardPolicyRedeliveryStopsWhenItsBudgetIsSpent(t *testing.T) {
+	t.Parallel()
+
+	// :r2 is the third row of this intent -- the console push, then two
+	// redeliveries -- so MaxCardPolicyDeliveries is already reached.
+	db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+		legacyCardPolicyKey+":r2", "expired", cardPolicyNow.Add(-time.Hour),
+		false, false, storedCardPolicyPayload), nil)
+
+	(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	if got := rec.count("app.enqueue_command"); got != 0 {
+		t.Fatalf("enqueues = %d, want 0. Three rows per intent is the whole "+
+			"budget; a fourth makes this an unbounded retry against a device "+
+			"that has not taken the first three", got)
+	}
+	// And it must still be a pending read, not a return path that gave up.
+	rec.find(t, "LEFT JOIN app.command_outbox")
+}
+
+// Two redeliveries, then stop -- walked the way production would walk it,
+// because an off-by-one here is the difference between a bound and a loop.
+func TestTheCardPolicyRedeliveryChainIsThreeRowsLong(t *testing.T) {
+	t.Parallel()
+
+	key := legacyCardPolicyKey
+	for attempt := 1; ; attempt++ {
+		db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+			key, "expired", cardPolicyNow.Add(-time.Hour), false, false,
+			storedCardPolicyPayload), nil)
+		(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+		if rec.count("app.enqueue_command") == 0 {
+			if attempt != MaxCardPolicyDeliveries {
+				t.Fatalf("the chain stopped after %d rows, want %d",
+					attempt, MaxCardPolicyDeliveries)
+			}
+			return
+		}
+		if attempt > MaxCardPolicyDeliveries {
+			t.Fatalf("the chain reached %d rows without stopping", attempt)
+		}
+		key, _ = rec.find(t, "app.enqueue_command").args[4].Value.(string)
+	}
+}
+
+// Phase 2's one unacceptable failure is duplicate delivery. These are the states
+// in which a second row would be exactly that.
+func TestCardPolicyRedeliveryDoesNotDuplicateWhatTheDeviceAlreadyHas(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		status    string
+		expiresAt time.Time
+		accepted  bool
+		late      bool
+	}{
+		{"acknowledged", "expired", cardPolicyNow.Add(-time.Hour), true, false},
+		{"answered after it expired", "expired", cardPolicyNow.Add(-time.Hour), false, true},
+		{"answered", "failed", cardPolicyNow.Add(-time.Hour), false, false},
+		{"cancelled by an operator", "cancelled", cardPolicyNow.Add(-time.Hour), false, false},
+		// The pending check runs every few seconds on a live session, so a
+		// still-deliverable command must be left to the read below -- otherwise
+		// one push would become a row per tick.
+		{"still deliverable", "queued", cardPolicyNow.Add(time.Hour), false, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+				legacyCardPolicyKey, test.status, test.expiresAt,
+				test.accepted, test.late, storedCardPolicyPayload), nil)
+
+			(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+			if got := rec.count("app.enqueue_command"); got != 0 {
+				t.Fatalf("enqueues = %d, want 0 for a policy that is %s",
+					got, test.name)
+			}
+		})
+	}
+}
+
+// A device that has never been sent a policy is not one that lost it. Deriving
+// a push from app.card_policies here would send a set to a device the console
+// never pushed to, on a path that runs by itself.
+func TestNothingIsInventedForADeviceThatWasNeverSentAPolicy(t *testing.T) {
+	t.Parallel()
+
+	db, rec := cardPolicyRecorder(t, nil, nil)
+
+	(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	if got := rec.count("app.enqueue_command"); got != 0 {
+		t.Fatalf("enqueues = %d, want 0", got)
+	}
+}
+
+// The redelivery runs before the read and commits separately, so the row it
+// writes is in the batch this session is about to be sent.
+func TestARedeliveredCardPolicyIsCommittedBeforeTheReadThatCarriesIt(t *testing.T) {
+	t.Parallel()
+
+	db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+		legacyCardPolicyKey, "expired", cardPolicyNow.Add(-time.Hour),
+		false, false, storedCardPolicyPayload), nil)
+
+	(SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var order []string
+	for _, exec := range rec.execs {
+		switch {
+		case strings.Contains(exec.query, "set_config('app.tenant_id'"):
+			order = append(order, "bind")
+		case strings.Contains(exec.query, "app.enqueue_command"):
+			order = append(order, "enqueue")
+		case strings.Contains(exec.query, "LEFT JOIN app.command_outbox"):
+			order = append(order, "read")
+		}
+	}
+	if want := "bind,enqueue,bind,read"; strings.Join(order, ",") != want {
+		t.Fatalf("statement order = %v, want %v. Two binds means two "+
+			"transactions, and the enqueue must be in the first one or the "+
+			"read cannot carry the row it wrote", order, want)
+	}
+}
+
+// A redelivery that can silence delivery is worse than no redelivery: a failed
+// statement aborts its transaction, and this one's transaction is not the
+// caller's.
+func TestAFailedRedeliveryStillLeavesThePendingReadIntact(t *testing.T) {
+	t.Parallel()
+
+	db, rec := cardPolicyRecorder(t, newestCardPolicyRows(
+		legacyCardPolicyKey, "expired", cardPolicyNow.Add(-time.Hour),
+		false, false, storedCardPolicyPayload), pendingRows("cmd-1", "cmd-2"))
+	rec.fail = func(query string) error {
+		if strings.Contains(query, "app.enqueue_command") {
+			return errors.New("duplicate key value violates unique constraint")
+		}
+		return nil
+	}
+
+	pending := (SQLPending{DB: db}).PendingForDevice("t-a", "d-1", cardPolicyNow)
+
+	if len(pending) != 2 {
+		t.Fatalf("pending commands = %d, want 2. The read is what the session "+
+			"is waiting for; a redelivery fault must not take it down", len(pending))
+	}
+	rec.find(t, "LEFT JOIN app.command_outbox")
 }
