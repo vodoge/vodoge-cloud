@@ -976,12 +976,17 @@ function UsbnetControls({
 /**
  * The danger zone.
  *
- * 🔴 A red border was the obvious way to draw this box and it would not have
- * rendered: `CARD.root` asks for a border width and computes to `none 0px` on
- * this build, which is `BORDER_WIDTH_WITHOUT_A_STYLE` and is precisely the
- * defect this card was sent here to fix elsewhere in this file. So the zone is
- * a wash behind its header and a red heading, both of which are properties the
- * build really sets, and it was measured rather than assumed.
+ * 🔴 A red border was the obvious way to draw this box and, when this was
+ * written, it would not have rendered: `CARD.root` asked for a border width
+ * and computed to `none 0px` on that build, which was
+ * `BORDER_WIDTH_WITHOUT_A_STYLE` and was precisely the defect this card was
+ * sent here to fix elsewhere in this file. **That reason is gone** — the
+ * reset in `app/globals.css` now carries the border style `CARD.root` was
+ * missing, and a red border here would draw today. The zone is still a wash
+ * behind its header and a red heading, both of which are properties the
+ * build really sets and were measured rather than assumed; the render was
+ * not revisited just because the reason that first ruled out a border no
+ * longer holds.
  *
  * The way back is in the same card and it is a separate row. It used to be two
  * plain buttons sitting *inside* the row of seven red ones, which is the
