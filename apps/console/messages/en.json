@@ -613,6 +613,8 @@
   "source.label": "Source",
   "source.console": "Console",
   "source.consoleUrl": "https://github.com/yuanshuai1122/vodoge-cloud",
+  "source.consoleLicense": "Console license",
+  "source.consoleLicenseUrl": "https://github.com/yuanshuai1122/vodoge-cloud/blob/main/LICENSE",
   "source.edge": "Edge",
   "source.edgeUrl": "https://github.com/yuanshuai1122/vodoge-edge",
   "source.edgeLicense": "Edge licensing",

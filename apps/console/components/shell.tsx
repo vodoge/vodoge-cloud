@@ -88,15 +88,25 @@ export function Shell({
 
       <main className={SHELL.main}>{children}</main>
 
-      {/* Where the source is.
+      {/* Where the source is, and where each repository states its terms.
           Deliberately not a licence notice. This console carries no vowifi-go
           code -- that was grepped for, and there is none -- so AGPL section 13
-          does not reach it, and this repository declares no licence of its own;
-          naming one here would be inventing an answer nobody has given. What is
-          left is a fact worth putting on the page people actually use: the
-          source is public, and this is where. It lives in the shell rather than
-          on /settings so every page carries it, and outside every role gate,
-          because a read-only account is not a lesser reader. */}
+          does not reach it. Nothing written here is an offer or a declaration:
+          the links point at the files that are, and those files are the only
+          place the terms are stated.
+
+          One licence link per repository, and deliberately no combined one,
+          because the two repositories are not the same shape. vodoge-cloud is
+          Apache-2.0 over every path, with no per-path exception. vodoge-edge's
+          root LICENSE is a map instead -- it says which directories are
+          AGPL-3.0-or-later and which are Apache-2.0, because vowifi-go reached
+          two of its modules. One link standing for both would be wrong about
+          one of them. That asymmetry is why the English reads "Console
+          license" and "Edge licensing" and not the same word twice.
+
+          It lives in the shell rather than on /settings so every page carries
+          it, and outside every role gate, because a read-only account is not a
+          lesser reader. */}
       <footer className={SHELL.footer}>
         <span className={SHELL.footerLabel}>{t("source.label", locale)}</span>
         <a
@@ -106,6 +116,14 @@ export function Shell({
           rel="noreferrer"
         >
           {t("source.console", locale)}
+        </a>
+        <a
+          className={SHELL.footerLink}
+          href={t("source.consoleLicenseUrl", locale)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("source.consoleLicense", locale)}
         </a>
         <a
           className={SHELL.footerLink}
