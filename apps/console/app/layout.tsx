@@ -13,18 +13,33 @@ import "./globals.css";
 export const dynamic = "force-dynamic";
 
 /**
- * Matches the app background so the phone status bar blends with the shell.
+ * The status bar colour of the document the server just sent.
  *
- * Read from the token table rather than typed again. These two hex values are
- * the same `--bg` the stylesheet declares, and a hand-copied pair is a third
- * place a palette change has to be remembered — the sort that gets found
- * later, on a phone, as a status bar in last season's colour.
+ * That document is dark, on every route and for every reader. `globals.css`
+ * declares `color-scheme: dark` on bare `:root` and contains no
+ * `prefers-color-scheme` rule anywhere, so the light theme is reachable only
+ * through `:root[data-theme="light"]` — an attribute nothing but script sets,
+ * after hydration, from a choice that lives in `localStorage`.
+ *
+ * This used to be a pair keyed on `prefers-color-scheme`, which answered a
+ * question about the reader's phone with a fact about the page. It was wrong
+ * in both directions and nobody had looked, because it is only visible on a
+ * phone: a light phone got a pale bar above the dark login screen, and a
+ * signed-in reader whose stored choice disagreed with their system got the
+ * mismatch the other way round — so the people it failed were the ones who
+ * had actually used the toggle.
+ *
+ * So: one value, the one that is really painted when no script has run.
+ * `components/theme-toggle.tsx` repoints it whenever it sets `data-theme`,
+ * reading the colour back out of the stylesheet, which is what keeps the bar
+ * and the background in step from then on.
+ *
+ * Still read from the token table rather than typed again: a hand-copied hex
+ * is a third place a palette change has to be remembered — the sort that gets
+ * found later, on a phone, as a status bar in last season's colour.
  */
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: COLOR_TOKENS.bg.dark },
-    { media: "(prefers-color-scheme: light)", color: COLOR_TOKENS.bg.light },
-  ],
+  themeColor: COLOR_TOKENS.bg.dark,
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
