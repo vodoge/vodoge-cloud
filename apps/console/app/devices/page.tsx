@@ -12,6 +12,7 @@ import {
 import { CardPolicies } from "@/components/card-policies";
 import {
   fetchCardPolicies,
+  fetchConsoleRole,
   fetchDevices,
   fetchModems,
   type CardPolicyRow,
@@ -21,6 +22,7 @@ import {
 import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
+import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { CARD_POLICY_CONFIRMATIONS, PAGE, TABLE, type CardPolicyGuard } from "@/lib/tokens";
 
@@ -49,6 +51,28 @@ import { CARD_POLICY_CONFIRMATIONS, PAGE, TABLE, type CardPolicyGuard } from "@/
  * table fit without the card needing to scroll either. See
  * `notes/T009-devices-table-pattern.md`.
  *
+ * ## The read-only gate, which this page did not have
+ *
+ * Every write on this page is in the card policy card — five of them, each a
+ * `PUT` or a `DELETE` that reaches every device in the tenant. Until this card
+ * they were drawn for every account, and `viewer@vodoge.com` was offered a tick
+ * that blocks a SIM's data fleet-wide and a button that deletes its policy.
+ *
+ * ⚠️ **Nothing was ever sent by an account that may not send.** The gateway
+ * refuses every state-changing request from a read-only session at one
+ * chokepoint around its whole route table, so each of those was answered 403.
+ * This is not a hole being closed; it is an offer being withdrawn, which is
+ * courtesy rather than a permission model. The model is the gateway's, and
+ * `/v1` is reachable with curl and a token whatever this page draws.
+ *
+ * The role comes from `fetchConsoleRole`, which is the same eighteen lines
+ * `/settings` and both inbox pages each keep a copy of, already extracted and
+ * already used by `/proxy`. Calling the shared one rather than pasting a fourth
+ * copy is the whole reason it exists; it fails closed and never throws, which
+ * is why it sits outside the `try` below — a role that could not be established
+ * is `readonly`, and that is an answer, while a catalogue read that failed is a
+ * page saying it could not load.
+ *
  * ## What did not change
  *
  * The three fetches, the failure case, both empty cases and every value shown
@@ -60,6 +84,7 @@ export default async function DevicesPage() {
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
+  const writable = mayWrite(await fetchConsoleRole(host, token));
 
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
@@ -82,6 +107,16 @@ export default async function DevicesPage() {
           <h1 className={PAGE.title}>{t("devices.title", locale)}</h1>
           <p className={PAGE.description}>{t("devices.desc", locale)}</p>
         </div>
+        {/* The same badge, in the same slot, as `/settings` and both inbox
+            pages. It says why the controls further down are missing, which is
+            the question an operator asks before they ask anything else. */}
+        {writable ? null : (
+          <div className={PAGE.actions}>
+            <Badge tone="warn" dot={false}>
+              {t("role.readOnlyBadge", locale)}
+            </Badge>
+          </div>
+        )}
       </div>
 
       {loadError ? <p className={PAGE.error}>{t("devices.loadError", locale)}</p> : null}
@@ -264,6 +299,10 @@ export default async function DevicesPage() {
         <Card title={t("cards.title", locale)} note={t("cards.note", locale)}>
           <CardPolicies
             policies={policies}
+            // Required, not defaulted. An omitted boolean reads as `true` at
+            // the only place it is tested, and "forgot to pass it" would then
+            // draw exactly the five controls this gate exists to withhold.
+            writable={writable}
             // Only cards the fleet has actually reported. A policy for a card
             // that does not exist matches nothing on any device and says so
             // nowhere.
@@ -285,6 +324,11 @@ export default async function DevicesPage() {
               addFor: t("cards.addFor", locale),
               remove: t("cards.remove", locale),
               failed: t("cards.failed", locale),
+              // Read-only keeps the table and loses the controls. Hiding the
+              // whole card would take away the answer to "where did the
+              // policies go"; a sentence in place of the add form says which
+              // of the two it is.
+              readOnly: t("role.readOnlyCards", locale),
             }}
             confirmLabels={{
               question: t("confirm.question", locale),

@@ -64,22 +64,51 @@ type Pending = { iccid: string; change: CardPolicyEdit; guard: CardPolicyGuard }
  * the row they render, so the re-render that closes the dialog puts the tick
  * and the picker back where they were.
  *
+ * ## `writable`, added by T034
+ *
+ * All five edits are refused for a read-only session at the gateway's one
+ * chokepoint, and until this card all five were still drawn — so an operator
+ * signed in as `viewer@vodoge.com` was shown a tick that takes cellular data
+ * away from a SIM fleet-wide and a button that deletes its policy, both of
+ * which could only ever end in a 403. **Nothing is being made safe here that
+ * was not already safe.** What is removed is the offer.
+ *
+ * Read-only keeps the table and loses the controls, which is the settings
+ * page's rule: read-only is not "cannot see". The tick becomes the word it
+ * stood for, the picker becomes the vertical it was set to, and the column of
+ * Remove buttons goes — header and cells together, so the table is not left a
+ * column wider than it has values for.
+ *
+ * 🔴 **The prop is required rather than defaulted.** `writable = true` means a
+ * caller who forgets it draws every control, which is the failure this exists
+ * to remove; `writable = false` would be safe and silent, and a policy table
+ * nobody can edit looks like a bug rather than like a missing argument. So
+ * neither: the compiler asks.
+ *
+ * The gate is in three places on purpose. The controls are not drawn, `propose`
+ * refuses to open a dialog, and `save`/`removePolicy` refuse to send. Only the
+ * first is visible, and it is the one a later change is most likely to undo.
+ *
  * ## What did not change
  *
  * Both requests are the ones this component always sent — same endpoint, same
  * method, same four body fields, same defaulting for a card that has no policy
- * yet, same `router.refresh()` afterwards, same silent `DELETE`. The only new
- * behaviour is the question in front of them.
+ * yet, same `router.refresh()` afterwards. The only new behaviour is the
+ * question in front of them, and — this card — the `DELETE` no longer throwing
+ * its answer away; see `removePolicy`.
  */
 export function CardPolicies({
   policies,
   knownCards,
+  writable,
   labels,
   confirmLabels,
   confirmations,
 }: {
   policies: CardPolicyRow[];
   knownCards: { iccid: string; label: string }[];
+  /** Whether this account may change a policy. Required; see above. */
+  writable: boolean;
   labels: Labels;
   confirmLabels: ConfirmLabels;
   confirmations: Record<CardPolicyGuard, Confirmation>;
@@ -100,6 +129,7 @@ export function CardPolicies({
    * `else` that sends.
    */
   function propose(iccid: string, change: CardPolicyEdit) {
+    if (!writable) return;
     const guard = cardPolicyGuardFor(change);
     if (guard === null) return;
     setError(null);
@@ -107,6 +137,7 @@ export function CardPolicies({
   }
 
   async function save(iccid: string, patch: Partial<CardPolicyRow>) {
+    if (!writable) return;
     const existing = policies.find((policy) => policy.iccid === iccid);
     setPending(null);
     setBusy(true);
@@ -129,11 +160,36 @@ export function CardPolicies({
     router.refresh();
   }
 
+  /**
+   * 🔴 The `DELETE` used to throw its own answer away.
+   *
+   * `await fetch(…)` with nothing read off it, then `router.refresh()`
+   * unconditionally — so a refusal drew the row back exactly as a success drew
+   * it away, and the operator's only evidence of which had happened was
+   * whether the policy was still there afterwards. On a table whose rows are
+   * twenty-digit ICCIDs that is not evidence.
+   *
+   * The gateway has a reason for every one of them: a read-only session is
+   * refused at the chokepoint, a card whose policy another operator removed a
+   * moment ago is a 404, and an upstream that is down is a 502. Each of those
+   * is worth a sentence and none of them was being shown.
+   *
+   * It is the same four lines `save` has had all along, and deliberately not a
+   * new idea about failure. The family this belongs to is the one T005 fixed
+   * on the edge panel: taking an endpoint's answer as the result rather than
+   * assuming the answer.
+   */
   async function removePolicy(iccid: string) {
+    if (!writable) return;
     setPending(null);
     setBusy(true);
-    await fetch(`/v1/cards/${iccid}/policy`, { method: "DELETE" });
+    setError(null);
+    const response = await fetch(`/v1/cards/${iccid}/policy`, { method: "DELETE" });
     setBusy(false);
+    if (!response.ok) {
+      setError((await response.text()).trim() || labels.failed);
+      return;
+    }
     router.refresh();
   }
 
@@ -156,7 +212,10 @@ export function CardPolicies({
                   that may drop off a phone. The other four each hold a control,
                   and hiding a control is not deprioritising context. */}
               <TableHeaderCell secondary>{labels.colApn}</TableHeaderCell>
-              <TableHeaderCell />
+              {/* The actions column goes as a column, header and cells
+                  together. Leaving the header behind would leave the table a
+                  column wider than it has values for. */}
+              {writable ? <TableHeaderCell /> : null}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -164,79 +223,99 @@ export function CardPolicies({
               <TableRow key={policy.iccid}>
                 <TableCell mono>{policy.iccid}</TableCell>
                 <TableCell>
-                  <InlineField
-                    label={policy.cellularEnabled ? labels.on : labels.off}
-                    checked={policy.cellularEnabled}
-                    disabled={busy}
-                    onChange={(event) =>
-                      propose(policy.iccid, {
-                        kind: "cellular",
-                        enabled: event.target.checked,
-                      })
-                    }
-                  />
+                  {/* The word the tick stood for, not a disabled tick. A
+                      control that cannot be operated still reads as an offer,
+                      and there is nothing here for this account to do. */}
+                  {writable ? (
+                    <InlineField
+                      label={policy.cellularEnabled ? labels.on : labels.off}
+                      checked={policy.cellularEnabled}
+                      disabled={busy}
+                      onChange={(event) =>
+                        propose(policy.iccid, {
+                          kind: "cellular",
+                          enabled: event.target.checked,
+                        })
+                      }
+                    />
+                  ) : (
+                    <span>{policy.cellularEnabled ? labels.on : labels.off}</span>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Select
-                    compact
-                    value={policy.vertical}
-                    disabled={busy}
-                    onChange={(event) =>
-                      propose(policy.iccid, {
-                        kind: "vertical",
-                        from: policy.vertical,
-                        to: event.target.value,
-                      })
-                    }
-                  >
-                    <option value="cn">cn</option>
-                    <option value="intl">intl</option>
-                  </Select>
+                  {writable ? (
+                    <Select
+                      compact
+                      value={policy.vertical}
+                      disabled={busy}
+                      onChange={(event) =>
+                        propose(policy.iccid, {
+                          kind: "vertical",
+                          from: policy.vertical,
+                          to: event.target.value,
+                        })
+                      }
+                    >
+                      <option value="cn">cn</option>
+                      <option value="intl">intl</option>
+                    </Select>
+                  ) : (
+                    <span>{policy.vertical}</span>
+                  )}
                 </TableCell>
                 <TableCell mono faint secondary>
                   {policy.apn ?? "—"}
                 </TableCell>
-                <TableCell>
-                  <RowActions>
-                    <Button
-                      variant="risk"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => propose(policy.iccid, { kind: "remove" })}
-                    >
-                      {labels.remove}
-                    </Button>
-                  </RowActions>
-                </TableCell>
+                {writable ? (
+                  <TableCell>
+                    <RowActions>
+                      <Button
+                        variant="risk"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => propose(policy.iccid, { kind: "remove" })}
+                      >
+                        {labels.remove}
+                      </Button>
+                    </RowActions>
+                  </TableCell>
+                ) : null}
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
 
-      {unpolicied.length > 0 ? (
-        <InlineForm
-          onSubmit={(event) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            const iccid = String(form.get("iccid") ?? "");
-            if (iccid) propose(iccid, { kind: "add" });
-          }}
-        >
-          <Field inline label={labels.addFor}>
-            <Select name="iccid" required>
-              {unpolicied.map((card) => (
-                <option key={card.iccid} value={card.iccid}>
-                  {card.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Button type="submit" disabled={busy}>
-            {labels.add}
-          </Button>
-        </InlineForm>
-      ) : null}
+      {/* The add form, or the sentence that stands where it was. A read-only
+          account that is told nothing is left looking for a control that is
+          simply not there any more. */}
+      {writable ? (
+        unpolicied.length > 0 ? (
+          <InlineForm
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              const iccid = String(form.get("iccid") ?? "");
+              if (iccid) propose(iccid, { kind: "add" });
+            }}
+          >
+            <Field inline label={labels.addFor}>
+              <Select name="iccid" required>
+                {unpolicied.map((card) => (
+                  <option key={card.iccid} value={card.iccid}>
+                    {card.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button type="submit" disabled={busy}>
+              {labels.add}
+            </Button>
+          </InlineForm>
+        ) : null
+      ) : (
+        <p className={FORM.hint}>{labels.readOnly}</p>
+      )}
 
       {pending !== null && asked !== null ? (
         <ConfirmDialog

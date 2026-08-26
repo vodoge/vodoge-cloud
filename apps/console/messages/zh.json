@@ -568,6 +568,7 @@
   "role.readOnlyDevice": "只读账号：可以查看这台设备，不能下发命令。",
   "role.readOnlySettings": "只读账号：设置只能查看，不能修改。密码仍可自行修改。",
   "role.readOnlyInbox": "只读账号：消息可以看，发短信、删除和改名都不可用。",
+  "role.readOnlyCards": "只读账号：卡策略可以查看，添加、删除和修改都不可用。",
   "role.readOnlyBadge": "只读",
   "source.label": "源码",
   "source.console": "控制台",

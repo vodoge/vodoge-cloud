@@ -1724,18 +1724,124 @@ test("the confirmation dialog cannot be given a consequence it does not have", (
  * function in a comment satisfies nothing.
  */
 
-/** Every `attribute={…}` expression in a file, comments already gone. */
-function attributeExpressions(source: string, attribute: string): string[] {
+/** Every `attribute={…}` expression in a file, with where it starts. */
+function attributeSites(source: string, attribute: string): { at: number; text: string }[] {
   const { masked, code } = scan(source);
-  const out: string[] = [];
+  const out: { at: number; text: string }[] = [];
   for (const match of masked.matchAll(new RegExp(`\\b${attribute}\\s*=\\s*`, "g"))) {
     const at = match.index + match[0].length;
     if (masked[at] !== "{") continue;
     const close = closingBracket(masked, at);
     if (close === -1) continue;
-    out.push(code.slice(at, close + 1));
+    out.push({ at, text: code.slice(at, close + 1) });
   }
   return out;
+}
+
+/** Every `attribute={…}` expression in a file, comments already gone. */
+function attributeExpressions(source: string, attribute: string): string[] {
+  return attributeSites(source, attribute).map((site) => site.text);
+}
+
+/** Every `{` in a file matched to its own `}`. Literals are already blanked. */
+function braceMap(masked: string): Map<number, number> {
+  const stack: number[] = [];
+  const pairs = new Map<number, number>();
+  for (let i = 0; i < masked.length; i++) {
+    if (masked[i] === "{") stack.push(i);
+    else if (masked[i] === "}") {
+      const open = stack.pop();
+      if (open !== undefined) pairs.set(open, i);
+    }
+  }
+  return pairs;
+}
+
+/**
+ * The `?` (or `&&`) and the `:` of the conditional a `{` opens, at its own
+ * depth. `null` when the braces hold something that is not a conditional — an
+ * object literal, a handler, an interpolation.
+ */
+function conditionalArms(
+  masked: string,
+  open: number,
+  close: number,
+): { split: number; end: number } | null {
+  let depth = 0;
+  let split = -1;
+  let end = -1;
+  for (let i = open + 1; i < close; i++) {
+    const ch = masked[i];
+    if ("([{".includes(ch)) {
+      depth += 1;
+      continue;
+    }
+    if (")]}".includes(ch)) {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) continue;
+    // `?.` and `??` are not conditionals, and both appear in this codebase.
+    if (split === -1 && ch === "?" && masked[i + 1] !== "." && masked[i + 1] !== "?") split = i;
+    else if (split === -1 && ch === "&" && masked[i + 1] === "&") split = i;
+    else if (split !== -1 && end === -1 && ch === ":") end = i;
+  }
+  return split === -1 ? null : { split, end: end === -1 ? close : end };
+}
+
+/**
+ * Whether whatever is at `at` is rendered **only** when `gate` is true.
+ *
+ * Walks outwards through every JSX expression container that encloses the
+ * position and asks whether one of them is `{gate ? … : …}` or `{gate && …}`
+ * with the position in the true arm. Written this way rather than as "does the
+ * file mention `writable` near this element", because that question is answered
+ * yes by a file where the gate was moved, inverted or widened — and this board
+ * has already shipped one assertion that matched a definition rather than a use
+ * (T004), plus one that stayed green when the footer it checked was put behind
+ * a role gate (T027's review).
+ *
+ * The condition has to be the gate and nothing else. `{writable || preview ? …}`
+ * is not a gate, and the day someone needs one it should be a visible edit
+ * here rather than a silent widening there.
+ *
+ * ⚠️ These four helpers and the three tests that use them came in with T032 and
+ * were **lost in the merge that brought T032 to main** — `git show f8cdece`
+ * has them, `af2fe6a` does not, and nothing failed, because a deleted guard is
+ * indistinguishable from a guard that was never written. T034 put them back and
+ * extended them; see `notes/T034-devices-role-gating.md` §2.
+ */
+function drawnOnlyWhen(masked: string, at: number, gate: string): boolean {
+  const braces = braceMap(masked);
+  for (const [open, close] of braces) {
+    if (open >= at || close <= at) continue;
+    const arms = conditionalArms(masked, open, close);
+    if (!arms) continue;
+    if (masked.slice(open + 1, arms.split).trim() !== gate) continue;
+    if (at > arms.split && at < arms.end) return true;
+  }
+  return false;
+}
+
+/**
+ * The other arm: whether whatever is at `at` is rendered **only** when `gate`
+ * is false.
+ *
+ * The read-only badge and the sentence that stands where a form was are drawn
+ * *because* the account may not write, and asserting them with `drawnOnlyWhen`
+ * would pass on a file where they are drawn for everybody — `{writable ? … : …}`
+ * encloses both arms.
+ */
+function drawnOnlyUnless(masked: string, at: number, gate: string): boolean {
+  const braces = braceMap(masked);
+  for (const [open, close] of braces) {
+    if (open >= at || close <= at) continue;
+    const arms = conditionalArms(masked, open, close);
+    if (!arms) continue;
+    if (masked.slice(open + 1, arms.split).trim() !== gate) continue;
+    if (at > arms.end && at < close) return true;
+  }
+  return false;
 }
 
 /** The body of `function name(…) { … }`, comments already gone. */
@@ -1819,6 +1925,454 @@ test("a dangerous write is reachable only from a confirmation", () => {
     alsoDirect,
     [],
     "a control calls the write directly, so the dialog is decoration",
+  );
+});
+
+/* ── And the write controls are not drawn for an account that may not write ──
+ *
+ * ⚠️ **This is courtesy, not a permission model, and the two must not be
+ * confused.** `lib/session.ts` says so already and it is worth repeating here:
+ * the gateway refuses every state-changing request from a read-only session at
+ * one chokepoint around its whole route table, and `/v1` is reachable with curl
+ * and a token whatever these pages draw. **Nothing below closes a hole.** The
+ * inbox offered `viewer@vodoge.com` a send form, three delete controls and a
+ * rename box, and `/devices` offered it five card policy edits; every one of
+ * them was answered 403. What is removed is the offer.
+ *
+ * `app/settings/page.tsx` is in the list because it is where the pattern comes
+ * from. Holding all five to the same two returns is what stops a sixth page
+ * from inventing a third idea of what "the gateway did not answer" means.
+ *
+ * 🔴 **This block, and the four scanner helpers above it, were lost.** They
+ * arrived with T032 (`f8cdece`) and are not in the commit that merged T032 to
+ * main (`af2fe6a`); nothing went red, because a guard that has been deleted
+ * looks exactly like a guard nobody wrote. The source they guard survived the
+ * merge intact, so the inbox was never actually ungated — but for two merges
+ * nothing would have said so. T034 restored them and added `/devices`.
+ */
+
+/** Pages that decide what to draw from `GET /v1/auth/session`. */
+const ROLE_GATED_PAGES = [
+  "app/settings/page.tsx",
+  "app/inbox/page.tsx",
+  "app/inbox/[peer]/page.tsx",
+  "app/proxy/page.tsx",
+  "app/devices/page.tsx",
+];
+
+/**
+ * The two ways of not getting an answer, and both of them are read-only.
+ *
+ * Either one returning anything else draws the write controls for an account
+ * whose role nobody established.
+ */
+function assertFailsClosed(body: string, where: string) {
+  assert.match(body, /SESSION_ENDPOINT/, `${where} asks something other than the session`);
+  assert.match(body, /roleFromSessionBody\(/, `${where} reads the role its own way`);
+  assert.match(
+    body,
+    /if \(!response\.ok\) return "readonly";/,
+    `${where} treats a refused session lookup as permission to write`,
+  );
+  assert.match(
+    body,
+    /catch \{\s*return "readonly";\s*\}/,
+    `${where} fails open when the gateway cannot be reached`,
+  );
+}
+
+test("every page that gates a write reads the role from the gateway and fails closed", () => {
+  // The extracted one. `/proxy` and `/devices` call it rather than keeping a
+  // copy; the other three still have their own, and the home for all of them is
+  // `lib/session.ts` beside `mayWrite`, which no card has owned yet. Both
+  // shapes are held to the same two returns here, which is the whole point of
+  // the test — a page that calls the shared function and a page that pasted it
+  // must not be able to disagree about what "cannot ask" means.
+  const shared = functionBody(readSource("lib/catalog.ts"), "fetchConsoleRole");
+  assert.ok(shared, "lib/catalog.ts no longer has the shared role lookup");
+  assertFailsClosed(shared, "fetchConsoleRole");
+
+  for (const relative of ROLE_GATED_PAGES) {
+    const source = readSource(relative);
+    const code = codeOnly(source);
+    assert.match(code, /\bmayWrite\(/, `${relative} never asks what the account may do`);
+
+    const own = functionBody(source, "currentRole");
+    if (own === null) {
+      assert.match(
+        code,
+        /\bfetchConsoleRole\(host, token\)/,
+        `${relative} has neither a currentRole of its own nor a call to the shared one`,
+      );
+      continue;
+    }
+    assertFailsClosed(own, relative);
+  }
+});
+
+test("the inbox draws no write control for an account that may not write", () => {
+  const inbox = scan(readSource("app/inbox/page.tsx")).masked;
+  const sendAt = inbox.indexOf("<SendSmsForm");
+  assert.notEqual(sendAt, -1, "the inbox has no send form any more");
+  assert.ok(
+    drawnOnlyWhen(inbox, sendAt, "writable"),
+    "the send form is drawn for every account, read-only included",
+  );
+
+  // The conversation gets the answer rather than working one out: it is a
+  // client component rendered by a server page that has already asked.
+  const thread = readSource("app/inbox/[peer]/page.tsx");
+  const tag = openingTags(thread).find((each) => each.name === "Conversation");
+  assert.ok(tag, "the thread page no longer renders a conversation");
+  assert.match(
+    tag.text,
+    /writable=\{writable\}/,
+    "the conversation is not told what the account may do, so it will draw everything",
+  );
+
+  const source = readSource("components/conversation.tsx");
+  const masked = scan(source).masked;
+
+  // The two deletions. Each one starts at a control, and the control is the
+  // thing that has to disappear — `setPending` is what opens the dialog.
+  const deletions = attributeSites(source, "onClick").filter((site) =>
+    /setPending\(/.test(site.text),
+  );
+  assert.equal(deletions.length, 2, "expected exactly the thread and the single message");
+  for (const site of deletions) {
+    assert.ok(
+      drawnOnlyWhen(masked, site.at, "writable"),
+      `a deletion is offered to every account: ${site.text}`,
+    );
+  }
+
+  // The rename box, gated twice: by the caller, and by the component itself so
+  // that the guard survives it being rendered from somewhere else.
+  const contactAt = masked.indexOf("<ContactName");
+  assert.notEqual(contactAt, -1, "the contact name control is gone");
+  assert.ok(drawnOnlyWhen(masked, contactAt, "writable"), "the rename box is drawn for everyone");
+  assert.match(
+    codeOnly(source),
+    /if \(!writable\) return null;/,
+    "the rename box renders itself for any account it is handed to",
+  );
+});
+
+test("every request the conversation makes refuses without the role, not only without the button", () => {
+  const source = readSource("components/conversation.tsx");
+
+  // `rename` is here and not in CONFIRMED_WRITES on purpose: a rename is not
+  // destructive enough to ask about, and it is still a PUT the gateway refuses.
+  for (const name of ["removeThread", "removeMessage", "forgetContact", "rename"]) {
+    const body = functionBody(source, name);
+    assert.ok(body, `${name} no longer exists`);
+    assert.ok(/fetch\s*\(/.test(body), `${name} does not perform the request it is guarded for`);
+    assert.match(body, /if \(!writable\) return;/, `${name} runs for an account that may not write`);
+    assert.ok(
+      body.indexOf("!writable") < body.indexOf("fetch("),
+      `${name} checks the role after it has already sent the request`,
+    );
+  }
+
+  // Opening a conversation marks it read, which is a POST. A read-only session
+  // is refused it, so the account that could not clear the badge was producing
+  // a 403 and a router refresh on every conversation it opened.
+  const masked = scan(source).masked;
+  const effect = masked.indexOf("useEffect(");
+  assert.notEqual(effect, -1, "the read receipt is gone");
+  const close = closingBracket(masked, masked.indexOf("(", effect));
+  assert.ok(
+    masked.slice(effect, close).includes("!writable"),
+    "opening a conversation still posts a read receipt for an account that cannot mark it read",
+  );
+});
+
+/* ── The same thing on /devices, which is where the five worst ones are ──
+ *
+ * Each card policy edit is a `PUT` or a `DELETE` **pushed to every device in
+ * the tenant**, and clearing the tick takes cellular data away from a SIM
+ * fleet-wide. They were drawn for every account until T034.
+ *
+ * Every control in the file is checked rather than a list of the ones somebody
+ * remembered, because the failure this is written against is a sixth control
+ * arriving ungated — which is exactly how the five got here.
+ */
+
+/** The tags in `card-policies.tsx` that let somebody change something. */
+const CARD_POLICY_CONTROLS = /<(InlineField|InlineForm|Select|Button|Field|RowActions)\b/g;
+
+test("the device list draws no card policy control for an account that may not write", () => {
+  const page = readSource("app/devices/page.tsx");
+  const pageCode = codeOnly(page);
+  const tag = openingTags(page).find((each) => each.name === "CardPolicies");
+  assert.ok(tag, "the device list no longer renders the card policy table");
+  assert.match(
+    tag.text,
+    /writable=\{writable\}/,
+    "the policy table is not told what the account may do, so it will draw everything",
+  );
+  assert.match(
+    pageCode,
+    /const writable = mayWrite\(await fetchConsoleRole\(host, token\)\)/,
+    "the device list works the role out some other way",
+  );
+
+  // The badge is drawn *because* the account may not write, so it is the other
+  // arm. Asserting it with drawnOnlyWhen would pass on a page that shows it to
+  // everybody.
+  const badgeAt = pageCode.indexOf('t("role.readOnlyBadge"');
+  assert.notEqual(badgeAt, -1, "nothing on the page says why the controls are missing");
+  assert.ok(
+    drawnOnlyUnless(scan(page).masked, badgeAt, "writable"),
+    "the read-only badge is shown to accounts that can write, or to everyone",
+  );
+
+  const source = readSource("components/card-policies.tsx");
+  const masked = scan(source).masked;
+  const code = codeOnly(source);
+
+  // 🔴 Required, not optional and not defaulted. `writable = true` draws every
+  // control for a caller who forgot the prop, and `writable?: boolean` is
+  // worse: `!undefined` is `true`, so an omitted boolean reads as "may write"
+  // at the one place it is tested. That is the fail-open shape being removed.
+  assert.match(code, /\n {2}writable: boolean;/, "writable stopped being a required prop");
+  assert.ok(!/\bwritable\s*\?\s*:/.test(code), "writable became optional");
+  assert.ok(!/\bwritable\s*=[^=]/.test(code), "writable was given a default");
+
+  const found = [...masked.matchAll(CARD_POLICY_CONTROLS)];
+  assert.equal(
+    found.length,
+    8,
+    "the tick, the vertical picker, the Remove button, the add form and its" +
+      " field, picker and button — a control that stopped being found would" +
+      " reduce the check below to nothing",
+  );
+  const ungated = found
+    .filter((match) => !drawnOnlyWhen(masked, match.index, "writable"))
+    .map((match) => `${match[1]} at ${match.index}`);
+  assert.deepEqual(ungated, [], "a card policy control is offered to an account that may not write");
+
+  // Header and cells together. A column kept for actions nobody has leaves the
+  // table one column wider than it has values for, which no count of controls
+  // would show.
+  const actionsHeaderAt = masked.indexOf("<TableHeaderCell />");
+  assert.notEqual(actionsHeaderAt, -1, "the actions column lost its header cell");
+  assert.ok(
+    drawnOnlyWhen(masked, actionsHeaderAt, "writable"),
+    "the actions column keeps its header for an account that has no actions",
+  );
+
+  // And something stands where the add form was: a read-only account told
+  // nothing goes looking for a control that is simply not there any more.
+  const noteAt = code.indexOf("labels.readOnly");
+  assert.notEqual(noteAt, -1, "nothing says why the controls are gone");
+  assert.ok(
+    drawnOnlyUnless(masked, noteAt, "writable"),
+    "the read-only note is drawn for accounts that can write, or for everyone",
+  );
+});
+
+test("every card policy request refuses without the role, and reads the answer it gets", () => {
+  const source = readSource("components/card-policies.tsx");
+
+  for (const name of ["save", "removePolicy"]) {
+    const body = functionBody(source, name);
+    assert.ok(body, `${name} no longer exists`);
+    assert.ok(/fetch\s*\(/.test(body), `${name} does not perform the request it is guarded for`);
+    assert.match(body, /if \(!writable\) return;/, `${name} runs for an account that may not write`);
+    assert.ok(
+      body.indexOf("!writable") < body.indexOf("fetch("),
+      `${name} checks the role after it has already sent the request`,
+    );
+
+    // 🔴 The `DELETE` used to be `await fetch(…)` with the response discarded
+    // and `router.refresh()` run either way, so a refusal drew the row back
+    // exactly as a success drew it away and the operator's only evidence was
+    // whether a twenty-digit ICCID was still in the table. Same family as the
+    // edge panel's "assume the answer" defect that T005 fixed.
+    assert.match(body, /const response = await fetch\(/, `${name} throws the response away`);
+    assert.match(
+      body,
+      /if \(!response\.ok\) \{\s*setError\(\(await response\.text\(\)\)\.trim\(\) \|\| labels\.failed\);\s*return;\s*\}/,
+      `${name} does not say what the gateway said`,
+    );
+    assert.ok(
+      body.indexOf("if (!response.ok)") < body.lastIndexOf("router.refresh()"),
+      `${name} refreshes the page before it knows whether anything changed`,
+    );
+  }
+
+  // `propose` is the only entry point a control has. With the controls gone
+  // there is nothing to click, and the day one comes back ungated it still
+  // cannot open a dialog.
+  const propose = functionBody(source, "propose");
+  assert.ok(propose, "the single entry point every control goes through is gone");
+  assert.match(
+    propose,
+    /if \(!writable\) return;/,
+    "propose opens a dialog for an account that may not write",
+  );
+});
+
+test("the read-only note names what is gone from the card policies", () => {
+  // "You are read-only" alone leaves an operator looking for the Remove button
+  // that is simply not there any more. All three edits disappear together, so
+  // all three are named — the rule `role.readOnlyInbox` is held to next door.
+  const VERBS = {
+    zh: ["添加", "删除", "修改"],
+    en: ["Adding", "removing", "changing"],
+  } as const;
+  const catalogues = [
+    ["zh", JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"))],
+    ["en", JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"))],
+  ] as const;
+
+  for (const [language, catalogue] of catalogues) {
+    const note = catalogue["role.readOnlyCards"];
+    assert.equal(typeof note, "string", `${language} has no read-only note for the card policies`);
+    for (const verb of VERBS[language]) {
+      assert.ok(note.includes(verb), `${language} role.readOnlyCards stopped naming ${verb}`);
+    }
+  }
+});
+
+/* ── And on the device page, which is told nothing and has to ask ────────
+ *
+ * The four pages above resolve the role on the server and hand a required
+ * `writable` prop down. `app/devices/[deviceId]/page.tsx` resolves no role at
+ * all, so the two client components on it each ask `GET /v1/auth/session` from
+ * an effect and start closed.
+ *
+ * That is the weaker of the two shapes and it is not being blessed here. A prop
+ * exists before the first render; an effect answers after one paint, which is
+ * why the state before the answer has to be the one that draws nothing. The
+ * reason it is used is that both components sit in a page that is being
+ * rewritten wholesale on another branch — the card holding `DeviceAdmin` has
+ * already moved into a different shell there — and an argument added to a call
+ * site that has moved is an argument a merge can quietly drop. Which is not a
+ * worry invented for this comment: see the block above.
+ *
+ * What this holds is that the two copies cannot drift. `device-console.tsx` and
+ * `device-admin.tsx` are three cards apart on one page, and two components
+ * disagreeing about what "the gateway did not answer" means is the same defect
+ * the four-page test guards against, one level down.
+ */
+
+/** Components on the device page that establish the role for themselves. */
+const SELF_ASKING_CONTROLS = ["components/device-console.tsx", "components/device-admin.tsx"];
+
+test("both device page controls ask the gateway themselves, and both start closed", () => {
+  for (const relative of SELF_ASKING_CONTROLS) {
+    const code = codeOnly(readSource(relative));
+    assert.match(
+      code,
+      /import \{ mayWrite, roleFromSessionBody, SESSION_ENDPOINT \} from "@\/lib\/session";/,
+      `${relative} reads the role its own way`,
+    );
+    assert.match(
+      code,
+      /useState<"unknown" \| "write" \| "read">\("unknown"\)/,
+      `${relative} decides what to draw before it has asked`,
+    );
+    assert.match(
+      code,
+      /response\.ok && mayWrite\(roleFromSessionBody\(await response\.json\(\)\)\) \? "write" : "read"/,
+      `${relative} treats a refused session lookup as permission to write`,
+    );
+    assert.match(
+      code,
+      /catch \{\s*if \(alive\) setPermission\("read"\);\s*\}/,
+      `${relative} fails open when the gateway cannot be reached`,
+    );
+  }
+});
+
+/**
+ * Every control in the device admin card, checked by position.
+ *
+ * The gate here is an early `return`, not a `{writable ? … : …}`, so
+ * `drawnOnlyWhen` has nothing to walk out of. What makes the same statement is
+ * where the controls are: all of them after the block that returns for anyone
+ * who is not established as a writer, and none of them inside it.
+ *
+ * Every control the file draws, rather than the two the card is named for. The
+ * failure this is written against is a third one arriving ungated, which is
+ * how both of these got here.
+ */
+const DEVICE_ADMIN_CONTROLS = /<(InlineForm|ButtonRow|Button|Field|Input|FormHint|FormError)\b/g;
+
+test("the device admin card draws no rename box and no delete button for a read-only account", () => {
+  const source = readSource("components/device-admin.tsx");
+  const { masked, code } = scan(source);
+
+  // `code`, not `masked`: the literal is the whole point of the condition and
+  // `masked` blanks it, so the same search on `masked` would find
+  // `if (permission !== "     ")` and keep matching after somebody changed
+  // which state opens the card.
+  const guardAt = code.indexOf('if (permission !== "write") {');
+  assert.notEqual(guardAt, -1, "the device admin card no longer gates on what the account may do");
+  const guardEnd = closingBracket(masked, masked.indexOf("{", guardAt));
+  assert.notEqual(guardEnd, -1, "the read-only branch has no end");
+
+  const readOnly = masked.slice(guardAt, guardEnd + 1);
+  assert.deepEqual(
+    [...readOnly.matchAll(DEVICE_ADMIN_CONTROLS)].map((match) => match[1]),
+    [],
+    "a control is drawn in the half of this card meant for an account with none",
+  );
+  assert.ok(
+    !/\bon[A-Z]\w*\s*=/.test(readOnly),
+    "the read-only branch carries a handler, so something in it can still be operated",
+  );
+
+  const drawn = [...masked.matchAll(DEVICE_ADMIN_CONTROLS)];
+  assert.equal(
+    drawn.length,
+    8,
+    "the rename form, its field, its box and its submit; the error; the button row," +
+      " the remove button and its note — a control that stopped being found would" +
+      " reduce the check below to nothing",
+  );
+  const ungated = drawn
+    .filter((match) => match.index < guardEnd)
+    .map((match) => `${match[1]} at ${match.index}`);
+  assert.deepEqual(ungated, [], "a device admin control is drawn before the role is established");
+
+  // The name is what the card is about, so it stays — as the word it is. A
+  // disabled box still reads as an offer, which is the thing being withdrawn.
+  assert.match(
+    readOnly,
+    /<SpecRow term=\{labels\.name\}>/,
+    "the read-only card no longer says which device it is about",
+  );
+});
+
+test("both device admin writes refuse without the role, before they ask for anything", () => {
+  const source = readSource("components/device-admin.tsx");
+
+  for (const name of ["rename", "remove"]) {
+    const body = functionBody(source, name);
+    assert.ok(body, `${name} no longer exists`);
+    assert.ok(/fetch\s*\(/.test(body), `${name} does not perform the request it is guarded for`);
+    assert.match(
+      body,
+      /if \(permission !== "write"\) return;/,
+      `${name} runs for an account that may not write`,
+    );
+    assert.ok(
+      body.indexOf('permission !== "write"') < body.indexOf("fetch("),
+      `${name} checks the role after it has already sent the request`,
+    );
+  }
+
+  // In front of the friction, not behind it. Typing a device's name out is the
+  // strongest confirmation in this console and it is unchanged — but asking an
+  // account that cannot delete anything to perform it, and then having the
+  // gateway answer 403, is all of the cost and none of the outcome.
+  const remove = functionBody(source, "remove") as string;
+  assert.ok(
+    remove.indexOf('permission !== "write"') < remove.indexOf("window.prompt("),
+    "a read-only account is made to type the device name out before it is refused",
   );
 });
 
@@ -3527,8 +4081,21 @@ test("the device list is drawn by the shared components, at the point of use", (
  * or giving the roaming pill no tone at all keeps every count correct.
  */
 test("the four hand-written pills on the device list are the shared badge", () => {
-  const code = codeOnly(readSource("app/devices/page.tsx"));
-  const rendered = code.match(/<Badge\b[^>]*/g) ?? [];
+  const source = readSource("app/devices/page.tsx");
+  const code = codeOnly(source);
+
+  // The read-only badge T034 added is a fifth `<Badge>` and is *not* one of the
+  // four: it replaced no old class, it is in the page head rather than in a
+  // table, and it is checked by the role gate's own test. Counting it in here
+  // would have meant loosening the tone list below, which is the part that says
+  // a pill did not quietly turn neutral. `code` rather than `masked`, because
+  // the key is inside a string literal and `masked` blanks those.
+  const roleAt = code.indexOf('t("role.readOnlyBadge"');
+  assert.notEqual(roleAt, -1, "the read-only badge left the device list");
+  const roleBadgeAt = code.lastIndexOf("<Badge", roleAt);
+  const rendered = [...code.matchAll(/<Badge\b[^>]*/g)]
+    .filter((match) => match.index !== roleBadgeAt)
+    .map((match) => match[0]);
   assert.equal(rendered.length, 4, "four hand-written pills, four shared badges");
 
   const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);

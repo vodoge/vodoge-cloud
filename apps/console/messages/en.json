@@ -568,6 +568,7 @@
   "role.readOnlyDevice": "Read-only account: this device can be watched, not operated.",
   "role.readOnlySettings": "Read-only account: settings are shown but cannot be changed. Your own password still can be.",
   "role.readOnlyInbox": "Read-only account: messages can be read. Sending, deleting and renaming are not available.",
+  "role.readOnlyCards": "Read-only account: card policies can be read. Adding, removing and changing them are not available.",
   "role.readOnlyBadge": "read-only",
   "source.label": "Source",
   "source.console": "Console",
