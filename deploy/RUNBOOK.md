@@ -166,8 +166,52 @@ mkdir -p dist/public && cp -r .next/standalone/. dist/
 rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. dist/.next/static/
 cp -r public/. dist/public/
 tar -czf console-dist.tgz -C dist .
+
+# The tarball is what ships, so the tarball is what gets checked. Not optional.
+if tar -tzf console-dist.tgz | grep -Eq '@img/|libvips.*\.so'; then
+  echo 'STOP — LGPL payload in console-dist.tgz, do not ship it:'
+  tar -tzf console-dist.tgz | grep -E '@img/|libvips.*\.so'
+else
+  echo 'console-dist.tgz clean: no @img, no libvips'
+fi
+
 scp console-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
 ```
+
+That `rm` is not housekeeping, which is why there is now a check bolted to it.
+`@img` is `sharp`'s native half, and on a Linux x64 workstation npm installs two
+of them — `@img/sharp-libvips-linux-x64` and `@img/sharp-libvips-linuxmusl-x64`,
+32 MB between them. Both are **LGPL-3.0-or-later**, both are a real
+`libvips-cpp.so`, and **neither ships a LICENSE file**, so shipping one means
+shipping a copyleft binary with no notice and no offer of source.
+`apps/console/next.config.ts` sets `images: { unoptimized: true }`, which is
+enough to stop anything *loading* them, but tracing is static and never reads
+that flag — they get bundled either way.
+
+### The two console paths, and why they drifted
+
+`deploy/Dockerfile.console` did not have this `rm`. Measured 2026-08-26 by
+building it: **241 MB with `@img` in `/app/node_modules`, 207 MB without.** The
+shipped image was never affected — production runs
+`Dockerfile.console.prebuilt` over the tarball this section produces, and this
+section has always stripped `@img`. What was affected is the from-source path,
+the one the top of this file calls correct and tells CI to use.
+
+It drifted for the ordinary reason: the rule lived in this document, and
+`Dockerfile.console` does not read documents. So it no longer lives only here.
+`Dockerfile.console` now does the same `rm`, **and then fails the build if an
+`@img` directory or a `libvips*.so*` survives into the finished image** — the
+`rm` and the assertion are separate on purpose, so that deleting the `rm`, or a
+`next` upgrade that renames the traced package, stops the build instead of
+quietly refilling the image. Verified by deleting the `rm` and rebuilding: the
+build fails and names the two `.so` files.
+
+The `tar -tzf` check above is the same assertion for *this* path, and it has to
+live in the recipe because `Dockerfile.console.prebuilt` only extracts
+`console-dist.tgz` — it never sees the tree the `rm` acted on, so it cannot
+check the tree. Until that file grows an equivalent assertion against the
+extracted contents, this block is the only thing between a forgotten `rm` and an
+LGPL binary on the production host. **If you change one path, change both.**
 
 Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
 `b/a` when `b` already exists, which silently produces `.next/static/static`
