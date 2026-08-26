@@ -904,6 +904,171 @@ test("the install dialog has a screenshot of each shape, at the declared size", 
   }
 });
 
+/* ── What the install dialog actually shows a person ──────────────────
+ *
+ * The size check above was the only thing looking at these two files, and it
+ * is the same check that let five cropped icons ship. It cannot see colour and
+ * it cannot see composition, and both had gone wrong here at once:
+ *
+ *   - Every pixel was the old green palette. 13 of 15 retired tokens were
+ *     present in the narrow file and none of the new ones were — not partial
+ *     drift, the entire picture.
+ *   - Worse, the picture was of a page this console has never had: four stat
+ *     cards and a device table headed 机队总览. The real overview has three
+ *     stat cards and a recent-messages table headed 总览. `git show
+ *     12b1ef7:apps/console/app/page.tsx` — the commit that added these very
+ *     files — already had the three-card shape, and not one of the strings in
+ *     the old images exists in messages/zh.json. They were drawn, not taken.
+ *
+ * Recolouring a drawing of a page that does not exist would have made it more
+ * convincing, not less wrong, so both files are now captured from the real
+ * page under a stub gateway serving synthetic data.
+ *
+ * 🔴 THESE ARE VIEWPORT SCREENSHOTS, NOT WHOLE-PAGE IMAGES, AND THEY CANNOT BE.
+ * At 390 CSS px the messages table does not begin until y=818, and the page is
+ * 931 CSS px tall even with every row hidden — against a declared frame of 844
+ * (=1688/2). No demo data fits it. Nor does any legal reframing: at 780 wide,
+ * Chromium's 0.43 aspect floor caps the height at about 907 CSS px, and the
+ * page's own floor is 931. There is no honest 780x1688 that holds the whole
+ * page, so what these show is the top of a page that scrolls — which is what a
+ * phone screenshot is.
+ *
+ * That is emphatically NOT the defect the icons shipped with. That one was a
+ * LAYOUT WIDTH that disagreed with the frame — laid out at 466, framed at 192,
+ * so the composition itself was wrong while the size was right. The two checks
+ * below are what tell those apart: the palette has to be the current one, and
+ * the layout has to have been done at the frame's own width.
+ */
+
+/** Every dark-theme token colour, packed, so a pixel costs one lookup. */
+function darkTokenPalette(): Map<number, string> {
+  const packed = new Map<number, string>();
+  for (const value of Object.values(COLOR_TOKENS)) {
+    const hex = value.dark.toLowerCase();
+    // The soft tints are rgba() and never land on an exact pixel; skip them
+    // rather than pretend a translucent token has a colour of its own.
+    if (!/^#[0-9a-f]{6}$/.test(hex)) continue;
+    const [r, g, b] = rgbOf(hex);
+    packed.set((r << 16) | (g << 8) | b, hex);
+  }
+  return packed;
+}
+
+/**
+ * The tokens this page genuinely paints, and therefore the ones a stale file
+ * would betray. Measured when these images were made — narrow / wide:
+ * bg 279271/198705, surface 913047/721768, surface-raised 34956/50845,
+ * surface-hover 16134/3892, line 17121/16238, fg 5746/2716,
+ * fg-muted 6077/1346, fg-faint 3780/1200.
+ *
+ * `fg-strong` (3 px / 0 px) and `line-strong` (528 / 132) are deliberately out.
+ * A token the overview does not paint cannot make the screenshot stale, and
+ * demanding it would only make this red the day a layout stops using it.
+ */
+const SCREENSHOT_TOKENS = [
+  "bg",
+  "surface",
+  "surface-raised",
+  "surface-hover",
+  "line",
+  "fg",
+  "fg-muted",
+  "fg-faint",
+] as const;
+
+test("the install dialog's screenshots are painted in the palette this console ships", () => {
+  const palette = darkTokenPalette();
+  for (const shot of consoleManifest().screenshots) {
+    const image = pngPixels(readPublic(shot.src.slice(1)));
+    const counts = new Map<string, number>();
+    let tokenPixels = 0;
+    for (let y = 0; y < image.height; y++) {
+      for (let x = 0; x < image.width; x++) {
+        const p = image.at(x, y);
+        const hex = palette.get((p[0] << 16) | (p[1] << 8) | p[2]);
+        if (hex === undefined) continue;
+        counts.set(hex, (counts.get(hex) ?? 0) + 1);
+        tokenPixels++;
+      }
+    }
+
+    // Read off COLOR_TOKENS rather than written down here: a hex typed into
+    // this file would go on passing after the palette moved, which is the
+    // exact failure these images already shipped once.
+    for (const name of SCREENSHOT_TOKENS) {
+      const hex = COLOR_TOKENS[name].dark.toLowerCase();
+      assert.ok(
+        (counts.get(hex) ?? 0) >= 500,
+        `${shot.src} has ${counts.get(hex) ?? 0} pixels of --${name} (${hex}) — ` +
+          `the palette moved and this file was not recaptured with it`,
+      );
+    }
+
+    // The counterweight: every named token could be present while most of the
+    // frame was something else entirely. 96.9% / 97.4% when captured.
+    const share = tokenPixels / (image.width * image.height);
+    assert.ok(
+      share >= 0.9,
+      `only ${(share * 100).toFixed(1)}% of ${shot.src} is a token colour — it is not this palette`,
+    );
+  }
+});
+
+test("each screenshot is the page at its own width, not a corner of a wider one", () => {
+  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
+  for (const shot of consoleManifest().screenshots) {
+    const image = pngPixels(readPublic(shot.src.slice(1)));
+    const isCanvas = (x: number, y: number) => near(image.at(x, y), canvas, 2);
+
+    // The app shell's header is full-bleed. If the frame were wider than the
+    // layout, the right of this row would be bare canvas.
+    for (const [where, x] of [
+      ["left", 0],
+      ["middle", image.width >> 1],
+      ["right", image.width - 1],
+    ] as const) {
+      assert.ok(
+        !isCanvas(x, 0),
+        `${shot.src}: the top row is canvas at the ${where} — the shell does not reach that edge, ` +
+          `so this frame is wider than the page that was laid out in it`,
+      );
+    }
+
+    // And the other direction. The content column is padded by an equal gutter
+    // on both sides, so the commonest left/right pair in the frame is
+    // symmetric — 24|24 on 713 of the narrow rows and 523 of the wide ones.
+    // Lay the page out wider than the frame and the right gutter is gone; lay
+    // it out narrower and the right gutter is enormous. Either way this pair
+    // stops matching, which is what a crop looks like from the pixels.
+    const pairs = new Map<string, number>();
+    for (let y = 0; y < image.height; y++) {
+      let first = -1;
+      let last = -1;
+      for (let x = 0; x < image.width; x++) {
+        if (isCanvas(x, y)) continue;
+        if (first < 0) first = x;
+        last = x;
+      }
+      if (first <= 0 || last >= image.width - 1) continue;
+      const key = `${first}|${image.width - 1 - last}`;
+      pairs.set(key, (pairs.get(key) ?? 0) + 1);
+    }
+    const [modal, rows] = [...pairs.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
+    const [left, right] = modal.split("|").map(Number);
+    assert.ok(
+      rows >= image.height * 0.15,
+      `${shot.src}: only ${rows} rows share a gutter pair (${modal}) — there is no content ` +
+        `column here, so nothing says the layout was done at ${image.width} px`,
+    );
+    assert.ok(
+      Math.abs(left - right) <= 2,
+      `${shot.src}: the content column sits ${left}px from the left and ${right}px from the ` +
+        `right — a centred column cannot do that, so this frame is a crop of a differently ` +
+        `sized layout`,
+    );
+  }
+});
+
 test("the manifest still asks for a standalone window with the app's own colours", () => {
   const m = consoleManifest();
   assert.equal(m.display, "standalone");
