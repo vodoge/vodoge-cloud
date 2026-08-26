@@ -1381,6 +1381,48 @@ test("the only controls shorter than the touch token are the two a table row pay
   assert.deepEqual(short, [TOKENS.BUTTON.size.sm, TOKENS.FORM.selectCompact].sort());
 });
 
+/* ── The list that decides whether any of the above runs ─────────────── */
+
+/**
+ * 🔴 **The second copy of the guard on `package.json`'s test list, and the
+ * reason a second copy is not redundancy.**
+ *
+ * The test script is a hand-written list of files, so a test file can exist,
+ * pass, and never run. `lib/interpolate.test.ts` already asserts that every
+ * `lib/*.test.ts` is on it — written after `lib/i18n.test.ts` was silently
+ * dropped **in a merge** and the suite reported 256 passing tests without it.
+ *
+ * ⚠️ **A guard in one file cannot catch that file's own removal.** Drop
+ * `interpolate.test.ts` from the list and the check goes with it; nothing else
+ * looks. The blind spot is badly placed, too: measured by running each file on
+ * its own, `interpolate.test.ts` carries **11** tests — tied with
+ * `session.test.ts` for the smallest on the list — against `tokens.test.ts`'s
+ * 132. Losing it moves the suite 305 → 294, which is *smaller than the last
+ * two cards each moved it on purpose*. A falling count is a tripwire, not a
+ * guard, and this repository already has the rule that a test count is not
+ * evidence — the name list is.
+ *
+ * So: the same predicate, in a second and unrelated file. Dropping either one
+ * alone now goes red. **What this does and does not buy, stated plainly:** it
+ * raises the bar from "one small file disappears from the list" to "two
+ * unrelated files disappear from the same merge" — and nobody removes a
+ * contrast-and-recipe test and an interpolation test together as duplicates.
+ * If both *are* dropped, `npm test` runs neither and is still silent. The bar
+ * is higher; it is not a proof.
+ *
+ * Deliberately duplicated rather than factored into a shared helper: a helper
+ * is a third file, and a third file can be dropped too.
+ */
+test("every lib test file is on the hand-written list in package.json", () => {
+  const pkg = JSON.parse(readSource("package.json")) as { scripts: Record<string, string> };
+  const onDisk = readdirSync(join(root, "lib"))
+    .filter((name) => name.endsWith(".test.ts"))
+    .sort();
+  assert.ok(onDisk.length >= 10, `only found ${onDisk.length} test files in lib/`);
+  const unrun = onDisk.filter((name) => !pkg.scripts.test.includes(`lib/${name}`));
+  assert.deepEqual(unrun, [], `written but never run: ${unrun.join(", ")}`);
+});
+
 /**
  * The three text tiers, and where the line between them falls.
  *
