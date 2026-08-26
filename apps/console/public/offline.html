@@ -25,6 +25,29 @@
     carry the same set of keys, which is the parity check check-i18n would have
     made if it could reach this file.
 
+    ## Every colour here is a copy of a dark-theme token
+
+    Six hexes are hand-copied from the dark column of lib/tokens.ts:
+    #0b0e14 (--bg, and the theme-color meta above), #e7ecf3 (--fg),
+    #93a1b5 (--fg-muted), and on .mark #4ade9b (--accent), #22c47f
+    (--accent-strong), #06251a (--accent-ink). The console draws the same mark
+    from those last three, via SHELL.brandMark's
+    `from-accent to-accent-strong text-accent-ink`.
+
+    They are copies because this file cannot be anything else. It is a static
+    asset under public/: no build step rewrites it and Tailwind never scans it,
+    the service worker hands it over with no server in the loop, and it is
+    shown precisely when the network is gone — so a <link> to the built
+    stylesheet would be both a content-hashed URL nothing here can keep in sync
+    and a fetch that by definition cannot succeed. Re-declaring the same values
+    as custom properties in this file would rename the copy, not end it.
+
+    So: change a dark token and change these too, by hand. Nothing in the build
+    or the test suite will say otherwise — a guard would belong in
+    lib/pwa.test.ts, which already reads this file as text. The page is
+    dark-only (color-scheme below), so the light column never reaches it, which
+    is why T046 could repaint the light accent without touching anything here.
+
     ## What this page must never say
 
     It cannot show "data as of HH:MM" and must not try. It is a static file
@@ -34,6 +57,7 @@
   -->
   <style>
     :root { color-scheme: dark; }
+    /* Every hex below is a copy of a dark token. Read the note above first. */
     body { margin:0; min-height:100dvh; display:flex; align-items:center; justify-content:center;
            padding:2rem;
            padding-left: calc(2rem + env(safe-area-inset-left));

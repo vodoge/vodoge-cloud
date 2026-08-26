@@ -69,7 +69,7 @@
   "login.stub": "Sessions last 12 hours. Signing in on one tenant does not grant access to another.",
   "login.backToDevices": "Back to devices",
   "apex.title": "Not a tenant site",
-  "apex.body": "vodoge.com is the parent domain, not a tenant. Use {slug}.{domain}, for example a.vodoge.com.",
+  "apex.body": "{domain} is the parent domain, not a tenant. Use a tenant subdomain, for example {slug}.{domain}.",
   "notFound.title": "Tenant not found",
   "notFound.body": "This hostname does not map to a tenant. Unknown subdomains never fall back to a default tenant.",
   "login.error": "Email or password is incorrect.",
