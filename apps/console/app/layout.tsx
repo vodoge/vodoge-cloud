@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { DM_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { ConnectionStatus } from "@/components/connection-status";
 import { InstallPrompt, ServiceWorker } from "@/components/pwa";
@@ -11,6 +12,61 @@ import { COLOR_TOKENS, SAFE_AREA } from "@/lib/tokens";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * DM Mono, fetched during the build and served from this origin.
+ *
+ * `next/font` downloads the face while `next build` runs and rewrites the
+ * `@font-face` to point at a file this server hosts, so the delivered page
+ * asks Google for nothing at all: no stylesheet and no font file crosses to a
+ * third party, and nobody outside this origin learns who reads the console.
+ *
+ * It is bound to `--font-mono`, the property the recipes already resolve
+ * through, rather than to a name of its own. A new custom property is not
+ * available from here: `tokens.test.ts` requires every `var()` the Tailwind
+ * theme names to be a key of the token tables, and deep-equals those tables
+ * against the `:root` in `globals.css` — so a new name would have to be added
+ * to two files this card does not own. The existing name is also the honest
+ * one, because the console's monospace face is exactly what is being replaced.
+ *
+ * The class goes on `body` rather than on `html`. On `html` it would land on
+ * the same element as `:root`, at the same specificity, and which one won
+ * would come down to the order the two sheets happen to be injected in.
+ * `body` is a descendant, so the property is inherited into the subtree and
+ * the question does not arise. `globals.css` is left alone, which also keeps
+ * the declared value of this shared token byte-identical for the edge.
+ *
+ * 🔴 **The three CJK families are the reason this is a chain and not one
+ * name, and dropping them fails only in Chinese.** Every column heading here
+ * is translated — `messages/zh.json` answers `devices.colName` with 设备 —
+ * and DM Mono carries no CJK glyphs, nor does any monospace face after it.
+ * Naming the same CJK families `--font-ui` names keeps a Chinese heading in
+ * the typeface it renders in today; without them the browser falls through to
+ * a last-resort face, which is a change no English page would ever show.
+ * They are ahead of the generic on purpose, because a generic ends the search.
+ *
+ * Weights 400 and 500 are the two the recipes ask for, and 500 is the top of
+ * what DM Mono publishes. The eyebrow recipes therefore say `font-medium`
+ * rather than the `font-semibold` they used to: 600 does not exist in this
+ * face, and asking for it buys a synthesised bold instead of a drawn one.
+ */
+const monoFace = DM_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  display: "swap",
+  variable: "--font-mono",
+  fallback: [
+    "ui-monospace",
+    "SFMono-Regular",
+    "SF Mono",
+    "Menlo",
+    "Consolas",
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    "monospace",
+  ],
+});
 
 /**
  * The status bar colour of the document the server just sent.
@@ -95,7 +151,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       {/* The left/right insets, which nothing had. `body` already carries the
           bottom one from globals.css; see SAFE_AREA.sides for why the sides
           matter on a device that is not even installed. */}
-      <body style={SAFE_AREA.sides}>
+      <body style={SAFE_AREA.sides} className={monoFace.variable}>
         <ServiceWorker />
         {/* Every string these two banners can draw is resolved here, on the
             server, and handed over finished.

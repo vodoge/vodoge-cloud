@@ -361,11 +361,27 @@ export const TAILWIND_LINE_HEIGHT = {
   none: "1",
 } as const;
 
-/** Tight for large type, wider for small caps. Nothing else earns a step. */
+/**
+ * Tight for large type, wider for small caps, and one step for the eyebrows.
+ *
+ * `eyebrow` is the only pixel value on this scale, and it is in pixels
+ * because that is how it was specified: both of the design references this
+ * console borrows from set the same 1.4px on their uppercase monospace
+ * labels. An `em` step cannot stand in for it — the eyebrows sit at two
+ * different sizes (`text-xs` for the column headings, `text-sm` for a section
+ * heading), and a step that scales with the type would open the letters of
+ * the larger one further than the smaller. The point of the treatment is that
+ * every label in the console is spaced alike, so the value that has to be
+ * equal is the one in pixels.
+ *
+ * `wider` stays where it is. It is 0.05em, which on `text-xs` works out near
+ * 0.6px, so this is not a rename of the same measurement.
+ */
 export const TAILWIND_LETTER_SPACING = {
   normal: "0em",
   tight: "-0.025em",
   wider: "0.05em",
+  eyebrow: "1.4px",
 } as const;
 
 /**
@@ -621,7 +637,7 @@ export const PAGE = {
    */
   section: "flex flex-col gap-s4",
   /** The heading of one of those. `.section-title` in the old stylesheet. */
-  sectionTitle: "m-0 text-sm font-semibold uppercase tracking-wider text-fg-muted",
+  sectionTitle: "m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-fg-muted",
   /**
    * A line of context under a control, or standing in for a list with nothing
    * in it yet. Quieter than `FORM.hint`, which is a note about what a control
@@ -730,12 +746,12 @@ export const CARD = {
 export const STAT = {
   row: "flex flex-col gap-s4 sm:flex-row",
   root: "flex flex-1 flex-col gap-s1 rounded-lg border border-line bg-surface p-s4 shadow",
-  label: "text-xs font-semibold uppercase tracking-wider text-fg-muted",
+  label: "font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-muted",
   /**
    * `tabular-nums` so a count that changes on refresh does not shift the label
    * under it, and `leading-none` because a 2rem number carries its own space.
    */
-  value: "text-2xl font-semibold leading-none tracking-tight tabular-nums text-fg",
+  value: "font-mono text-2xl font-medium leading-none tracking-tight tabular-nums text-fg",
   hint: "text-xs text-fg-faint",
   /**
    * Only for a number that carries a judgement. Colouring a neutral count
@@ -755,7 +771,7 @@ export const TABLE = {
   head: "",
   body: "",
   headerCell:
-    "sticky top-0 border-b border-line bg-surface-raised px-s4 py-s3 text-left text-xs font-semibold uppercase tracking-wider text-fg-faint",
+    "sticky top-0 border-b border-line bg-surface-raised px-s4 py-s3 text-left font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
   /**
    * The rule lives on the row rather than on every cell: with
    * `border-collapse`, a row border renders, and `last:border-0` on a row is
@@ -897,7 +913,7 @@ export const TABLE = {
   spec: "w-full border-collapse text-sm",
   specRow: "border-b border-line last:border-0",
   specTerm:
-    "whitespace-nowrap px-s4 py-s2 text-left align-top text-xs font-semibold uppercase tracking-wider text-fg-faint",
+    "whitespace-nowrap px-s4 py-s2 text-left align-top font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
   specDetail: "w-full px-s4 py-s2 align-top text-sm text-fg",
 } as const;
 
@@ -1042,7 +1058,7 @@ export const SHELL = {
    */
   navGroup:
     "flex flex-wrap items-center gap-s1 border-l border-line-strong pl-s3 first:border-l-0 first:pl-0",
-  navGroupLabel: "px-s1 text-xs font-semibold uppercase tracking-wider text-fg-faint",
+  navGroupLabel: "px-s1 font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
   /**
    * Full touch height at every width. The horizontal padding and the type
    * shrink on a phone instead, because a 32px-tall target is the wrong thing
