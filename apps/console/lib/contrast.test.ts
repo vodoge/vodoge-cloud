@@ -450,9 +450,26 @@ function washedBackdrops(theme: string, depth: number): { name: string; hex: str
  * `SHELL.navLinkCurrent` is `bg-accent-wash … text-fg-accent`. A chip is a
  * self-contained tinted thing, and a chip can be put inside another tinted
  * thing: `components/conversation.tsx:377` renders a `Badge` inside
- * `INBOX.messageOut`, which is `bg-accent-wash`, on a row that can be hovered.
- * **Two layers is a real constraint for a chip** — it is the backdrop that
- * binds `--bad`, and `lib/tokens.test.ts` records it as such.
+ * `INBOX.messageOut`, which is `bg-accent-wash`. **Two layers is a real
+ * constraint for a chip**, and `lib/tokens.test.ts` sweeps it as such.
+ *
+ * ⚠️ **Where the second layer stops being observed and starts being
+ * combinatorial — T010 had to correct this passage to say so.** It used to end
+ * "on a row that can be hovered", and to call the two-deep worst cell #284f3e
+ * "the backdrop that binds `--bad`". Neither survives a look at the source.
+ * The conversation is an `ol`/`li` carrying no background and no hover variant
+ * — the only `hover:bg-surface-hover` is `TABLE.row`, which is not in that
+ * subtree — and #284f3e is `--ok-wash` doubled, while the app's only
+ * `bg-ok-wash` is `BADGE.tone.ok`, so **no rendered stack produces it**. The
+ * deepest stack that really is painted is a `--bad-wash` badge inside that
+ * neutral bubble, #413030.
+ *
+ * 🔴 **The cross product below is kept anyway, and that is a decision rather
+ * than an oversight.** `washedBackdrops` gives the reason in its own words:
+ * which wash ends up inside which is a fact about JSX, no test in this app can
+ * read a `.tsx`, and a superset can only ever measure a colour somewhere
+ * darker than it really lands. It is not a claim about what renders — it is a
+ * refusal to let what happens to render this month decide what gets measured.
  *
  * Everything else painted as type is **ladder** text: ordinary words and
  * metadata that never carry a wash of their own and only ever *inherit* one
@@ -664,20 +681,27 @@ test("the neutral ladder clears 4.5:1 one wash deep, in both themes", (t) => {
 /**
  * The chips, two washes deep.
  *
- * 🔴 **The dark half of this is a known, recorded shortfall that predates this
- * card and is not its to settle.** `lib/tokens.test.ts:1214` pins `--bad` at
- * 3.062 and `--info` at 3.637 on `--ok-wash over --ok-wash over
- * --surface-hover` under the heading "measured, not fixed, and the next card's
- * baseline", and asserts the light half at `:1100`. This file reproduces both
- * of those numbers to the digit from an independent derivation, so the claim
- * that they are covered there is checked rather than believed — which is the
- * difference between this and excluding a colour because some other file is
- * *assumed* to handle it, the move that lost `--fg-faint`.
+ * 🔴 **The dark half is deferred to `lib/tokens.test.ts`, which now asserts
+ * it.** T010 raised `--bad` to `#ffa9ac` and `--info` to `#97c3ff`, and the pin
+ * there is no longer three recorded numbers: it sweeps all three dark status
+ * colours over all 52 of their backdrops and asserts the bar. This file
+ * reproduces its worst cells — 5.058 and 5.077 on `--ok-wash over --ok-wash
+ * over --surface-hover` — to the digit from an independent derivation, so the
+ * claim that they are covered there is checked rather than believed, which is
+ * the difference between this and excluding a colour because some other file
+ * is *assumed* to handle it, the move that lost `--fg-faint`.
  *
- * So: the light half is asserted, the dark half is emitted as diagnostics with
- * its owner named, and no digit is pinned here. Asserting the dark half would
- * not add coverage — it would re-open another card's recorded decision from a
- * file that cannot fix it.
+ * ⚠️ **This passage used to describe the dark half as "a known, recorded
+ * shortfall that predates this card"**, citing 3.062 and 3.637 under the
+ * heading "measured, not fixed, and the next card's baseline". T010 is the card
+ * that moved it. The heading and both numbers are gone, and leaving the
+ * citation would have aimed the next reader at a file that no longer says any
+ * of it.
+ *
+ * So: the light half is asserted here, the dark half is emitted as diagnostics
+ * with its owner named, and no digit is pinned here. Asserting the dark half
+ * would not add coverage — it would duplicate an assertion the owning file now
+ * makes, from a file that could not fix a failure in it.
  */
 test("the chips clear 4.5:1 two washes deep in light, and dark is on the record", (t) => {
   const failures: string[] = [];
