@@ -662,6 +662,184 @@ test("globals.css light theme re-declares exactly the themed tokens", () => {
   assert.deepEqual(declared, themeOverrideValues("light"));
 });
 
+/* ── Contrast: the ink against the accent it is painted on ──────────── */
+
+/**
+ * WCAG 2.x relative luminance and contrast ratio.
+ *
+ * Implemented here and not in `lib/tokens.ts` on purpose. That file is
+ * Tailwind `content`, and `accent-*` is a live utility family here rather
+ * than a hypothetical one: `FORM.checkbox` really does use `accent-accent`,
+ * so `.accent-accent` is in the shipped stylesheet and the generator that put
+ * it there reads every string in the file, comments included. A contrast
+ * table written next to the tokens would hand that generator a page of
+ * colour names to mine. This file is the one `tailwind.config.ts`
+ * deliberately excludes from `content`, which is what makes it the safe place
+ * to name these colours in prose.
+ */
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+  const [r, g, b] = channels.map((c) =>
+    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4),
+  );
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(one: string, other: string): number {
+  const a = relativeLuminance(one);
+  const b = relativeLuminance(other);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/**
+ * The negative control for the two tests under it.
+ *
+ * Without this, a `contrastRatio` that returned a large constant would
+ * satisfy every threshold below and the assertions would be decorative. All
+ * three of these are fixed by the specification rather than by taste: black
+ * on white is exactly 21, any colour on itself is exactly 1, and `#777777`
+ * on white is the published 4.478 that sits just above the body-text line.
+ */
+test("the contrast helper reproduces ratios the specification fixes", () => {
+  assert.equal(Number(contrastRatio("#000000", "#ffffff").toFixed(3)), 21);
+  assert.equal(Number(contrastRatio("#10b47a", "#10b47a").toFixed(3)), 1);
+  assert.equal(Number(contrastRatio("#777777", "#ffffff").toFixed(3)), 4.478);
+});
+
+/**
+ * `--accent-ink` is the only colour this design paints *on top of* the
+ * accent, and it is painted on two different accents, not one.
+ * `BUTTON.variant.primary` is `bg-accent` at rest and `bg-accent-strong` on
+ * hover while the ink stays where it is, and `SHELL.brandMark` runs a
+ * gradient between the same two. `--accent-strong` is the darker of the pair
+ * in both themes, so it is the binding case — and it is the one that a check
+ * of the rest state alone silently misses.
+ *
+ * 🔴 The light theme failed this until this card. The ink was `#ffffff`:
+ * 2.681 on `--accent` and 3.596 on `--accent-strong`, so the rest state did
+ * not reach even the 3:1 floor that large text gets, and the hover state did
+ * not reach 4.5 either. The button's label is `text-sm`/`font-semibold`,
+ * which is body text, so 4.5 is the bar for both. The fix was the ink and not
+ * the accent: `#10b47a` is the brand green and stays.
+ *
+ * ⚠️ The direction that repairs this inverts once the ink is dark, and it is
+ * the thing to get right before editing these two values again. While the ink
+ * was white, a *darker* fill helped. Now that the ink is `#06251a`, contrast
+ * falls monotonically as the fill darkens: `--accent` itself is 6.084, the
+ * old `--accent-strong` `#0d9a68` was 4.536, and two points darker again is
+ * 3.976. So the hover fill was moved *up* to `#0fa36f` (5.041) rather than
+ * down. It is still darker than `--accent` — hover still reads as hover, the
+ * two fills being 1.207:1 apart — but the margin over 4.5 is now half a point
+ * instead of 0.036.
+ *
+ * That is also why this test reads the real pair out of `COLOR_TOKENS` rather
+ * than restating numbers: the failure mode is somebody darkening the hover
+ * fill for contrast, which is precisely backwards, and this goes red when
+ * they do.
+ */
+const ACCENT_BACKGROUNDS = ["accent", "accent-strong"] as const;
+
+test("--accent-ink clears 4.5:1 on every accent it is painted on, in both themes", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const failures: string[] = [];
+
+  for (const theme of ["dark", "light"] as const) {
+    const ink = colours["accent-ink"][theme];
+    for (const name of ACCENT_BACKGROUNDS) {
+      const background = colours[name][theme];
+      const ratio = contrastRatio(ink, background);
+      if (ratio < 4.5) {
+        failures.push(`${theme}: ${ink} on --${name} ${background} = ${ratio.toFixed(3)}:1`);
+      }
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * The dark theme was already correct, and a card that repairs the light one
+ * must not pay for it out of the dark one's margin. These are the two ratios
+ * as they stood before this card, pinned to the digit: if a later edit to
+ * `--accent`, `--accent-strong` or the dark ink moves either of them at all,
+ * this fails rather than drifting quietly toward the threshold above.
+ */
+test("the dark theme's accent contrast is exactly what it was before this card", () => {
+  const colours = TOKENS.COLOR_TOKENS;
+  assert.equal(
+    Number(contrastRatio(colours["accent-ink"].dark, colours.accent.dark).toFixed(2)),
+    9.49,
+  );
+  assert.equal(
+    Number(contrastRatio(colours["accent-ink"].dark, colours["accent-strong"].dark).toFixed(2)),
+    7.2,
+  );
+});
+
+/**
+ * The three text tiers, and where the line between them falls.
+ *
+ * `--fg-faint` does not clear 4.5:1 anywhere, in either theme — light is
+ * 2.69-2.99 and dark is 3.20-3.89 — and that is not by itself a defect,
+ * because a timestamp beside a message it belongs to is supplementary text.
+ * It becomes a defect the moment the faint tier is used to label something a
+ * person has to operate: an unselected segmented option is not an *inactive*
+ * control, which is the only thing WCAG 1.4.3 exempts — it is the control you
+ * are required to press to change the setting.
+ *
+ * 🔴 `SEGMENTED.option` was exactly that: the language switcher on
+ * `/not-a-tenant` and `/unknown-tenant`, `text-fg-faint` on `bg-surface-hover`,
+ * 3.20:1 in the dark theme that every signed-out visitor gets and 2.69:1 in
+ * light. Every other interactive recipe in this file was already on
+ * `--fg-muted`, so the repair was to move that one recipe up a tier rather
+ * than to lift the faint token — lifting it would have closed the ~1.9:1 gap
+ * between the two tiers and flattened the hierarchy everywhere to fix one
+ * control.
+ *
+ * The rule is written as a sweep rather than a list so a recipe added later
+ * is covered without anyone remembering to come back here. `placeholder:` is
+ * deliberately outside it: a placeholder is a hint inside a control rather
+ * than the control's own label, the value the user types is `--fg`, and
+ * `FORM.input`'s placeholder is the one remaining faint-tier string that sits
+ * on an interactive element (2.81:1 in light on `--bg`). That one is left
+ * measured and unfixed on purpose — it is a separate decision, not this card's.
+ */
+const INTERACTIVE_MARKERS = ["cursor-pointer", "min-h-touch"];
+
+function everyRecipeString(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const item of value) everyRecipeString(item, out);
+  else if (value && typeof value === "object")
+    for (const item of Object.values(value)) everyRecipeString(item, out);
+  return out;
+}
+
+test("no recipe for something you operate labels itself with the faintest tier", () => {
+  const offenders = everyRecipeString(TOKENS).filter(
+    (recipe) =>
+      INTERACTIVE_MARKERS.some((marker) => recipe.includes(marker)) &&
+      /(^|\s)text-fg-faint(\s|$)/.test(recipe),
+  );
+  assert.deepEqual(offenders, []);
+});
+
+test("--fg-muted, the tier those controls use, clears 4.5:1 on every surface", () => {
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  const surfaces = ["bg", "surface", "surface-raised", "surface-hover"];
+  const failures: string[] = [];
+
+  for (const theme of ["dark", "light"] as const) {
+    for (const surface of surfaces) {
+      const ratio = contrastRatio(colours["fg-muted"][theme], colours[surface][theme]);
+      if (ratio < 4.5) failures.push(`${theme}: --fg-muted on --${surface} = ${ratio.toFixed(3)}:1`);
+    }
+  }
+
+  assert.deepEqual(failures, []);
+});
+
 test("every var() the Tailwind theme references is a declared token", () => {
   const declared = new Set(Object.keys(rootTokenValues("dark")));
   const scales = {

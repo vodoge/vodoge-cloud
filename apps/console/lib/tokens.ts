@@ -54,8 +54,8 @@ export const COLOR_TOKENS = {
   // One accent. A second colour competing for attention is how dashboards
   // turn into noise.
   accent: { dark: "#4ade9b", light: "#10b47a" },
-  "accent-strong": { dark: "#22c47f", light: "#0d9a68" },
-  "accent-ink": { dark: "#06251a", light: "#ffffff" },
+  "accent-strong": { dark: "#22c47f", light: "#0fa36f" },
+  "accent-ink": { dark: "#06251a", light: "#06251a" },
   "accent-wash": { dark: "rgba(74, 222, 155, 0.12)", light: "rgba(16, 180, 122, 0.1)" },
 
   // Status. These carry meaning, so they are never used decoratively.
@@ -1423,7 +1423,7 @@ export const JOURNAL = {
 export const SEGMENTED = {
   root: "inline-flex items-center gap-px rounded border border-line bg-surface-hover p-px",
   option:
-    "inline-flex min-h-s6 cursor-pointer items-center rounded border-0 bg-transparent px-s3 text-xs font-semibold text-fg-faint transition-colors hover:text-fg",
+    "inline-flex min-h-s6 cursor-pointer items-center rounded border-0 bg-transparent px-s3 text-xs font-semibold text-fg-muted transition-colors hover:text-fg",
   optionSelected: "bg-surface text-fg shadow",
 } as const;
 
