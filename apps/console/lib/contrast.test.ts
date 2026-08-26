@@ -621,11 +621,27 @@ test("every colour painted as type is either a chip or ladder text", () => {
  * and emitted as a diagnostic on every run so it can never go stale. On the
  * palette current as this is written the ladder's worst cell at two layers is
  * `--fg-faint` at **3.831** on `--ok-wash over --ok-wash over --surface-hover`
- * (`#284f3e`), and on the *real* nesting rather than the superset — an
- * `ok-wash` badge inside the `accent-wash` bubble on a hovered row (`#364b42`)
- * — it is **3.893**. Both are short. So this exception is load-bearing: it is
- * the only reason the ladder is green, and the number it is holding back is
- * printed beside it every time the suite runs.
+ * (`#284f3e`), and the next one down is **3.893** on `--ok-wash over
+ * --accent-wash over --surface-hover` (`#364b42`). Both are short. So this
+ * exception is load-bearing: it is the only reason the ladder is green, and
+ * the number it is holding back is printed beside it every time the suite
+ * runs.
+ *
+ * ⚠️ **`#364b42` used to be described here as "the *real* nesting rather than
+ * the superset" — an `ok-wash` badge inside the `accent-wash` bubble on a
+ * hovered row. It is not.** Its third layer is `--surface-hover`, so it needs
+ * a row that can be hovered, and §456-465 above has already struck exactly
+ * that claim: the conversation is an `ol`/`li` with no hover variant, and the
+ * only `hover:bg-surface-hover` is `TABLE.row`, which is not in that subtree.
+ * The correction was made there and never carried down to here. **Both
+ * numbers are combinatorial supersets; neither is a stack anyone has seen.**
+ *
+ * The conclusion is unchanged, and that is worth saying plainly rather than
+ * quietly deleting a sentence. Take only stacks that really are painted — no
+ * hover — and the same cell is `--ok-wash over --accent-wash over --surface`
+ * at 4.757, which passes, but `… over --surface-raised` at **4.341**, which
+ * still does not. The exception is holding something real either way; it was
+ * only the label that was wrong.
  *
  * `--fg-faint` at one layer is 5.201, which is the margin actually being
  * relied on.
