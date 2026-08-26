@@ -66,6 +66,22 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV VODOGE_GATEWAY_URL=http://gateway:8080
 RUN mkdir -p public && npm run build
 
+# Strip sharp's native halves out of the traced bundle.
+#
+# apps/console/next.config.ts sets `images: { unoptimized: true }`, which is
+# enough to stop anything from *loading* sharp at runtime -- but standalone
+# tracing is static and does not read that flag, so `next` traces it in anyway.
+# Measured on this file before this line existed: 32.9 MB under
+# node_modules/@img, 32.1 MB of it @img/sharp-libvips-linux-x64 and
+# @img/sharp-libvips-linuxmusl-x64. Both are LGPL-3.0-or-later, both ship a
+# libvips-cpp.so, and neither ships a LICENSE file to go with it.
+#
+# deploy/RUNBOOK.md "Producing the console artifact" removes the same directory
+# before it packs console-dist.tgz, which is why the image production actually
+# runs has always been clean and this one was not. The rule lived only in the
+# runbook, and this file never read it.
+RUN rm -rf .next/standalone/node_modules/@img
+
 FROM node:22-alpine
 
 WORKDIR /app
@@ -76,6 +92,29 @@ ENV PORT=3000
 COPY --from=build /src/.next/standalone ./
 COPY --from=build /src/.next/static ./.next/static
 COPY --from=build /src/public ./public
+
+# Check the assembled image rather than trusting the step that assembled it.
+#
+# The rm above is one line, in a stage that only runs behind a build-arg, in a
+# file nobody reads on a normal day -- exactly the kind of rule that quietly
+# stops being true. A `next` upgrade that renames the traced package, an added
+# COPY, or a dropped line all reintroduce the payload silently, because nothing
+# about the resulting image looks wrong. So fail the build here instead.
+#
+# The .so is the LGPL payload, so the .so is what gets matched, not only the
+# directory name that happens to hold it today. sharp itself (Apache-2.0, and
+# unreachable with image optimisation off) is deliberately not matched; RUNBOOK
+# leaves it in place too, and the two paths must agree.
+RUN set -e; \
+    hits="$(find . -name '@img' -print; find . -name 'libvips*.so*' -print)"; \
+    if [ -n "$hits" ]; then \
+      echo 'LGPL-3.0-or-later payload present in the console image:' >&2; \
+      echo "$hits" >&2; \
+      echo 'Expected none: see the rm in the build stage above, and' >&2; \
+      echo 'deploy/RUNBOOK.md "Producing the console artifact".' >&2; \
+      exit 1; \
+    fi
+
 EXPOSE 3000
 USER node
 CMD ["node", "server.js"]
