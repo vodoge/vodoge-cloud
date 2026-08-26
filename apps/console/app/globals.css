@@ -52,43 +52,48 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces, from furthest back to nearest the reader. */
-  --bg: #0b0e14;
-  --surface: #12161f;
-  --surface-raised: #171c27;
-  --surface-hover: #1c2230;
-  --line: #232a38;
-  --line-strong: #303950;
+  /* Surfaces, from furthest back to nearest the reader. Four distinct values,
+     stepping away from the canvas as a surface rises. */
+  --bg: #010102;
+  --surface: #0d0d0d;
+  --surface-raised: #151515;
+  --surface-hover: #1d1d1d;
+  --line: #23252a;
+  --line-strong: #30333a;
 
-  /* Text. Three weights is enough; more and the hierarchy stops reading. */
-  --fg: #e7ecf3;
-  --fg-muted: #93a1b5;
-  --fg-faint: #64708a;
+  /* Text. Four tiers, every one of them at 4.5 or better on all four surfaces
+     above — worst 7.007, where the faintest tier used to be 3.200. */
+  --fg: #f5f5f5;
+  --fg-strong: #d3d3d3;
+  --fg-muted: #c1c1c1;
+  --fg-faint: #a7a7a7;
   /* The accent when it is being read rather than filled. It lives in this
-     family and not the accent one because the prefix is the role. Here the two
-     greens coincide; in the light theme they cannot. */
-  --fg-accent: #4ade9b;
+     family and not the accent one because the prefix is the role. The accent
+     is a text tier itself now, so the two coincide in both themes. */
+  --fg-accent: #f5f5f5;
 
-  /* One accent. A second colour competing for attention is how dashboards
-     turn into noise. These four are the accent as a surface, never as text. */
-  --accent: #4ade9b;
-  --accent-strong: #22c47f;
-  --accent-ink: #06251a;
+  /* One accent, and it has no hue: it is the text colour, inked with the
+     background. Hue belongs to the four status colours, so the only coloured
+     thing on this console is device state. */
+  --accent: #f5f5f5;
+  --accent-strong: #d3d3d3;
+  --accent-ink: #010102;
   /* The accent when it has to be seen as a line rather than filled or read:
      the focus outline below, the current tab's rule, an input's focused edge.
-     Its bar is the 3:1 WCAG 1.4.11 sets for non-text, not a text tier. Here
-     the fill already clears it, so this equals the fill; in the light theme it
-     cannot. */
-  --accent-edge: #4ade9b;
-  --accent-wash: rgba(74, 222, 155, 0.12);
+     Its bar is the 3:1 WCAG 1.4.11 sets for non-text, not a text tier. A
+     neutral accent clears it everywhere, so this equals the fill in both
+     themes; the entry stays because the role does. */
+  --accent-edge: #f5f5f5;
+  --accent-wash: rgba(245, 245, 245, 0.1);
 
-  /* Status. These carry meaning, so they are never used decoratively. */
+  /* Status. These carry meaning, so they are never used decoratively, and
+     after this card they are the only hue left. All four are unchanged. */
   --ok: #4ade9b;
   --warn: #f0b429;
   --bad: #f2686d;
   --info: #63a4ff;
-  /* The ink on the one solid button filled with the red above. Themed, where
-     the accent's ink is not, because this red is pale here and deep in the
+  /* The ink on the one solid button filled with the red above. Themed, as the
+     accent's ink now also is, because this red is pale here and deep in the
      light theme: the ink is the opposite pole of the fill, in each theme. */
   --bad-ink: #52070a;
   --ok-wash: rgba(74, 222, 155, 0.14);
@@ -130,37 +135,39 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-hover: #f1f3f7;
-  --line: #e3e7ee;
-  --line-strong: #cdd4e0;
-  --fg: #1a2030;
-  --fg-muted: #5a6579;
-  --fg-faint: #8b96a9;
-  /* The second green. The brand green below fills buttons and cannot be read
-     on white; this one is read and cannot carry the button's dark ink. */
-  --fg-accent: #0a704c;
-  --accent: #10b47a;
-  --accent-strong: #0fa36f;
-  --accent-ink: #06251a;
-  /* The third green, and the one with the loosest bar. The fill above is
-     2.681 on white and 2.523 on the page — under the 3:1 a focus ring owes a
-     reader — and the readable green below is a text tier an outline has no
-     use for. This is the lightest value on the brand hue clearing 3:1 by half
-     a point: 3.527 on the worst backdrop a focused control sits against. */
-  --accent-edge: #0c855a;
-  --accent-wash: rgba(16, 180, 122, 0.1);
-  /* The three below moved with the green and for the same reason: read on
-     their own washes they were 2.341, 3.060 and 3.429. Each is now the
-     lightest value on its own hue and saturation whose worst real backdrop
-     clears 4.5 by half a point. The washes are literal and did not follow, so
-     the pale pills these words sit on are unchanged. */
-  --ok: #0a704c;
-  --warn: #745407;
-  --bad: #a7252f;
-  --info: #2156a5;
+  /* The light ladder is the dark one's mirror, built from the same step ratios
+     rather than the same luminance deltas — near white the same delta is a far
+     smaller hex step, which is how the old ladder ended up with `--surface` and
+     `--surface-raised` both at #ffffff and the raised tier not existing at all.
+     The page is the white end now and surfaces darken as they rise, so all four
+     are distinct and the direction matches the dark theme. */
+  --bg: #ffffff;
+  --surface: #f7f7f7;
+  --surface-raised: #f0f0f0;
+  --surface-hover: #e7e7e7;
+  --line: #dcdcdc;
+  --line-strong: #c8c8c8;
+  /* Same four tiers at the same tier-to-tier ratios as the dark theme.
+     Worst of the sixteen pairings 7.055, where the faintest was 2.810. */
+  --fg: #0f0f0f;
+  --fg-strong: #2c2c2c;
+  --fg-muted: #393939;
+  --fg-faint: #4b4b4b;
+  --fg-accent: #0f0f0f;
+  --accent: #0f0f0f;
+  --accent-strong: #2c2c2c;
+  --accent-ink: #ffffff;
+  --accent-edge: #0f0f0f;
+  --accent-wash: rgba(15, 15, 15, 0.06);
+  /* These four are the same hue and saturation as the dark theme's, at the
+     lightness their new backdrops need: the light surfaces darken as they
+     rise, so the worst pairing is darker than the one T049 and T051 derived
+     against. Worst backdrops 5.040, 5.037, 5.015, 5.006. The washes are
+     literal and did not follow, so the pills are unchanged. */
+  --ok: #085d3f;
+  --warn: #6a4c06;
+  --bad: #9b222c;
+  --info: #1f5099;
   /* Deep red carries white; the dark theme's pale red cannot. */
   --bad-ink: #ffffff;
   --ok-wash: rgba(16, 180, 122, 0.1);
