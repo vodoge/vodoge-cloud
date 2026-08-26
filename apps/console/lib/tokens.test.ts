@@ -2271,8 +2271,8 @@ test("the read-only note names what is gone from the card policies", () => {
  *
  * The four pages above resolve the role on the server and hand a required
  * `writable` prop down. `app/devices/[deviceId]/page.tsx` resolves no role at
- * all, so the two client components on it each ask `GET /v1/auth/session` from
- * an effect and start closed.
+ * all, so all three client components on it ask `GET /v1/auth/session` from an
+ * effect and start closed.
  *
  * That is the weaker of the two shapes and it is not being blessed here. A prop
  * exists before the first render; an effect answers after one paint, which is
@@ -2283,16 +2283,26 @@ test("the read-only note names what is gone from the card policies", () => {
  * site that has moved is an argument a merge can quietly drop. Which is not a
  * worry invented for this comment: see the block above.
  *
- * What this holds is that the two copies cannot drift. `device-console.tsx` and
- * `device-admin.tsx` are three cards apart on one page, and two components
+ * What this holds is that the copies cannot drift. `device-console.tsx` and
+ * `device-admin.tsx` are three cards apart on the console tab and
+ * `esim-panel.tsx` is the whole of the tab beside it, and three components
  * disagreeing about what "the gateway did not answer" means is the same defect
- * the four-page test guards against, one level down.
+ * the four-page test guards against, one level down and with one more place to
+ * drift.
  */
 
 /** Components on the device page that establish the role for themselves. */
-const SELF_ASKING_CONTROLS = ["components/device-console.tsx", "components/device-admin.tsx"];
+const SELF_ASKING_CONTROLS = [
+  "components/device-console.tsx",
+  "components/device-admin.tsx",
+  // T036. The eSIM tab had no role gate at all — T010 and T011 each reported
+  // it — and it is on this same page, so it takes this shape rather than a
+  // fourth one. Added to the list rather than checked beside it: a third copy
+  // held to the same four lines is the whole point of there being a list.
+  "components/esim-panel.tsx",
+];
 
-test("both device page controls ask the gateway themselves, and both start closed", () => {
+test("all three device page controls ask the gateway themselves, and all start closed", () => {
   for (const relative of SELF_ASKING_CONTROLS) {
     const code = codeOnly(readSource(relative));
     assert.match(
@@ -2405,6 +2415,187 @@ test("both device admin writes refuse without the role, before they ask for anyt
     remove.indexOf('permission !== "write"') < remove.indexOf("window.prompt("),
     "a read-only account is made to type the device name out before it is refused",
   );
+});
+
+/* ── And the eSIM tab, the third copy on that same page ──────────────────
+ *
+ * ⚠️ **The wording rule at the top of this section applies here too.**
+ * `viewer@vodoge.com` could *see* every control on this tab; it could never use
+ * one. Each of them is a `POST /v1/commands`, which is a state-changing request,
+ * and the gateway refuses those from a read-only session at the one chokepoint
+ * around its whole route table — so a profile switch, a download, a
+ * notification retrieval and a chip read were all answered 403 whichever
+ * account pressed them. **Nothing here closes a hole.** What is withdrawn is
+ * the offer, and this is the tab where withdrawing it is worth most: the
+ * buttons are labelled *Switch* and *Download and install*, they act on
+ * hardware nobody can reach to unplug, and an operator offered a button that
+ * cannot work learns to distrust every button on the page.
+ *
+ * T010 and T011 each reported this file as having no role gate at all, and
+ * T034 left it out on purpose because T011 was rewriting it at the time.
+ *
+ * `app/devices/[deviceId]/page.tsx` still resolves no role, so this takes the
+ * shape its two neighbours already have rather than inventing a fourth. What
+ * the gate is *called* is the one thing borrowed from the other side: a plain
+ * `writable` boolean derived from the three-state answer, so the condition in
+ * front of a control is that word and nothing else — which is what
+ * `drawnOnlyWhen` can walk out of, and what the four pages that are handed the
+ * answer already call it.
+ */
+
+/**
+ * The dependency list of `const name = useCallback(…, [ … ])`.
+ *
+ * 🔴 A memoised guard needs the thing it guards on in here, and leaving it out
+ * fails in the direction nothing else would notice: `runNow` would keep the
+ * `false` it closed over on the first render, so the account that *may* write
+ * gets the buttons, gets the dialog, confirms — and nothing is sent, with no
+ * error anywhere. There is no lint step in this workspace to say so.
+ */
+function dependencyList(source: string, name: string): string | null {
+  const { masked, code } = scan(source);
+  const at = masked.search(new RegExp(`\\bconst\\s+${name}\\s*=\\s*useCallback\\(`));
+  if (at === -1) return null;
+  const call = masked.indexOf("(", masked.indexOf("useCallback", at));
+  const end = closingBracket(masked, call);
+  if (end === -1) return null;
+  const open = masked.lastIndexOf("[", end);
+  if (open === -1 || open < call) return null;
+  const close = closingBracket(masked, open);
+  return close === -1 ? null : code.slice(open, close + 1);
+}
+
+/** Everything on the eSIM tab that lets somebody operate the hardware. */
+const ESIM_PANEL_CONTROLS = /<(Button|Select|Input|Field|ButtonRow|RowActions|ConfirmDialog)\b/g;
+
+/** And every attribute on it that can be operated. */
+const ESIM_PANEL_HANDLERS = ["onClick", "onChange", "onConfirm", "onCancel"];
+
+test("the eSIM tab draws no write control for an account that may not write", () => {
+  const source = readSource(ESIM_SOURCE);
+  const { masked, code } = scan(source);
+
+  // 🔴 The derivation itself, pinned. `permission !== "read"` reads as writable
+  // for the `"unknown"` this panel starts in — the one state the whole shape
+  // exists in order to draw nothing for — and it would satisfy every check
+  // below, because every check below asks about the word and not the answer.
+  assert.match(
+    code,
+    /const writable = permission === "write";/,
+    "the eSIM panel's gate is no longer the answer the gateway gave",
+  );
+
+  const drawn = [...masked.matchAll(ESIM_PANEL_CONTROLS)];
+  assert.equal(
+    drawn.length,
+    16,
+    "the module picker and its field; Refresh, Read the chip, Authenticate," +
+      " Switch, Retrieve and Download and install; the two download boxes, their" +
+      " fields and the row they sit in; the two row-action wrappers; the dialog" +
+      " — a control that stopped being found would reduce the check below to nothing",
+  );
+  const ungated = drawn
+    .filter((match) => !drawnOnlyWhen(masked, match.index, "writable"))
+    .map((match) => `${match[1]} at ${match.index}`);
+  assert.deepEqual(ungated, [], "an eSIM control is offered to an account that may not write");
+
+  // The other axis, and it is not the same one. A control can be gated while
+  // the handler that operated it is left on something else, and a count of
+  // tags would not show it.
+  const handlers = ESIM_PANEL_HANDLERS.flatMap((attribute) =>
+    attributeSites(source, attribute).map((site) => ({ attribute, at: site.at })),
+  );
+  assert.equal(handlers.length, 11, `${handlers.length} handlers, not the 11 this file has`);
+  assert.deepEqual(
+    handlers
+      .filter((site) => !drawnOnlyWhen(masked, site.at, "writable"))
+      .map((site) => `${site.attribute} at ${site.at}`),
+    [],
+    "something on the eSIM tab can still be operated by an account that may not write",
+  );
+
+  // Header and cells together, in both tables. A column kept for actions
+  // nobody has leaves a table one heading wider than it has values for, which
+  // no count of controls would show — the same check the card policy table
+  // carries, twice over because this tab has two tables with an actions column.
+  const headers = [...masked.matchAll(/<TableHeaderCell \/>/g)];
+  assert.equal(headers.length, 2, "the two actions columns are not both still here");
+  for (const header of headers) {
+    assert.ok(
+      drawnOnlyWhen(masked, header.index, "writable"),
+      `an actions column keeps its header for an account with no actions: ${header.index}`,
+    );
+  }
+
+  // The card note that explains where an activation code goes travels with the
+  // box that took one. A card telling a read-only account that its one-time
+  // credential is not written to the log, above no field to type one into, is
+  // the same kind of leftover as an actions column with no actions.
+  const secretAt = code.indexOf('t("esim.dlSecret", locale)');
+  assert.notEqual(secretAt, -1, "the download card stopped saying where the code goes");
+  assert.ok(
+    drawnOnlyWhen(masked, secretAt, "writable"),
+    "the activation-code note is shown to an account that is offered no box for one",
+  );
+
+  // And the tab says why, in the arm drawn *because* the account may not write.
+  // Reused rather than invented: `role.readOnlyDevice` is this page's sentence
+  // and `device-console.tsx` draws the same one on the tab next to this.
+  const noteAt = code.indexOf('t("role.readOnlyDevice", locale)');
+  assert.notEqual(noteAt, -1, "nothing on the eSIM tab says why the controls are missing");
+  assert.ok(
+    drawnOnlyUnless(masked, noteAt, "writable"),
+    "the read-only sentence is shown to accounts that can write, or to everyone",
+  );
+});
+
+test("both eSIM entry points refuse without the role, before the dialog and before the request", () => {
+  const source = readSource(ESIM_SOURCE);
+
+  // `runNow` is the only function in the file that reaches the gateway and
+  // `request` is the only thing that reaches `runNow`. Both are checked: the
+  // one that draws nothing is the one a later change is least likely to notice.
+  const write = bodyOfFunction(source, "runNow");
+  assert.ok(write, "the eSIM panel no longer has a runNow");
+  assert.match(
+    write as string,
+    /if \(!writable\) return;/,
+    "runNow runs for an account that may not write",
+  );
+  assert.ok(
+    (write as string).indexOf("!writable") < (write as string).indexOf("fetch("),
+    "runNow checks the role after it has already sent the request",
+  );
+
+  const dispatcher = bodyOfFunction(source, "request");
+  assert.ok(dispatcher, "the eSIM panel no longer has a request dispatcher");
+  assert.match(
+    dispatcher as string,
+    /if \(!writable\) return;/,
+    "request opens a dialog for an account that may not write",
+  );
+  // In front of the friction, not behind it — the same judgement `remove` in
+  // device-admin.tsx is held to. Weighing the consequence of a profile switch,
+  // asking someone to confirm it and then having the gateway refuse it is all
+  // of the cost and none of the outcome.
+  assert.ok(
+    (dispatcher as string).indexOf("!writable") <
+      (dispatcher as string).indexOf("deviceCommandGuard("),
+    "request weighs the consequence first and the role afterwards",
+  );
+
+  // Both are `useCallback`s, so the gate has to be in the dependency list as
+  // well as in the body. This is the assertion that has no visible symptom to
+  // report it: everything above stays green while the panel silently stops
+  // sending anything at all for the account that may write.
+  for (const name of ["runNow", "request"]) {
+    const deps = dependencyList(source, name);
+    assert.ok(deps, `${name} is no longer a memoised callback this can read`);
+    assert.ok(
+      /\bwritable\b/.test(deps as string),
+      `${name} is memoised without the gate, so it keeps whichever answer it first saw`,
+    );
+  }
 });
 
 /* ── The module this console will not send from ──────────────────────────

@@ -35,6 +35,7 @@ import {
   type RetrievedNotification,
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
+import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
   PAGE,
   TABLE,
@@ -131,6 +132,12 @@ export function EsimPanel({
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [imei, setImei] = useState(modems[0]?.imei ?? "");
   const [pending, setPending] = useState<Pending | null>(null);
+  // "unknown" until the gateway has been asked, and every control on this
+  // tab is drawn for "write" only. Closed by default on purpose: this panel
+  // renders on the server before it can ask anything, and a Switch button
+  // that appears for one paint and is then taken away is a worse answer than
+  // one that appears a paint late.
+  const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
   // Held only until the request goes out. An activation code is a one-time
   // credential, so it lives in this component and nowhere else -- not in the
   // URL, not in a form that survives a reload, and not in the command result
@@ -173,6 +180,32 @@ export function EsimPanel({
     return () => clearInterval(timer);
   }, [reading, authPending, downloadPending, refresh]);
 
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const response = await fetch(SESSION_ENDPOINT, { cache: "no-store" });
+        if (!alive) return;
+        // A session the gateway will not confirm gets the smaller panel. The
+        // controls would only ever produce a refusal anyway.
+        setPermission(
+          response.ok && mayWrite(roleFromSessionBody(await response.json())) ? "write" : "read",
+        );
+      } catch {
+        if (alive) setPermission("read");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // The gate every control below is drawn behind. A boolean rather than the
+  // three-state value, so the condition in front of a control is the word
+  // `writable` and nothing else -- which is what a test can walk out of, and
+  // what the four pages that are handed their answer already call it.
+  const writable = permission === "write";
+
   /**
    * The request itself, and the only function in this file that performs one.
    *
@@ -183,6 +216,9 @@ export function EsimPanel({
    */
   const runNow = useCallback(
     async (kind: string, extra: Record<string, unknown>) => {
+      // Not only the missing control. This is the half of the guard that
+      // survives a control being drawn again by a later change.
+      if (!writable) return;
       setBusy(true);
       setError(null);
       const response = await fetch("/v1/commands", {
@@ -198,7 +234,7 @@ export function EsimPanel({
       await refresh();
       router.refresh();
     },
-    [deviceId, locale, refresh, router],
+    [deviceId, locale, refresh, router, writable],
   );
 
   /**
@@ -210,6 +246,10 @@ export function EsimPanel({
    */
   const request = useCallback(
     (kind: string, extra: Record<string, unknown>, title: string, confirmLabel: string) => {
+      // In front of the dialog, not behind it. Asking an account that cannot
+      // switch a profile to confirm switching one is all of the friction and
+      // none of the outcome.
+      if (!writable) return;
       const guard = deviceCommandGuard(kind, extra);
       if (guard.consequence === null) {
         void runNow(kind, extra);
@@ -222,7 +262,7 @@ export function EsimPanel({
         run: () => void runNow(kind, extra),
       });
     },
-    [locale, runNow],
+    [locale, runNow, writable],
   );
 
   const cancelPending = useCallback(() => setPending(null), []);
@@ -265,40 +305,46 @@ export function EsimPanel({
   return (
     <>
       <Card title={t("esim.modem", locale)} note={t("esim.note", locale)}>
-        <Field label={t("esim.modem", locale)}>
-          <Select
-            value={imei}
-            disabled={busy || modems.length === 0}
-            onChange={(event) => setImei(event.target.value)}
-          >
-            {modems.map((modem) => (
-              <option key={modem.imei} value={modem.imei}>
-                {modem.imei}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        {writable ? (
+          <Field label={t("esim.modem", locale)}>
+            <Select
+              value={imei}
+              disabled={busy || modems.length === 0}
+              onChange={(event) => setImei(event.target.value)}
+            >
+              {modems.map((modem) => (
+                <option key={modem.imei} value={modem.imei}>
+                  {modem.imei}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : (
+          <FormHint>{t("role.readOnlyDevice", locale)}</FormHint>
+        )}
         {error ? <FormError>{error}</FormError> : null}
       </Card>
 
       <Card
         title={t("esim.title", locale)}
         actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || imei === ""}
-            onClick={() =>
-              request(
-                "list_esim_profiles",
-                { modem_imei: imei },
-                t("esim.refresh", locale),
-                t("esim.refresh", locale),
-              )
-            }
-          >
-            {t("esim.refresh", locale)}
-          </Button>
+          writable ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || imei === ""}
+              onClick={() =>
+                request(
+                  "list_esim_profiles",
+                  { modem_imei: imei },
+                  t("esim.refresh", locale),
+                  t("esim.refresh", locale),
+                )
+              }
+            >
+              {t("esim.refresh", locale)}
+            </Button>
+          ) : null
         }
       >
         <div className={PAGE.section}>
@@ -357,7 +403,10 @@ export function EsimPanel({
                         {t("esim.colCollected", locale)}
                       </TableHeaderCell>
                       <TableHeaderCell secondary>{t("esim.colSource", locale)}</TableHeaderCell>
-                      <TableHeaderCell />
+                      {/* Header and cell together. A column kept for actions
+                          nobody has leaves the table one heading wider than
+                          it has values for. */}
+                      {writable ? <TableHeaderCell /> : null}
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -384,32 +433,34 @@ export function EsimPanel({
                             locale,
                           )}
                         </TableCell>
-                        <TableCell>
-                          <RowActions>
-                            {/* Only a disabled profile can be switched to, and
-                                a deleted one is not on the chip at all. */}
-                            {profile.state === "disabled" && profile.modemImei ? (
-                              <Button
-                                variant="risk"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() =>
-                                  request(
-                                    "switch_esim_profile",
-                                    {
-                                      modem_imei: profile.modemImei,
-                                      target_iccid: profile.iccid,
-                                    },
-                                    `${t("esim.switch", locale)} — ${profile.iccid}`,
-                                    t("esim.switch", locale),
-                                  )
-                                }
-                              >
-                                {t("esim.switch", locale)}
-                              </Button>
-                            ) : null}
-                          </RowActions>
-                        </TableCell>
+                        {writable ? (
+                          <TableCell>
+                            <RowActions>
+                              {/* Only a disabled profile can be switched to, and
+                                  a deleted one is not on the chip at all. */}
+                              {profile.state === "disabled" && profile.modemImei ? (
+                                <Button
+                                  variant="risk"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    request(
+                                      "switch_esim_profile",
+                                      {
+                                        modem_imei: profile.modemImei,
+                                        target_iccid: profile.iccid,
+                                      },
+                                      `${t("esim.switch", locale)} — ${profile.iccid}`,
+                                      t("esim.switch", locale),
+                                    )
+                                  }
+                                >
+                                  {t("esim.switch", locale)}
+                                </Button>
+                              ) : null}
+                            </RowActions>
+                          </TableCell>
+                        ) : null}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -423,21 +474,23 @@ export function EsimPanel({
       <Card
         title={t("esim.chipTitle", locale)}
         actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || imei === ""}
-            onClick={() =>
-              request(
-                "read_esim_info",
-                { modem_imei: imei },
-                t("esim.readChip", locale),
-                t("esim.readChip", locale),
-              )
-            }
-          >
-            {t("esim.readChip", locale)}
-          </Button>
+          writable ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || imei === ""}
+              onClick={() =>
+                request(
+                  "read_esim_info",
+                  { modem_imei: imei },
+                  t("esim.readChip", locale),
+                  t("esim.readChip", locale),
+                )
+              }
+            >
+              {t("esim.readChip", locale)}
+            </Button>
+          ) : null
         }
       >
         <div className={PAGE.section}>
@@ -491,7 +544,7 @@ export function EsimPanel({
                           {t("esim.colAddress", locale)}
                         </TableHeaderCell>
                         <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
-                        <TableHeaderCell />
+                        {writable ? <TableHeaderCell /> : null}
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -503,28 +556,30 @@ export function EsimPanel({
                             {notification.address}
                           </TableCell>
                           <TableCell mono>{notification.iccid ?? "—"}</TableCell>
-                          <TableCell>
-                            <RowActions>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() =>
-                                  request(
-                                    "retrieve_esim_notification",
-                                    {
-                                      modem_imei: info.imei,
-                                      sequence_number: notification.sequenceNumber,
-                                    },
-                                    t("esim.retrieve", locale),
-                                    t("esim.retrieve", locale),
-                                  )
-                                }
-                              >
-                                {t("esim.retrieve", locale)}
-                              </Button>
-                            </RowActions>
-                          </TableCell>
+                          {writable ? (
+                            <TableCell>
+                              <RowActions>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    request(
+                                      "retrieve_esim_notification",
+                                      {
+                                        modem_imei: info.imei,
+                                        sequence_number: notification.sequenceNumber,
+                                      },
+                                      t("esim.retrieve", locale),
+                                      t("esim.retrieve", locale),
+                                    )
+                                  }
+                                >
+                                  {t("esim.retrieve", locale)}
+                                </Button>
+                              </RowActions>
+                            </TableCell>
+                          ) : null}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -554,21 +609,23 @@ export function EsimPanel({
       <Card
         title={t("esim.authTitle", locale)}
         actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || imei === ""}
-            onClick={() =>
-              request(
-                "initiate_esim_authentication",
-                { modem_imei: imei },
-                t("esim.authStart", locale),
-                t("esim.authStart", locale),
-              )
-            }
-          >
-            {t("esim.authStart", locale)}
-          </Button>
+          writable ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || imei === ""}
+              onClick={() =>
+                request(
+                  "initiate_esim_authentication",
+                  { modem_imei: imei },
+                  t("esim.authStart", locale),
+                  t("esim.authStart", locale),
+                )
+              }
+            >
+              {t("esim.authStart", locale)}
+            </Button>
+          ) : null
         }
       >
         <div className={PAGE.section}>
@@ -593,55 +650,62 @@ export function EsimPanel({
         </div>
       </Card>
 
-      <Card title={t("esim.dlTitle", locale)} note={t("esim.dlSecret", locale)}>
+      {/* The note is about where the activation code goes, so it goes with
+          the box that took one. What the card is *about* -- what has been
+          downloaded -- stays. */}
+      <Card title={t("esim.dlTitle", locale)} note={writable ? t("esim.dlSecret", locale) : null}>
         <div className={PAGE.section}>
-          <Field label={t("esim.dlCode", locale)}>
-            <Input
-              type="text"
-              value={activationCode}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="LPA:1$smdp.example.com$MATCHING-ID"
-              onChange={(event) => setActivationCode(event.target.value)}
-            />
-          </Field>
-          <Field label={t("esim.dlConfirm", locale)}>
-            <Input
-              type="text"
-              value={confirmationCode}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => setConfirmationCode(event.target.value)}
-            />
-          </Field>
-          <ButtonRow>
-            <Button
-              variant="risk"
-              disabled={busy || imei === "" || activationCode.trim() === ""}
-              onClick={() => {
-                const code = activationCode.trim();
-                const confirmation = confirmationCode.trim();
-                // Cleared before the dialog opens rather than after the send.
-                // The code is a one-time credential and leaving it in a field
-                // invites a second click that spends an order which no longer
-                // exists.
-                setActivationCode("");
-                setConfirmationCode("");
-                request(
-                  "download_esim_profile",
-                  {
-                    modem_imei: imei,
-                    activation_code: code,
-                    ...(confirmation === "" ? {} : { confirmation_code: confirmation }),
-                  },
-                  `${t("esim.dlStart", locale)} — ${imei}`,
-                  t("esim.dlStart", locale),
-                );
-              }}
-            >
-              {t("esim.dlStart", locale)}
-            </Button>
-          </ButtonRow>
+          {writable ? (
+            <>
+              <Field label={t("esim.dlCode", locale)}>
+                <Input
+                  type="text"
+                  value={activationCode}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="LPA:1$smdp.example.com$MATCHING-ID"
+                  onChange={(event) => setActivationCode(event.target.value)}
+                />
+              </Field>
+              <Field label={t("esim.dlConfirm", locale)}>
+                <Input
+                  type="text"
+                  value={confirmationCode}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(event) => setConfirmationCode(event.target.value)}
+                />
+              </Field>
+              <ButtonRow>
+                <Button
+                  variant="risk"
+                  disabled={busy || imei === "" || activationCode.trim() === ""}
+                  onClick={() => {
+                    const code = activationCode.trim();
+                    const confirmation = confirmationCode.trim();
+                    // Cleared before the dialog opens rather than after the send.
+                    // The code is a one-time credential and leaving it in a field
+                    // invites a second click that spends an order which no longer
+                    // exists.
+                    setActivationCode("");
+                    setConfirmationCode("");
+                    request(
+                      "download_esim_profile",
+                      {
+                        modem_imei: imei,
+                        activation_code: code,
+                        ...(confirmation === "" ? {} : { confirmation_code: confirmation }),
+                      },
+                      `${t("esim.dlStart", locale)} — ${imei}`,
+                      t("esim.dlStart", locale),
+                    );
+                  }}
+                >
+                  {t("esim.dlStart", locale)}
+                </Button>
+              </ButtonRow>
+            </>
+          ) : null}
           {downloadPending ? <FormHint>{t("esim.dlBusy", locale)}</FormHint> : null}
           {failedDownload ? (
             <FormError>
@@ -663,21 +727,28 @@ export function EsimPanel({
         </div>
       </Card>
 
-      {pending ? (
-        <ConfirmDialog
-          open
-          title={pending.title}
-          consequence={pending.consequence}
-          confirmLabel={pending.confirmLabel}
-          labels={{
-            question: t("confirm.question", locale),
-            proceed: t("confirm.proceed", locale),
-            cancel: t("confirm.cancel", locale),
-          }}
-          busy={busy}
-          onConfirm={proceed}
-          onCancel={cancelPending}
-        />
+      {writable ? (
+        // Only `request` sets `pending`, and it refuses first, so this is a
+        // third level of the same gate rather than a new one. It is here
+        // because a dialog has two buttons in it, and a check that counts
+        // the controls in this file should not have to remember which of
+        // them are reachable.
+        pending ? (
+          <ConfirmDialog
+            open
+            title={pending.title}
+            consequence={pending.consequence}
+            confirmLabel={pending.confirmLabel}
+            labels={{
+              question: t("confirm.question", locale),
+              proceed: t("confirm.proceed", locale),
+              cancel: t("confirm.cancel", locale),
+            }}
+            busy={busy}
+            onConfirm={proceed}
+            onCancel={cancelPending}
+          />
+        ) : null
       ) : null}
     </>
   );
