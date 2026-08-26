@@ -39,70 +39,133 @@ export type ThemedValue = { readonly dark: string; readonly light: string };
  */
 export const COLOR_TOKENS = {
   // Surfaces, from furthest back to nearest the reader.
-  bg: { dark: "#0b0e14", light: "#f7f8fa" },
-  surface: { dark: "#12161f", light: "#ffffff" },
-  "surface-raised": { dark: "#171c27", light: "#ffffff" },
-  "surface-hover": { dark: "#1c2230", light: "#f1f3f7" },
-  line: { dark: "#232a38", light: "#e3e7ee" },
-  "line-strong": { dark: "#303950", light: "#cdd4e0" },
+  //
+  // Both themes now step *away* from their canvas as a surface rises, and the
+  // step sizes are the same pair of sequences: 1.0735 / 1.0643 / 1.0833 in the
+  // dark theme, 1.0713 / 1.0638 / 1.0851 in the light one. Ratios rather than
+  // luminance deltas, because near white the same delta is a much smaller hex
+  // step and the top of the ladder collapses.
+  //
+  // 🔴 It collapsed. The light theme used to run `--surface` and
+  // `--surface-raised` at the same `#ffffff`, so the raised tier did not exist
+  // and the four sites that ask for it — a card header, an entry, the status
+  // bar, and a form section — were held apart from the card behind them by a
+  // hairline and nothing else. Four values now, in both themes, all four
+  // distinct.
+  bg: { dark: "#010102", light: "#ffffff" },
+  surface: { dark: "#0d0d0d", light: "#f7f7f7" },
+  "surface-raised": { dark: "#151515", light: "#f0f0f0" },
+  "surface-hover": { dark: "#1d1d1d", light: "#e7e7e7" },
+  line: { dark: "#23252a", light: "#dcdcdc" },
+  "line-strong": { dark: "#30333a", light: "#c8c8c8" },
 
-  // Text. Three weights is enough; more and the hierarchy stops reading.
-  fg: { dark: "#e7ecf3", light: "#1a2030" },
-  "fg-muted": { dark: "#93a1b5", light: "#5a6579" },
-  "fg-faint": { dark: "#64708a", light: "#8b96a9" },
-  // The accent when it is being read rather than filled, and a fourth entry in
-  // this family rather than a fifth in the accent one below, because here the
-  // prefix is the role: everything in this block is text, everything in that
-  // one is a fill, a border or a tint. One green cannot do both jobs on a
-  // light background — light enough to carry the dark ink of a button is too
-  // light to read on white, and the sweep that establishes it is in
-  // lib/tokens.test.ts along with every ratio. In the dark theme one green
-  // does do both, so this equals the accent there and the dark theme is
-  // unchanged.
-  "fg-accent": { dark: "#4ade9b", light: "#0a704c" },
+  // Text. Four tiers, and the fourth is what this card added.
+  //
+  // 🔴 The faintest tier was unreadable in both themes and had been since the
+  // day it shipped: 3.200 at worst in the dark theme, 2.810 in the light one,
+  // while carrying every column heading, every navigation group label, the
+  // footer and the hints. Three contrast cards swept the accent and the four
+  // status colours and none of them swept the neutral ramp it lives on.
+  //
+  // Every tier now clears 4.5 on every one of the four surfaces, in both
+  // themes: worst 7.007 dark, 7.055 light, over thirty-two pairings. The two
+  // ramps are built to the same tier-to-tier ratios — 1.373 / 1.202 / 1.337
+  // dark against 1.373 / 1.209 / 1.324 light — so a tier means the same
+  // distance from its neighbour whichever theme a reader is in.
+  fg: { dark: "#f5f5f5", light: "#0f0f0f" },
+  "fg-strong": { dark: "#d3d3d3", light: "#2c2c2c" },
+  "fg-muted": { dark: "#c1c1c1", light: "#393939" },
+  "fg-faint": { dark: "#a7a7a7", light: "#4b4b4b" },
+  // The accent when it is being read rather than filled.
+  //
+  // T049 needed this to be a second green, because no single green could both
+  // carry a button's dark ink and be read on white. That problem is gone with
+  // the hue: the accent is `--fg` itself now, which is a text tier by
+  // construction, so the two roles cannot disagree and this equals the accent
+  // in *both* themes rather than only in the dark one. The entry stays rather
+  // than folding into `--fg`, because the role is what the recipes name and a
+  // later accent that is not `--fg` must have somewhere to land.
+  "fg-accent": { dark: "#f5f5f5", light: "#0f0f0f" },
 
-  // One accent. A second colour competing for attention is how dashboards
-  // turn into noise. The five below are the accent as a surface: a fill, its
-  // hover, the ink painted on that fill, an edge, and a tint to sit behind
-  // something. None of them is legible as text on a light background; the
-  // entry above is.
-  accent: { dark: "#4ade9b", light: "#10b47a" },
-  "accent-strong": { dark: "#22c47f", light: "#0fa36f" },
-  "accent-ink": { dark: "#06251a", light: "#06251a" },
+  // 🔴 **The accent has no hue at all, and that is the decision.**
+  //
+  // It is `--fg` in each theme, with `--bg` as its ink: a white button with
+  // black type in the dark theme, the same pair inverted in the light one,
+  // 19.137 and 19.169. Hue is reserved for the four status colours below, so
+  // on a console whose job is to report device state the only coloured thing
+  // on screen is state. A brand hue would compete with exactly the signal a
+  // reader came for.
+  //
+  // The hover fill moves *down* the neutral ramp rather than up, in both
+  // themes: 1.373 away from the rest fill, which is the same separation on
+  // both sides, and the ink keeps 13.937 / 13.965 on it. Deriving it the other
+  // way — toward the canvas — would be a smaller move than the eye can hold at
+  // these luminances.
+  accent: { dark: "#f5f5f5", light: "#0f0f0f" },
+  "accent-strong": { dark: "#d3d3d3", light: "#2c2c2c" },
+  "accent-ink": { dark: "#010102", light: "#ffffff" },
   // The accent when it has to be *seen as a line* rather than filled or read:
   // the focus outline, the current tab's rule, an input's focused edge. Its
-  // bar is the 3:1 that WCAG 1.4.11 sets for non-text, which the fill above
-  // misses in the light theme by a wide margin, and it is the lightest value
-  // on the brand hue that clears that bar by half a point. Not the readable
-  // green from the text family: an outline carries no ink and does not need
-  // to be a text tier, and borrowing one role for another is what these three
-  // separate entries exist to stop. In the dark theme it equals the fill, as
-  // the readable green does, so the dark theme is unchanged.
-  "accent-edge": { dark: "#4ade9b", light: "#0c855a" },
-  "accent-wash": { dark: "rgba(74, 222, 155, 0.12)", light: "rgba(16, 180, 122, 0.1)" },
+  // bar is the 3:1 that WCAG 1.4.11 sets for non-text. T049 needed a third
+  // green here because the fill missed that bar at 2.523 on a light page; a
+  // neutral accent clears it everywhere by a wide margin — 8.455 dark and
+  // 12.180 light on the worst backdrop a focused control sits against — so
+  // this equals the fill in both themes. The entry stays for the same reason
+  // the readable one does: the role is real even when two roles agree today.
+  "accent-edge": { dark: "#f5f5f5", light: "#0f0f0f" },
+  // The accent as a tint, behind the current navigation item and an outbound
+  // message. Neutral now, because its colour is the accent's.
+  //
+  // The alpha in each theme is the largest one that costs the status colours
+  // nothing, and that is a real edge rather than a round number: at 0.1 the
+  // dark tint is lighter than the wash a status word already sits on, so the
+  // binding backdrop stays that word's own wash; at 0.12 the tint takes over
+  // as the binding backdrop and drags all four down at once — warn 4.945 to
+  // 4.464, bad 3.062 to 2.764, info 3.637 to 3.283. The light side crosses the
+  // same edge between 0.06 and 0.08.
+  //
+  // Measured against the tint it replaces, the pill is 1.236 -> 1.188 on the
+  // dark canvas and 1.099 -> 1.129 on the light one: a little fainter in the
+  // dark theme, a little heavier in the light one, neither by enough to change
+  // what the tint is for. It is not tuned to match the old weight — the bar
+  // above is what picks it.
+  "accent-wash": { dark: "rgba(245, 245, 245, 0.1)", light: "rgba(15, 15, 15, 0.06)" },
 
   // Status. These carry meaning, so they are never used decoratively.
-  // The green one is only ever read, never filled — what sits behind it is the
-  // separate wash below — so its light value is the readable green and not the
-  // brand one. Its dark value is unchanged, where the two greens coincide.
+  // Each is only ever read, never filled — what sits behind it is the separate
+  // wash further down — with the single exception of the one solid red button,
+  // whose ink is chosen against it below.
   //
-  // The other three moved for the same reason and by the same rule: each is
-  // the lightest value on its own exact hue and saturation whose worst real
-  // backdrop clears 4.5:1 by half a point. Their worst backdrop is their own
-  // wash on a hovered row, not the white page — the mistake T046 made about
-  // the green and T049 caught. Only the light values moved; the dark ones are
-  // untouched, and the washes below are literal and do not follow, so the pale
-  // pills behind these words look exactly as they did.
-  ok: { dark: "#4ade9b", light: "#0a704c" },
-  warn: { dark: "#f0b429", light: "#745407" },
-  bad: { dark: "#f2686d", light: "#a7252f" },
-  info: { dark: "#63a4ff", light: "#2156a5" },
-  // The ink for the one solid button filled with the status red, and the only
-  // reason it is themed when the accent's ink is not: the accent is a light
-  // green in both themes, so one dark ink serves both, while this red is deep
-  // in the light theme and pale in the dark one. The ink is the opposite pole
-  // of the fill it sits on, in each theme, which is the rule the accent's ink
-  // already follows — it just never had to prove it.
+  // Their worst backdrop is their own wash on a hovered row and not the page
+  // behind it, which is the mistake T046 made about the green and T049 caught;
+  // the washes are literal and do not follow the colour, so the pale pills
+  // behind these words are unchanged in both themes.
+  //
+  // 🔴 This card took the hue out of everything except these four, so they are
+  // now the only colour in the console — and all four dark values are byte for
+  // byte what they were. They read *better* against the new canvas than the
+  // old one (12.134 / 11.193 / 6.931 / 8.231 on `--bg` against 8.9 / 8.2 / 5.1
+  // / 6.0), which is why the palette moved around them rather than through
+  // them.
+  //
+  // The four light values did move, and only because their backdrops did: the
+  // light surfaces now darken as they rise, so the worst pairing is darker
+  // than the one T049 and T051 derived against. Each was re-derived by the
+  // rule those cards used — the lightest value on its own exact hue and
+  // saturation whose worst real backdrop clears 4.5 by half a point — with the
+  // hue and saturation carried across unchanged, so these are the same four
+  // colours at a new lightness and not four new colours. Worst backdrops:
+  // 5.040 / 5.037 / 5.015 / 5.006.
+  ok: { dark: "#4ade9b", light: "#085d3f" },
+  warn: { dark: "#f0b429", light: "#6a4c06" },
+  bad: { dark: "#f2686d", light: "#9b222c" },
+  info: { dark: "#63a4ff", light: "#1f5099" },
+  // The ink for the one solid button filled with the status red. Both inks are
+  // themed now — the accent's became so with this card, because a neutral
+  // accent is near-white in one theme and near-black in the other — and both
+  // follow the same rule: the ink is the opposite pole of the fill it sits on,
+  // in each theme. 5.006 dark, 7.898 light. The dark pair is untouched; the
+  // light figure moved only because the red above did.
   "bad-ink": { dark: "#52070a", light: "#ffffff" },
   "ok-wash": { dark: "rgba(74, 222, 155, 0.14)", light: "rgba(16, 180, 122, 0.1)" },
   "warn-wash": { dark: "rgba(240, 180, 41, 0.14)", light: "rgba(184, 134, 11, 0.12)" },

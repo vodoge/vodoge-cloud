@@ -759,21 +759,37 @@ test("--accent-ink clears 4.5:1 on every accent it is painted on, in both themes
 });
 
 /**
- * The dark theme was already correct, and a card that repairs the light one
- * must not pay for it out of the dark one's margin. These are the two ratios
- * as they stood before this card, pinned to the digit: if a later edit to
- * `--accent`, `--accent-strong` or the dark ink moves either of them at all,
- * this fails rather than drifting quietly toward the threshold above.
+ * The two accent ratios, pinned to the digit, so that a later edit to
+ * `--accent`, `--accent-strong` or either ink cannot move them at all without
+ * saying so here rather than drifting quietly toward the threshold above.
+ *
+ * 🔴 **These were 9.49 and 7.2 until T001 took the hue out of the accent.**
+ * That card is the one T052 warned was coming: the numbers below are its
+ * measurements and not a relaxation, and both went *up*, because a neutral
+ * accent is `--fg` inked with `--bg` and that pairing is the widest this
+ * palette has. The light theme is pinned alongside them now, which it was not
+ * before — it could not be while the light accent was a green with its own
+ * ink, and there is no reason to leave half the table unguarded once both
+ * themes are built the same way.
  */
-test("the dark theme's accent contrast is exactly what it was before this card", () => {
+test("the accent contrast in both themes is exactly what T001 set", () => {
   const colours = TOKENS.COLOR_TOKENS;
-  assert.equal(
-    Number(contrastRatio(colours["accent-ink"].dark, colours.accent.dark).toFixed(2)),
-    9.49,
-  );
-  assert.equal(
-    Number(contrastRatio(colours["accent-ink"].dark, colours["accent-strong"].dark).toFixed(2)),
-    7.2,
+  const at = (theme: "dark" | "light", fill: "accent" | "accent-strong") =>
+    Number(contrastRatio(colours["accent-ink"][theme], colours[fill][theme]).toFixed(2));
+
+  assert.deepEqual(
+    {
+      "dark ink on accent": at("dark", "accent"),
+      "dark ink on accent-strong": at("dark", "accent-strong"),
+      "light ink on accent": at("light", "accent"),
+      "light ink on accent-strong": at("light", "accent-strong"),
+    },
+    {
+      "dark ink on accent": 19.14,
+      "dark ink on accent-strong": 13.94,
+      "light ink on accent": 19.17,
+      "light ink on accent-strong": 13.97,
+    },
   );
 });
 
@@ -932,8 +948,31 @@ function greensPaintedAsTextOnASurface(): string[] {
   return [...found].sort();
 }
 
-test("the greens painted as text on a surface are the two this card governs", () => {
-  assert.deepEqual(greensPaintedAsTextOnASurface(), ["fg-accent", "ok"]);
+/**
+ * 🔴 **This was `["fg-accent", "ok"]` and T001 made it one.**
+ *
+ * Nothing was removed from the sweep. `--fg-accent` fell out of the *derived*
+ * set because it stopped being green: the accent is `--fg` in both themes now,
+ * so `isGreen` rejects it and the only green still painted as type is the
+ * status one. Pinning the derived list is what makes that visible rather than
+ * silent — a green quietly dropping out of the sweep below is exactly the
+ * shape of the miss that put `--fg-faint` on the site at 3.200, and it fails
+ * here instead.
+ *
+ * The sweep still covers `--fg-accent` at full strength: it is a neutral now,
+ * so the every-text-tier-on-every-surface sweep is what governs it, and its
+ * own worst backdrop is pinned two tests down.
+ */
+test("the green painted as text on a surface is the one T001 left with a hue", () => {
+  assert.deepEqual(greensPaintedAsTextOnASurface(), ["ok"]);
+  // The set is derived, so it can only shrink by a token ceasing to be green.
+  // Both halves of that are stated, or a token disappearing from COLOR_TOKENS
+  // would read the same as a token going neutral.
+  const colours: Record<string, { readonly dark: string; readonly light: string }> =
+    TOKENS.COLOR_TOKENS;
+  assert.ok(colours["fg-accent"], "--fg-accent is gone, not neutral");
+  assert.equal(isGreen(colours["fg-accent"].dark), false);
+  assert.equal(isGreen(colours["fg-accent"].light), false);
 });
 
 /**
@@ -993,22 +1032,41 @@ test("the fill green is never text and the text green is never a fill", () => {
 });
 
 /**
- * 🔴 The dark theme pays for none of this. `--fg-accent` and `--ok` are both
- * `#4ade9b` in the dark theme — the value `--accent` already had — so every
- * dark ratio is the one it was before this card, pinned here to the digit
- * across the same superset of backdrops. If a later edit moves a dark green or
- * a dark wash at all, this fails rather than drifting toward the threshold.
+ * The same two tokens, pinned to the digit across the same superset of
+ * backdrops, so that a later edit to either of them or to a wash fails here
+ * rather than drifting toward the threshold.
+ *
+ * 🔴 **Both dark figures were 5.022 before T001, and the identity that made
+ * them one number is gone.** `--fg-accent` and `--ok` were both `#4ade9b`
+ * then. Now `--fg-accent` follows the accent to `--fg` and `--ok` keeps the
+ * hue, so they are two different colours with two different worst backdrops
+ * and each gets its own number. What replaces the old shared identity is
+ * stated rather than dropped: `--fg-accent` is still exactly `--accent`, and
+ * `--ok` is pinned as a hex to say the status green did not move at all.
+ *
+ * `--ok` went 5.022 -> 5.361 because its worst backdrop is its own wash over a
+ * hovered row and that row got darker, not because anything green changed.
  */
-test("the dark theme's green-on-surface contrast is exactly what it was before", () => {
+test("the dark theme's green-on-surface contrast is exactly what T001 set", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
-  for (const token of ["fg-accent", "ok"] as const) {
-    assert.equal(colours[token].dark, colours.accent.dark);
-    const worst = Math.min(
-      ...everyBackdrop(colours, "dark").map((b) => contrastRatio(colours[token].dark, b.hex)),
+  // The readable accent is the accent, which is the text colour.
+  assert.equal(colours["fg-accent"].dark, colours.accent.dark);
+  assert.equal(colours["fg-accent"].dark, colours.fg.dark);
+  // The status green is untouched by this card, stated as the hex because a
+  // ratio can be held still by two compensating edits.
+  assert.equal(colours.ok.dark, "#4ade9b");
+
+  const worst = (token: string) =>
+    Number(
+      Math.min(
+        ...everyBackdrop(colours, "dark").map((b) => contrastRatio(colours[token].dark, b.hex)),
+      ).toFixed(3),
     );
-    assert.equal(Number(worst.toFixed(3)), 5.022, `--${token} dark worst backdrop`);
-  }
+  assert.deepEqual({ "fg-accent": worst("fg-accent"), ok: worst("ok") }, {
+    "fg-accent": 8.455,
+    ok: 5.361,
+  });
 });
 
 /* ── Contrast: the other three status colours ────────────────────────── */
@@ -1065,37 +1123,58 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
 });
 
 /**
- * 🔴 **The dark theme pays for none of the above, and this is what says so.**
+ * 🔴 **What T001 kept, and the shape of what it replaced.**
  *
- * These three dark values are byte-identical to what they were before this
- * card, and `--accent-edge` — the one new colour the dark theme sees at all —
- * is the value `--accent` already had, so every dark ratio in the console is
- * the ratio it was. Stated as the hexes rather than as ratios because that is
- * the strongest form: a ratio can be preserved by two compensating edits.
+ * This test used to say "this card moved no colour the dark theme already
+ * had", pinning seven dark hexes so T049 could prove it repaired the light
+ * theme for free. T001 is the card that *does* move them, so that claim is
+ * spent and restating it would be a lie. What is worth guarding survives in a
+ * stronger form:
+ *
+ * ① **The four status colours did not move, in either theme's dark column.**
+ *    They are the only hue left in the console after this card, which makes
+ *    them more load-bearing than they were, not less. Stated as hexes because
+ *    a ratio can be held still by two compensating edits.
+ *
+ * ② **The neutral accent is four identities, not four coincidences.** A green
+ *    accent needed `--fg-accent` and `--accent-edge` to be separate values in
+ *    the light theme; a neutral one does not, and the risk swaps round — the
+ *    next editor gives one of them a hue of its own and the console quietly
+ *    grows a brand colour back. Written as equalities so that landing a hue on
+ *    any of the four fails here, whatever the hue is.
  */
-test("this card moved no colour the dark theme already had", () => {
+test("T001 kept the status four and made the accent four identities", () => {
   const colours = TOKENS.COLOR_TOKENS;
+
   assert.deepEqual(
     {
+      ok: colours.ok.dark,
       warn: colours.warn.dark,
       bad: colours.bad.dark,
       info: colours.info.dark,
-      accent: colours.accent.dark,
-      "accent-strong": colours["accent-strong"].dark,
-      "surface-hover": colours["surface-hover"].dark,
-      "line-strong": colours["line-strong"].dark,
+      "bad-ink": colours["bad-ink"].dark,
     },
     {
+      ok: "#4ade9b",
       warn: "#f0b429",
       bad: "#f2686d",
       info: "#63a4ff",
-      accent: "#4ade9b",
-      "accent-strong": "#22c47f",
-      "surface-hover": "#1c2230",
-      "line-strong": "#303950",
+      "bad-ink": "#52070a",
     },
   );
-  assert.equal(colours["accent-edge"].dark, colours.accent.dark);
+
+  for (const theme of ["dark", "light"] as const) {
+    assert.equal(colours.accent[theme], colours.fg[theme], `${theme}: --accent is not --fg`);
+    assert.equal(colours["fg-accent"][theme], colours.accent[theme], `${theme}: --fg-accent`);
+    assert.equal(colours["accent-edge"][theme], colours.accent[theme], `${theme}: --accent-edge`);
+    assert.equal(colours["accent-ink"][theme], colours.bg[theme], `${theme}: --accent-ink`);
+    // A neutral has no hue to have, so this is the whole of "no brand colour".
+    assert.equal(
+      hueAndSaturation(colours.accent[theme])[1],
+      0,
+      `${theme}: the accent has grown a hue back`,
+    );
+  }
 });
 
 /**
@@ -1113,6 +1192,24 @@ test("this card moved no colour the dark theme already had", () => {
  * Pinned to the digit so the numbers cannot drift and so whoever fixes them
  * starts from a measurement rather than re-deriving one. If you are that card,
  * these three numbers are what you are moving — update them here.
+ *
+ * 🔴 **T010: read this before re-deriving anything.** These numbers are far
+ * below what a sweep of the four surfaces produces, and the difference is the
+ * backdrop set, not the arithmetic. `washesForTextToken` unions a token's own
+ * wash with `WASHES`, which is `--accent-wash` and `--ok-wash`, and
+ * `everyBackdrop` then stacks them **twice**. So the backdrop that binds
+ * `--bad` is not a red pill on a surface — it is `--ok-wash` over `--ok-wash`
+ * over `--surface-hover`, hex **#284f3e**, a red delivery badge inside a green
+ * outbound bubble on a hovered row. That site is real:
+ * `components/conversation.tsx` renders the badge with the tone
+ * `toneForDeliveryStatus` returns, so a failed send puts red on green. A sweep
+ * that only composites a colour over its own wash measures somewhere the
+ * colour never is and reads optimistically — the exact mistake T049 caught
+ * T046 making, one level further in.
+ *
+ * T001 moved all three *up* without touching a dark status value, purely
+ * because the surfaces under those washes got darker: warn 4.632 -> 4.945,
+ * bad 2.869 -> 3.062, info 3.407 -> 3.637.
  */
 test("the dark theme's status contrast is recorded where it stands", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
@@ -1126,10 +1223,17 @@ test("the dark theme's status contrast is recorded where it stands", () => {
       ).toFixed(3),
     );
   assert.deepEqual({ warn: worst("warn"), bad: worst("bad"), info: worst("info") }, {
-    warn: 4.632,
-    bad: 2.869,
-    info: 3.407,
+    warn: 4.945,
+    bad: 3.062,
+    info: 3.637,
   });
+  // The backdrop these are measured on, named so the next card cannot re-derive
+  // them against an easier one and think it found an improvement.
+  const binding = everyBackdrop(colours, "dark", washesForTextToken("bad")).reduce((a, b) =>
+    contrastRatio(colours.bad.dark, a.hex) <= contrastRatio(colours.bad.dark, b.hex) ? a : b,
+  );
+  assert.equal(binding.hex, "#284f3e");
+  assert.equal(binding.name, "--ok-wash over --ok-wash over --surface-hover");
 });
 
 /* ── Contrast: the accent when it is a line ──────────────────────────── */
