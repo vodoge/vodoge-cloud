@@ -34,7 +34,7 @@ function paintStatusBar(root: HTMLElement): void {
  * like a bug and is not one. Nothing applies the theme until this effect runs,
  * so the first painted frame is always the dark theme; a reader on the light
  * one watches the page repaint. Measured on a signed-in page, the first frame
- * carries no `data-theme` at all and `--bg` is `#0b0e14`, and `dynamic =
+ * carries no `data-theme` at all and `--bg` is `#010102`, and `dynamic =
  * "force-dynamic"` in `app/layout.tsx` means that happens on every load rather
  * than only the first. It is a deliberate trade against a hydration mismatch,
  * and it was reviewed and kept on 2026-08-26; `docs/goals/vodoge-ui-refactor/
