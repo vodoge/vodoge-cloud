@@ -75,6 +75,11 @@ docker inspect vodoge-cloud-gateway-1 \
   --format '{{index .Config.Labels "vodoge.artifact.sha256"}}'
 ```
 
+If `deploy.sh console` dies at `打包镜像(不编译)` printing `LGPL-3.0-or-later
+payload present in console-dist.tgz`, the tarball was packed without the `rm` —
+see "Producing the console artifact". Nothing was swapped: the container that
+was running before is still running, still serving.
+
 ### Why it checks, and why `--force-recreate`
 
 On 2026-08-24, while recovering from the incident above, `docker compose up -d
@@ -167,7 +172,9 @@ rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. d
 cp -r public/. dist/public/
 tar -czf console-dist.tgz -C dist .
 
-# The tarball is what ships, so the tarball is what gets checked. Not optional.
+# Fast feedback, on the workstation, before a 24 MB scp: the fix is one `rm`
+# away from here. The copy that cannot be skipped lives in
+# Dockerfile.console.prebuilt and runs on the host at deploy time.
 if tar -tzf console-dist.tgz | grep -Eq '@img/|libvips.*\.so'; then
   echo 'STOP — LGPL payload in console-dist.tgz, do not ship it:'
   tar -tzf console-dist.tgz | grep -E '@img/|libvips.*\.so'
@@ -206,12 +213,36 @@ It drifted for the ordinary reason: the rule lived in this document, and
 quietly refilling the image. Verified by deleting the `rm` and rebuilding: the
 build fails and names the two `.so` files.
 
-The `tar -tzf` check above is the same assertion for *this* path, and it has to
-live in the recipe because `Dockerfile.console.prebuilt` only extracts
-`console-dist.tgz` — it never sees the tree the `rm` acted on, so it cannot
-check the tree. Until that file grows an equivalent assertion against the
-extracted contents, this block is the only thing between a forgotten `rm` and an
-LGPL binary on the production host. **If you change one path, change both.**
+`Dockerfile.console.prebuilt` now carries the same assertion. It cannot check
+the tree the `rm` acted on — it only ever sees `console-dist.tgz` — so it checks
+the tree that comes *out* of the tarball, which is the tree the container will
+serve. Verified 2026-08-26 by building that file three ways:
+
+| Tarball | Assertion | Result |
+| --- | --- | --- |
+| stripped, 2391 entries | present | builds, 207 MB, `✓ Ready in 274ms` |
+| unstripped, 2418 entries | present | **build fails**, names `@img` and both `libvips-cpp.so.8.17.3` |
+| unstripped, 2418 entries | deleted | builds, exits 0, **241 MB with the payload inside** |
+
+The third row is the whole argument. Without the assertion, a poisoned deploy
+produces no error, no warning and a container that starts in 274 ms.
+
+`bin/deploy.sh` gets this for free: it is what runs `docker build -f
+Dockerfile.console.prebuilt`, under `set -euo pipefail`, **before** it touches
+the running container. A bad tarball stops the deploy at `打包镜像(不编译)`,
+the old container keeps serving, and `up -d` is never reached. The host pays one
+`find` over the extracted tree for this — 5.8 s on the workstation, no
+compilation, nothing this file's opening constraint objects to.
+
+`bin/deploy.sh` was deliberately **not** given a check of its own. Two copies of
+one rule are not twice the safety; they are one more thing that can rot while
+still looking like a guard, and the one that rots is always the one nobody runs.
+
+By that argument the `tar -tzf` block above is a duplicate too, and it stays for
+exactly one reason: it fails on the workstation, minutes earlier and one `rm`
+from the fix. It is fast feedback, not the guarantee. If the two ever disagree,
+the Dockerfile is right — it is the one that runs whether or not anybody read
+this file. **If you change one path, change both.**
 
 Copy `.next/static` into a *fresh* directory each time. `cp -r a b` creates
 `b/a` when `b` already exists, which silently produces `.next/static/static`

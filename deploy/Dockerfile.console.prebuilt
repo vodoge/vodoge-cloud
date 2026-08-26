@@ -27,6 +27,45 @@ ENV PORT=3000
 # ADD extracts a local tarball; COPY would leave it as a file.
 ADD console-dist.tgz ./
 
+# The tarball arrives already stripped -- or it does not, and until now nothing
+# here would have noticed.
+#
+# `next build` traces sharp's native half into the standalone bundle even though
+# apps/console/next.config.ts sets `images: { unoptimized: true }`; tracing is
+# static and never reads that flag. Measured 2026-08-26: 32.9 MB under
+# node_modules/@img, 32.1 MB of it @img/sharp-libvips-linux-x64 and
+# @img/sharp-libvips-linuxmusl-x64. Both are LGPL-3.0-or-later, both ship a real
+# libvips-cpp.so, and neither ships a LICENSE file to go with it, so shipping one
+# means shipping a copyleft binary with no notice and no offer of source.
+#
+# deploy/RUNBOOK.md "Producing the console artifact" removes that directory
+# before it packs console-dist.tgz, and always has -- which is why the image
+# production runs has always been clean. But that rm is a line in a document,
+# typed by hand, on a workstation, by whoever is deploying today. This file is
+# where a tarball stops being somebody's habit and becomes the image the host
+# serves, so this is where it gets checked. deploy/Dockerfile.console carries the
+# same assertion over the tree it builds; this is that rule on the path
+# production actually takes.
+#
+# The .so is the LGPL payload, so the .so is what gets matched, not only the
+# directory name that happens to hold it today: a `next` upgrade that renames the
+# traced package would sail past a name check. sharp itself (Apache-2.0, and
+# unreachable with image optimisation off) is deliberately not matched -- RUNBOOK
+# leaves it in the bundle, and the two paths must agree.
+#
+# bin/deploy.sh builds this file, so it inherits this check rather than repeating
+# it. A second copy of the same rule somewhere else is not twice the safety; it
+# is one more thing that can rot out of sync while still looking like a guard.
+RUN set -e; \
+    hits="$(find . -name '@img' -print; find . -name 'libvips*.so*' -print)"; \
+    if [ -n "$hits" ]; then \
+      echo 'LGPL-3.0-or-later payload present in console-dist.tgz:' >&2; \
+      echo "$hits" >&2; \
+      echo 'Expected none. Repack the artifact: deploy/RUNBOOK.md "Producing' >&2; \
+      echo 'the console artifact" strips node_modules/@img before it tars.' >&2; \
+      exit 1; \
+    fi
+
 EXPOSE 3000
 USER node
 CMD ["node", "server.js"]
