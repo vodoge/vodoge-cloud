@@ -633,5 +633,16 @@
   "connection.stale": "the data on screen is from",
   "connection.retry": "Reload",
   "nav.group.settings": "Settings",
-  "nav.schedule": "Schedule"
+  "nav.overviewShort": "Home",
+  "nav.devicesShort": "Devices",
+  "nav.journalShort": "Journal",
+  "nav.auditShort": "Audit",
+  "nav.inboxShort": "Inbox",
+  "nav.sessionsShort": "Sessions",
+  "nav.rulesShort": "Rules",
+  "nav.scheduleShort": "Schedule",
+  "nav.proxyShort": "Proxy",
+  "nav.settingsShort": "Settings",
+  "nav.more": "More sections",
+  "nav.moreShort": "More"
 }

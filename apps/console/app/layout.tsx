@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { DM_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { ConnectionStatus } from "@/components/connection-status";
+import { MobileNav } from "@/components/mobile-nav";
 import { InstallPrompt, ServiceWorker } from "@/components/pwa";
 import { Shell, SourceFooter } from "@/components/shell";
 import { htmlLang, t } from "@/lib/i18n";
@@ -213,6 +214,17 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             children
           )}
           <SourceFooter locale={locale} />
+          {/* 🔴 After the footer, and that is the whole reason it is drawn
+              here rather than inside the shell. The bar is `position: fixed`,
+              so it covers whatever the document ends with — and what this
+              document ends with is the source links, the one thing on the page
+              addressed to people who are not signed in. `MobileNav` draws a
+              gutter of its own height as its last element, which only clears
+              the footer if it comes after it.
+
+              Gated with the shell for the ordinary reason: it links to pages
+              that bounce a reader without a session straight back to /login. */}
+          {tenant && signedIn ? <MobileNav locale={locale} pathname={pathname} /> : null}
         </div>
       </body>
     </html>

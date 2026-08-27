@@ -633,5 +633,16 @@
   "connection.stale": "屏幕上的数据停在",
   "connection.retry": "重新载入",
   "nav.group.settings": "设置",
-  "nav.schedule": "计划"
+  "nav.overviewShort": "总览",
+  "nav.devicesShort": "设备",
+  "nav.journalShort": "日志",
+  "nav.auditShort": "审计",
+  "nav.inboxShort": "信箱",
+  "nav.sessionsShort": "会话",
+  "nav.rulesShort": "规则",
+  "nav.scheduleShort": "计划",
+  "nav.proxyShort": "代理",
+  "nav.settingsShort": "设置",
+  "nav.more": "更多功能",
+  "nav.moreShort": "更多"
 }

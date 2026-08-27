@@ -12,6 +12,7 @@ import * as TOKENS from "./tokens.ts";
 import { CONFIRMED_WRITES, SMS_BLOCKED_MODULES, blockedSendModules , WRITES_WITHOUT_A_DIALOG } from "./sms-safety.ts";
 import {
   AT_COMMAND_GUARDS,
+  BOTTOM_NAV,
   BUTTON,
   CARD_POLICY_CONFIRMATIONS,
   CARD,
@@ -27,12 +28,14 @@ import {
   LOG,
   MIGRATED_SOURCES,
   NAV_GROUPS,
+  NAV_MORE,
   NON_UTILITY_CLASSES,
   NOTIFICATION_FIELDS,
   REDACTED_SECRET,
   SAFE_AREA,
   SECURITY_FIELDS,
   SETTINGS_FIELD_KINDS,
+  SIZE_TOKENS,
   SMS_FIELDS,
   STAT,
   TABLE,
@@ -61,6 +64,9 @@ import {
   assertConsequence,
   atCommandGuard,
   badgeClass,
+  bottomNavCellCount,
+  bottomNavCellWidth,
+  bottomNavItems,
   buttonClass,
   cardPolicyGuardFor,
   cardPolicyPatch,
@@ -71,8 +77,10 @@ import {
   displaySettingValue,
   groupSettingsFields,
   esimSwitchVerdict,
+  navItems,
   navState,
   notificationChannels,
+  overflowNavItems,
   rootTokenValues,
   secretInputProps,
   settingsDocument,
@@ -480,6 +488,10 @@ const NOT_A_RECIPE = new Set([
   // Not classes: an inline style, nav data, and the migration ledger.
   "SAFE_AREA",
   "NAV_GROUPS",
+  // The fifth cell of the phone bar. Nav data like `NAV_GROUPS`: a message
+  // key, a shorter message key, and SVG path data. Walked as a class list it
+  // would ask the build for `nav.more` and for a run of path commands.
+  "NAV_MORE",
   "DEVICE_TABS",
   // The guard tables: command kinds, AT command shapes, regexes and the
   // message keys that say what each one costs. Every string in them is a
@@ -2507,8 +2519,8 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
   assert.deepEqual([...UNMIGRATED_SOURCES], []);
   assert.equal(
     MIGRATED_SOURCES.length,
-    44,
-    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 44 — ` +
+    46,
+    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 46 — ` +
       "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
 
@@ -4858,7 +4870,12 @@ const RULES_SHIPPED_UNASKED = [
   "inline",
   "outline",
   "ring",
-  "shrink",
+  // `shrink` left this list under SN-T002. Its only source was one word of
+  // ordinary English in `SHELL.navLink`'s comment — "the type shrink[s] on a
+  // phone" — describing a rule the phone no longer uses, because the phone
+  // navigates from `BOTTOM_NAV` now. The comment went with the behaviour and
+  // the dead rule went with the comment. The recipes do ask for `shrink-0`,
+  // which is a different name and generates a different rule.
   "table",
   "visible",
   // The same thing in files this card cannot edit: `invisible` from
@@ -5007,6 +5024,221 @@ test("nav highlighting distinguishes the page from the section it is in", () => 
   // A shared prefix is not a section: /rules must not claim /rules-archive.
   assert.equal(navState("/rules-archive", "/rules"), null);
   assert.equal(navState("/proxy", "/settings"), null);
+});
+
+/* ── Two renderers, one list ─────────────────────────────────────────────
+ *
+ * 🔴 The navigation is drawn twice — `components/sidebar.tsx` on a wide
+ * screen, `components/mobile-nav.tsx` on a phone — and the whole risk of
+ * drawing it twice is that the two copies drift. The four tests below are the
+ * thing that makes drift impossible rather than merely unlikely, and they are
+ * arranged so that changing `NAV_GROUPS` moves both renderers and changing
+ * only one renderer fails.
+ *
+ * Neither `.tsx` can be rendered in a test here, so the check cannot be "do
+ * they draw the same thing". It is stronger than that: **neither file is
+ * allowed to contain a destination at all.** A second list cannot exist in a
+ * file that may not write down a route or a message key.
+ */
+
+const NAV_RENDERERS = ["components/sidebar.tsx", "components/mobile-nav.tsx"];
+
+test("neither nav renderer writes down a destination of its own", () => {
+  // Everything that identifies a destination: where it goes, what it is
+  // called at both lengths, and what it is drawn as. Derived from the array,
+  // so a new field on `NavItem` is covered the day it is added.
+  const owned = new Set<string>();
+  for (const item of navItems()) {
+    owned.add(item.href);
+    owned.add(item.key);
+    owned.add(item.shortKey);
+    owned.add(item.icon);
+  }
+  for (const value of Object.values(NAV_MORE)) owned.add(value);
+
+  // A positive control on the fixture itself: if this set were empty, or the
+  // literals were being read from the wrong place, every assertion below
+  // would pass on nothing.
+  assert.equal(owned.size, 4 * navItems().length + 3, "the set of owned strings is not what it should be");
+
+  for (const relative of NAV_RENDERERS) {
+    const written = scan(readSource(relative))
+      .literals.map((literal) => literal.text)
+      .filter((text) => owned.has(text));
+    assert.deepEqual(
+      written,
+      [],
+      `${relative} names a destination itself. That is the second list this pair exists to ` +
+        "prevent: it agrees with lib/tokens.ts today and is free to stop agreeing tomorrow. " +
+        "Read it from NAV_GROUPS.",
+    );
+  }
+});
+
+test("both nav renderers read the one array, and read it live", () => {
+  const sidebar = codeOnly(readSource("components/sidebar.tsx"));
+  const mobile = codeOnly(readSource("components/mobile-nav.tsx"));
+
+  // The rail keeps the groups; the phone bar splits the flattened list. Both
+  // start at `NAV_GROUPS` — the two functions below are defined in terms of
+  // it, which the assertions in "the bar and the sheet" prove.
+  assert.match(sidebar, /NAV_GROUPS\.map\(/, "the rail is not iterating the groups");
+  assert.match(mobile, /bottomNavItems\(\)\.map\(/, "the bar is not iterating the derived four");
+  assert.match(mobile, /overflowNavItems\(\)\.map\(/, "the sheet is not iterating the derived rest");
+
+  // `codeOnly` keeps literals and drops comments, so naming the array in a
+  // comment does not satisfy any of the above. Both files must also actually
+  // import from the module rather than redeclaring something of that name.
+  for (const relative of NAV_RENDERERS) {
+    assert.match(
+      codeOnly(readSource(relative)),
+      /from "@\/lib\/tokens"/,
+      `${relative} does not import the nav data`,
+    );
+  }
+});
+
+test("the bar and the sheet are the ten destinations split, never copied", () => {
+  const all = navItems().map((item) => item.href);
+  const bar = bottomNavItems().map((item) => item.href);
+  const sheet = overflowNavItems().map((item) => item.href);
+
+  // The operator's four, in the operator's order — which is deliberately not
+  // the order the groups flatten to. `/journal` is in Fleet, between
+  // `/devices` and `/audit`; on the bar it comes after `/inbox`.
+  assert.deepEqual(bar, ["/", "/devices", "/inbox", "/journal"]);
+  assert.deepEqual(
+    bottomNavItems().map((item) => item.bottomSlot),
+    [1, 2, 3, 4],
+    "the slots are not 1..4 in order: a repeat or a gap makes the bar's order arbitrary",
+  );
+
+  // 🔴 The sheet is the complement, and this is the assertion that says so.
+  // Six is what it happens to be today; the point is that it is *the rest*.
+  assert.deepEqual(
+    [...bar, ...sheet].sort(),
+    [...all].sort(),
+    "a destination is on neither renderer, or on both — the phone can reach nine pages or twice one",
+  );
+  assert.equal(new Set([...bar, ...sheet]).size, all.length, "a destination is drawn in both places");
+  assert.equal(sheet.length, 6);
+  assert.equal(all.length, 10, "ten destinations. This card changed where they are drawn, not how many.");
+});
+
+test("five cells, because ten would be below the target size the operator signed off", () => {
+  const touch = Number.parseFloat(SIZE_TOKENS.touch);
+  assert.equal(touch, 44);
+
+  // 390px is the narrowest phone this console is checked on.
+  assert.equal(bottomNavCellCount(), 5, "four destinations and the overflow trigger");
+  assert.equal(bottomNavCellWidth(390), 78);
+  assert.ok(
+    bottomNavCellWidth(390) >= touch,
+    `a cell is ${bottomNavCellWidth(390)}px, under the ${touch}px target`,
+  );
+
+  // 🔴 The negative arm, and the reason the design is what it is: laying all
+  // ten out at once is what fails. Without this, the assertion above would
+  // still pass on a bar with one cell on it, and the arithmetic that settled
+  // this design would be recorded nowhere a change could disturb it.
+  assert.equal(bottomNavCellWidth(390, navItems().length), 39);
+  assert.ok(
+    bottomNavCellWidth(390, navItems().length) < touch,
+    "ten cells now fit, so the reason four were chosen no longer holds — recheck with the operator",
+  );
+});
+
+test("every nav label exists in both catalogues at both lengths", () => {
+  const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
+  const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
+
+  const keys = [
+    ...navItems().flatMap((item) => [item.key, item.shortKey]),
+    NAV_MORE.key,
+    NAV_MORE.shortKey,
+  ];
+  const missing = keys.filter((key) => typeof zh[key] !== "string" || typeof en[key] !== "string");
+  assert.deepEqual(missing, [], "a nav cell would render as ⟦key⟧");
+
+  // A short label that is longer than the long one is a short label that is
+  // doing nothing, and the 78px cell is what the short one exists for. Eight
+  // characters is what fits there at `--text-xs`; the rendered width is
+  // measured in a browser, this is the cheap guard against the obvious.
+  for (const item of [...navItems(), NAV_MORE]) {
+    for (const [language, table] of [
+      ["zh", zh],
+      ["en", en],
+    ] as const) {
+      const long = table[item.key] as string;
+      const short = table[item.shortKey] as string;
+      assert.ok(
+        short.length <= long.length,
+        `${item.shortKey} is longer than ${item.key} in ${language}: ${short} vs ${long}`,
+      );
+      assert.ok(short.length <= 8, `${item.shortKey} is ${short.length} characters in ${language}`);
+    }
+  }
+});
+
+test("the phone bar and its gutter both carry the inset no class can express", () => {
+  // Same shape as the header's check next door, and for the same reason: a
+  // bar with `position: fixed` sits outside the padding box `app/globals.css`
+  // puts the inset on, so without this it renders under the home indicator.
+  // Asserted on the elements, not merely somewhere in the file — the header's
+  // version of this check was once satisfied by a comment.
+  const tags = openingTags(readSource("components/mobile-nav.tsx"));
+  for (const recipe of ["bar", "spacer"]) {
+    const tag = tags.find((candidate) => candidate.text.includes(`className={BOTTOM_NAV.${recipe}}`));
+    assert.ok(tag, `the element carrying BOTTOM_NAV.${recipe} is gone`);
+    assert.match(
+      tag.text,
+      /style=\{SAFE_AREA\.fixedBottom\}/,
+      `the inset is not applied to BOTTOM_NAV.${recipe}`,
+    );
+  }
+  assert.match(SAFE_AREA.fixedBottom.paddingBottom, /env\(safe-area-inset-bottom\)/);
+});
+
+test("the overflow trigger says it opens something, and does not sink when pressed", () => {
+  const trigger = openingTags(readSource("components/mobile-nav.tsx")).find((tag) =>
+    tag.text.includes("className={BOTTOM_NAV.moreTrigger}"),
+  );
+  assert.ok(trigger, "the overflow trigger is gone");
+  assert.equal(trigger.name, "summary", "a `<details>` is what makes the sheet work with no script");
+  assert.match(trigger.text, /aria-haspopup=/, "nothing says this opens rather than navigates");
+
+  // 🔴 A control that opens a sheet should stay still while the sheet moves.
+  // The reference console spells that as a variant with square brackets in
+  // it, which this system rejects everywhere, so it is expressed by the
+  // trigger having a recipe of its own that never picked the press up.
+  assert.ok(
+    !BOTTOM_NAV.moreTrigger.includes("translate-y"),
+    "the overflow trigger sinks when pressed, and the thing it opens moves with it",
+  );
+  // The positive control: the press is real, and is what is being kept away
+  // from this one control. Without this the assertion above would pass in a
+  // console that had no press anywhere.
+  assert.ok(BUTTON.base.includes("active:translate-y-px"), "there is no press to be guarded against");
+});
+
+test("every nav glyph is path data, and none of it spells a class", async () => {
+  const icons = [...navItems().map((item) => item.icon), NAV_MORE.icon];
+  assert.equal(icons.length, 11, "ten destinations and the overflow trigger");
+
+  // 🔴 `lib/tokens.ts` is Tailwind content and Tailwind reads text, not
+  // meaning. Path data sits in this file as ordinary strings, so a coordinate
+  // that happened to spell a utility would put a rule nobody asked for into
+  // the stylesheet the console downloads. Absolute commands and no minus
+  // signs cannot spell one — and rather than trust that, the real build is
+  // asked about every token in every path.
+  for (const d of icons) {
+    assert.match(d, /^[MLHVACZ0-9 .]+$/, `path data with something else in it: ${d}`);
+    assert.ok(!d.includes("-"), "a negative coordinate is a candidate with a dash in it");
+  }
+  const words = icons.flatMap((d) => d.split(/\s+/)).filter(Boolean);
+  assert.ok(words.length > 100, "the path data got shorter than this check assumes");
+  const generated = await generatedClasses(words);
+  assert.deepEqual([...generated], [], "a coordinate in the icon data generates CSS");
 });
 
 /**
