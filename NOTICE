@@ -1,6 +1,6 @@
 VoDoge Cloud
 Copyright (c) 2026 the VoDoge Cloud authors
-https://github.com/yuanshuai1122/vodoge-cloud
+https://github.com/vodoge/vodoge-cloud
 
 This product is licensed under the Apache License, Version 2.0. The complete
 text is in LICENSE, and it covers every path in this repository -- there is no
@@ -322,7 +322,7 @@ license.
 The source for this product is published, free of charge and without an
 account, at:
 
-    https://github.com/yuanshuai1122/vodoge-cloud
+    https://github.com/vodoge/vodoge-cloud
 
 The source for every third-party dependency named above is at the upstream URL
 given with it, or is resolvable from the version pinned in apps/gateway/go.mod,
