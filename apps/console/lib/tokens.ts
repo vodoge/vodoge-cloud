@@ -1327,14 +1327,49 @@ export const SHELL = {
 
 export const BOTTOM_NAV = {
   /**
-   * ⚠️ Shares `z-20` and this exact corner with `BANNER.bar`. The banner is
-   * rendered later in `app/layout.tsx`, so when the connection drops it paints
-   * over the bar rather than under it. That is the right way round — a banner
-   * nobody can see is worse than a nav briefly covered — but it is an overlap
-   * rather than a stack, and it is worth knowing before adding a third thing
-   * to this corner.
+   * ⚠️ Shares this exact corner with `PWA.connection.bar`, the connection
+   * banner. The classes that do the pinning — the positioning, the edge, the
+   * full width — are identical word for word in both recipes; what differs is
+   * the paint (this one is the surface tone, the banner is the status red) and
+   * the responsive hide, which only this one carries. That hide is why the
+   * corner is contested on a phone and nowhere else: measured at 1280x800,
+   * signed in and offline, the banner is present and this bar is not in the
+   * corner at all. The other two conditions are a dropped network and a
+   * signed-in tenant, since `app/layout.tsx` gates both components on that.
+   *
+   * 🔴 **This bar sits one layer below the banner, and that is deliberate.**
+   * `app/layout.tsx` draws the banner first and this bar last. While both sat
+   * on the same layer the later one won, and the bar painted over the alert.
+   * Measured in a browser at 390x844, signed in, network dropped: the banner
+   * occupied the strip from 787 to 844, this bar from 799 to 844, and of 400
+   * points sampled across the banner the bar was the topmost element at 320 of
+   * them. All four of the banner's own runs of text — the sentence, the
+   * explanation, the clock, and the reload control — came back from
+   * `elementFromPoint` as something inside this bar, so the alert was not
+   * merely dimmed: the first three sat under one of the four links, and the
+   * reload control sat under the overflow trigger, so pressing reload opened
+   * the sheet.
+   *
+   * A banner nobody can see is worse than a nav briefly covered. That
+   * judgement is what decides the tie, and it now decides it in
+   * `TAILWIND_Z_INDEX` rather than by accident of source order: this recipe
+   * takes the 10, and the banner keeps the 20.
+   *
+   * 🔴 **The layer moved and the source order did not, on purpose.** The other
+   * way to settle this is to draw this component before the banner — but the
+   * source footer's clearance depends on this component being drawn *after*
+   * the footer, and `tokens.test.ts` pins that order for exactly that reason.
+   * Reordering to fix one would have broken the other. Nothing else is left
+   * wanting this corner: the sticky header holds the 20 at the opposite edge
+   * (measured at 390x844 it runs 0 to 65, this bar 799 to 844), and the
+   * confirmation dialog is on the 30 because it is meant to cover everything —
+   * which is the other reason the banner was not simply raised to meet it.
+   *
+   * ⚠️ Before adding a third thing to this corner, give it a layer of its own.
+   * `tokens.test.ts` derives the corner's occupants rather than listing them,
+   * and requires that no two of them share one.
    */
-  bar: "fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-line bg-surface md:hidden",
+  bar: "fixed inset-x-0 bottom-0 z-10 border-0 border-t border-solid border-line bg-surface md:hidden",
   /**
    * `relative` so the sheet can hang off the whole bar rather than off the one
    * 78px cell that opens it.
@@ -1818,6 +1853,11 @@ export const PWA = {
    * an alert that has to fight for the same strip loses. Red rather than amber
    * because it is not a warning about something that might happen — every
    * number above it is already out of date.
+   *
+   * ⚠️ It shares that bottom corner with the phone navigation bar, which is
+   * why this recipe holds the 20 of `TAILWIND_Z_INDEX` while `BOTTOM_NAV.bar`
+   * takes the 10. Lowering this one to meet it puts the alert back underneath
+   * a navigation cell — measured, and written up on `BOTTOM_NAV.bar`.
    */
   connection: {
     bar: "fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-bad bg-bad-wash shadow-lg",

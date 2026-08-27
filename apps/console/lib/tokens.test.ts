@@ -5352,6 +5352,94 @@ test("a label on the phone bar is clipped rather than allowed to widen its cell"
 });
 
 /**
+ * Two things are pinned to the bottom corner, and they must not share a layer.
+ *
+ * `BOTTOM_NAV.bar` and `PWA.connection.bar` are pinned there the same way,
+ * word for word. Until SN-T022 they also carried the same z-index, which left
+ * the outcome to source order — and `app/layout.tsx` draws the banner first
+ * and the bar last, so the bar won and painted over the alert.
+ *
+ * 🔴 **Measured, not reasoned.** In a browser at 390x844, signed in, with the
+ * network dropped: the banner occupied the strip from 787 to 844, the bar from
+ * 799 to 844, and at 320 of 400 points sampled across the banner
+ * `elementFromPoint` returned the bar. All four of the banner's runs of text
+ * were among those points, so the reload control could not be pressed — the
+ * press landed on a navigation cell. Numbers and screenshots are in
+ * `docs/goals/vodoge-shape-nav/notes/T022-banner-overlap.md`.
+ *
+ * ⚠️ **Why the layer moved and the source order did not.** Drawing the bar
+ * before the banner settles it too, and breaks something else: the source
+ * footer's clearance depends on the bar being drawn *after* the footer, which
+ * is what the test below pins. Two invariants meet in the same pair of lines
+ * and only one of them can be spelled as an order, so the other is spelled as
+ * a layer.
+ *
+ * The corner's occupants are DERIVED from the token table, not listed: a third
+ * thing arriving here is covered without this test being edited, and will have
+ * to pick a layer nobody else holds. What cannot be derived is which of two
+ * should win — that is a judgement (an alert nobody can see is worse than a
+ * nav briefly covered), so the last assertion names the two and would fail
+ * loudly rather than skip if either were renamed.
+ */
+test("nothing pinned to the bottom corner shares a layer with anything else there", () => {
+  const corner: { readonly path: string; readonly recipe: string }[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === "string") {
+      const classes = value.split(/\s+/).filter(Boolean);
+      if (classes.includes("fixed") && classes.includes("bottom-0")) corner.push({ path, recipe: value });
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, inner] of Object.entries(value)) walk(inner, `${path}.${key}`);
+  };
+  const table = TOKENS as unknown as Record<string, unknown>;
+  for (const name of recipeNames()) walk(table[name], name);
+
+  // An extractor that had stopped finding anything would leave every loop
+  // below empty, and an empty loop passes.
+  assert.ok(
+    corner.length >= 2,
+    `only ${corner.length} recipe(s) pin themselves to the bottom corner, so a check that they do ` +
+      "not collide decides nothing — the phone bar and the connection banner are both there",
+  );
+
+  const layers = corner.map(({ path, recipe }) => {
+    const found = recipe.split(/\s+/).filter((name) => /^z-\d+$/.test(name));
+    assert.equal(
+      found.length,
+      1,
+      `${path} is pinned to the bottom corner with ${found.length} z-index classes, not one: ` +
+        "without exactly one, which layer it lands on is not readable from the recipe",
+    );
+    return { path, layer: Number(found[0].slice(2)) };
+  });
+
+  const holder = new Map<number, string>();
+  for (const { path, layer } of layers) {
+    const already = holder.get(layer);
+    assert.equal(
+      already,
+      undefined,
+      `${path} and ${already} are both pinned to the bottom corner on layer ${layer}. Which one ` +
+        "covers the other is then decided by the order app/layout.tsx happens to draw them in, " +
+        "which no class records and no reader of these recipes can see",
+    );
+    holder.set(layer, path);
+  }
+
+  const bar = layers.find((entry) => entry.path === "BOTTOM_NAV.bar");
+  const banner = layers.find((entry) => entry.path === "PWA.connection.bar");
+  assert.ok(bar, "BOTTOM_NAV.bar is no longer pinned to the bottom corner; this check has lost its subject");
+  assert.ok(banner, "PWA.connection.bar is no longer pinned to the bottom corner; this check has lost its subject");
+  assert.ok(
+    banner.layer > bar.layer,
+    `the connection banner is on layer ${banner.layer} and the phone bar on ${bar.layer}, so the ` +
+      "bar covers the alert. A banner nobody can see is worse than a nav briefly covered: measured " +
+      "at 390x844 the bar was the topmost element over every word of the banner, including reload",
+  );
+});
+
+/**
  * The footer's clearance under the phone bar is a fact about the order two
  * components are drawn in, and nothing else in the suite looks at it.
  *
