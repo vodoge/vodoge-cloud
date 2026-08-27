@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as TOKENS from "./tokens.ts";
 
 /**
@@ -748,4 +751,247 @@ test("the chips clear 4.5:1 two washes deep in light, and dark is on the record"
   }
 
   assert.deepEqual(failures, []);
+});
+
+/* ── Shape: a radius is applied by name, never as a number ───────────── */
+
+/**
+ * 🔴 **A 4px focus ring around an 8px control, past 345 tests and two
+ * adversarial reviewers.**
+ *
+ * `app/globals.css` said `border-radius: 4px` under `:focus-visible`. 4px was
+ * the middle step of the *old* hand-written scale — 3px, 4px, 6px — and when
+ * T001 replaced those three literals with one base and three ratios, every
+ * token moved and this number did not, because it is not a token. It is a
+ * number written into a rule body, and the parity tests compare token
+ * *declarations* against `lib/tokens.ts`, agree perfectly, and cannot see it.
+ * That is the shape of the miss and it is what this guard is about: **a scale
+ * only protects the values that are read from it.**
+ *
+ * ⚠️ **It had decayed twice, and the second decay is the quieter one.** At
+ * `8cb8302`, where the declaration was written, this file contained no
+ * `@layer` at all, so the rule was unlayered and the 4px really did reshape
+ * every focused control. `10b81c0` wrapped the file in `@layer tokens` so the
+ * reset could be outranked by the utilities — and unlayered CSS beats layered
+ * CSS whatever the specificity, so the same wrapper quietly took the
+ * declaration away from every control that carries a corner utility, leaving
+ * it live only on the ones that carry none. Measured in Chrome against this
+ * build, injecting a 4px rule into `@layer tokens`: beside the unlayered
+ * control utility it computes **8px**, beside the unlayered pill utility
+ * **999px**, and with nothing competing **4px** — the last being the positive
+ * control that proves the first two are a cascade result and not a dead probe.
+ *
+ * So this guard is deliberately **not** "the focus ring must be 8px". Pinning
+ * the number would recreate the defect one scale change from now. It is: *a
+ * radius is applied by name.* A number cannot follow a base, and neither way
+ * this one failed — going stale, then going inert — is visible to a check that
+ * compares token declarations to each other.
+ *
+ * ⚠️ **Two files, derived rather than listed.** `public/offline.html` hand-
+ * writes its own stylesheet and ships to users as the PWA offline page. It is
+ * read by `lib/pwa.test.ts`, but that file's subject is the palette — a list
+ * of hexes — so a radius in it is not checked loosely there, it is
+ * structurally invisible. The set below is walked out of `app/`, `public/` and
+ * `components/` instead of typed out, because a hand-typed set of "the
+ * stylesheets we shipped" is exactly the thing that is complete on the day it
+ * is written and silent about the one added afterwards.
+ */
+
+const consoleRoot: string = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Every stylesheet this console ships and hand-writes, found rather than listed. */
+function shippedStylesheets(): string[] {
+  const found: string[] = [];
+  const walk = (relative: string): void => {
+    let entries: string[];
+    try {
+      entries = readdirSync(join(consoleRoot, relative));
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort()) {
+      const next = `${relative}/${entry}`;
+      if (statSync(join(consoleRoot, next)).isDirectory()) {
+        walk(next);
+      } else if (entry.endsWith(".css")) {
+        found.push(next);
+      } else if (entry.endsWith(".html") && readFileSync(join(consoleRoot, next), "utf8").includes("<style")) {
+        found.push(next);
+      }
+    }
+  };
+  for (const top of ["app", "public", "components"]) walk(top);
+  return found;
+}
+
+type RadiusExemption = {
+  readonly file: string;
+  readonly declaration: string;
+  readonly reason: string;
+};
+
+/**
+ * 🔴 **An exemption is one exact declaration and one stated reason.**
+ *
+ * Not a file, not a pattern. The next stray radius in an exempted file still
+ * fails, because it will not be this string. And an exemption that no longer
+ * matches anything fails too — a reason for a defect that has been fixed is a
+ * note aimed at the wrong reader, and the check below makes it impossible to
+ * leave one behind.
+ */
+const RADIUS_EXEMPTIONS: readonly RadiusExemption[] = [
+  {
+    file: "public/offline.html",
+    declaration: "border-radius:12px",
+    reason:
+      "The offline page's mark. 12px is off the 8/10/14 scale and belongs to a token, " +
+      "but public/offline.html is not in T008's allowed_files and this card may not edit " +
+      "it. Recorded rather than skipped: the file is scanned, so the next stray radius in " +
+      "it still fails. Needs its own card — the fix also has to bump the service worker " +
+      "cache version, which lib/pwa.test.ts asserts and this card cannot reach.",
+  },
+];
+
+/** A number with a length unit: what a radius must not be written as. */
+const BARE_LENGTH: RegExp = /(?:^|[\s(,*/+-])\d*\.?\d+\s*(?:px|rem|em|ch|vh|vw|%)/i;
+
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/<!--[\s\S]*?-->/g, " ");
+}
+
+/**
+ * Every declaration whose property names a radius.
+ *
+ * `defining` separates the two kinds. A custom property — `--radius-base` and
+ * the steps derived from it — is where the scale is *written*, and has to hold
+ * a number somewhere or there would be no scale; those values are pinned
+ * against `lib/tokens.ts` by `lib/tokens.test.ts`, and re-asserting them here
+ * would point a second comparator at one oracle. Everything else *applies* a
+ * radius, and that is what may not be a number.
+ */
+function radiusDeclarations(source: string): { property: string; value: string; text: string; defining: boolean }[] {
+  const out: { property: string; value: string; text: string; defining: boolean }[] = [];
+  // A declaration ends at `;` or `}` — and, inside an HTML `style="…"`, at the
+  // quote that closes the attribute. Leaving the quotes out of this class let
+  // the probe's inline attribute swallow the markup after it and the next
+  // selector with it, which is the whole reason the probe is a probe.
+  for (const match of withoutComments(source).matchAll(/([-a-z]*radius[-a-z]*)\s*:\s*([^;{}"'<>]+)/gi)) {
+    const property = match[1];
+    const value = match[2].trim();
+    out.push({
+      property,
+      value,
+      text: `${property}:${value}`.replace(/\s+/g, ""),
+      defining: property.startsWith("--"),
+    });
+  }
+  return out;
+}
+
+/** The applying declarations that write a number instead of reading one. */
+function bareRadii(source: string): string[] {
+  return radiusDeclarations(source)
+    .filter((one) => !one.defining && BARE_LENGTH.test(one.value))
+    .map((one) => one.text);
+}
+
+/**
+ * A sheet shaped like the two real ones, with the answer known in advance.
+ *
+ * Finding nothing and being broken look identical from here, which is the
+ * failure this repo has recorded twice. Every line below is one thing the
+ * scanner has to get right: the defect as it actually appeared, the same
+ * defect written long-hand and spaced out, an inline attribute, a shape that
+ * is legitimately its own length, the scale's own definitions, and the two
+ * forms of a radius correctly read from the scale.
+ */
+const RADIUS_PROBE: string = [
+  ":focus-visible { outline: 2px solid red; outline-offset: 2px; border-radius: 4px; }",
+  ".mark { width:40px; height:40px; border-radius:12px; }",
+  ".corner { border-bottom-left-radius : 0.5rem ; }",
+  '<span style="border-radius:50%"></span>',
+  ":root { --radius-base: 10px; --radius: calc(var(--radius-base) * 0.8); --radius-pill: 999px; }",
+  ".card { border-radius: var(--radius-lg); }",
+  ".chip { border-radius: var(--radius-pill); }",
+  ".flat { border-radius: 0; }",
+  "/* border-radius: 77px in a comment is not a declaration */",
+].join("\n");
+
+test("the radius scanner sees a number and lets a name through", () => {
+  assert.deepEqual(bareRadii(RADIUS_PROBE), [
+    "border-radius:4px",
+    "border-radius:12px",
+    "border-bottom-left-radius:0.5rem",
+    "border-radius:50%",
+  ]);
+
+  // The other half, stated as its own assertion so a scanner that flagged
+  // everything would not pass the line above by accident.
+  const declarations = radiusDeclarations(RADIUS_PROBE);
+  assert.deepEqual(
+    declarations.filter((one) => one.defining).map((one) => one.property),
+    ["--radius-base", "--radius", "--radius-pill"],
+    "the scanner has stopped telling the scale's definition from its use",
+  );
+  assert.equal(
+    declarations.filter((one) => !one.defining && !BARE_LENGTH.test(one.value)).length,
+    3,
+    "a radius read from the scale, or set to zero, is being called a bare number",
+  );
+});
+
+test("every shipped stylesheet applies a radius by name, never as a number", () => {
+  const sheets = shippedStylesheets();
+  assert.ok(
+    sheets.includes("app/globals.css"),
+    `the stylesheet walk found ${sheets.length ? sheets.join(", ") : "nothing"} and missed app/globals.css`,
+  );
+
+  const exempt = new Set(RADIUS_EXEMPTIONS.map((one) => `${one.file}  ${one.declaration}`));
+  const offenders: string[] = [];
+  let scanned = 0;
+
+  for (const sheet of sheets) {
+    const source = readFileSync(join(consoleRoot, sheet), "utf8");
+    scanned += radiusDeclarations(source).length;
+    for (const declaration of bareRadii(source)) {
+      const key = `${sheet}  ${declaration}`;
+      if (!exempt.has(key)) offenders.push(key);
+    }
+  }
+
+  assert.ok(scanned > 0, "no radius declaration was read at all, so this check is vacuous");
+  assert.deepEqual(
+    offenders,
+    [],
+    "a radius is written as a number instead of read from the scale; move it to a token, " +
+      "or add it to RADIUS_EXEMPTIONS with a reason",
+  );
+});
+
+test("every radius exemption carries a reason, and none outlives its defect", () => {
+  for (const exemption of RADIUS_EXEMPTIONS) {
+    assert.ok(
+      exemption.reason.trim().length >= 40,
+      `the exemption for ${exemption.declaration} in ${exemption.file} has no reason worth reading; ` +
+        "an exception without one is the next defect",
+    );
+
+    // Stale exemptions are the other direction of the same fault: a reason
+    // that outlives its defect aims the next reader at nothing.
+    const source = readFileSync(join(consoleRoot, exemption.file), "utf8");
+    assert.ok(
+      bareRadii(source).includes(exemption.declaration),
+      `${exemption.file} no longer contains \`${exemption.declaration}\` — the defect is fixed, ` +
+        "so delete this exemption rather than leaving a reason pointing at nothing",
+    );
+  }
+
+  // The reason requirement, proved on entries that break it. An empty list and
+  // a rule that never fires are the same output.
+  const missing = [
+    { file: "x.css", declaration: "border-radius:1px", reason: "" },
+    { file: "x.css", declaration: "border-radius:2px", reason: "legacy" },
+  ].filter((one) => one.reason.trim().length < 40);
+  assert.equal(missing.length, 2, "the reason requirement has stopped rejecting a bare excuse");
 });
