@@ -2340,19 +2340,27 @@ const CAPTURED_FROM = {
   // reproduce the digest below, and it is exact because the recapture commit
   // touches no file in the closure (it changes only this test and public/).
   //
-  // ⚠️ The frames were shot on 61659b2 and this digest is 4d7451d's, one commit
-  // later. That gap is the re-stamp path this docblock describes, and it was
-  // taken on evidence rather than on the argument that comments cannot matter:
-  // SN-T020 edited two closure files (lib/tokens.ts, app/globals.css) in
-  // comments only, which moves this content digest but should move nothing a
-  // camera can see. `lib/tokens.ts` is a Tailwind content file, and prose in
-  // one has leaked a rule into the shipped stylesheet four times on this repo
-  // — once from the ordinary English word `transition` in a comment — so the
-  // claim was checked instead of assumed: rebuilt on the rebased tree, the
-  // stylesheet is dff3987b0c0d88a7.css at sha256 05b044b9…cc8e, byte-identical
-  // to the build the frames were taken against. Nothing rendered moved.
-  commit: "4d7451d",
-  chrome: "6afa1b23b6099ea12339ef867b76e729110e3da9af79dbe211a14f56812e540d",
+  // ⚠️ The frames were shot against two different builds of the same chrome,
+  // and they came out byte-identical. That is the evidence this stamp rests on,
+  // and it is worth reading before re-stamping anything here yourself.
+  //
+  // SN-T022 moved BOTTOM_NAV.bar from z-20 to z-10 so the connection banner
+  // stops being painted over. That is a real class change, not a comment: the
+  // built stylesheet went from dff3987b0c0d88a7.css to 6395ac6053b94fdd.css.
+  // The frames were therefore reshot against the new build — and both PNGs
+  // hashed exactly as before (08d8ea54…, d7d8a9b5…), because nothing overlaps
+  // the bar while the connection is up and the banner is not on screen.
+  //
+  // 🔴 The point is the order of operations. "The banner is not in my frames,
+  // so a z-index between them cannot matter" is a correct argument, and it was
+  // still not what this was settled with — the frames were retaken and the
+  // bytes compared. A guard that freezes an upstream digest has to be paid for
+  // with the artefact, because the one time the reasoning is wrong it is wrong
+  // silently. `lib/tokens.ts` is a Tailwind content file and prose in one has
+  // leaked a rule into the shipped stylesheet four times on this repo, once
+  // from the ordinary English word `transition` sitting in a comment.
+  commit: "7b24441",
+  chrome: "922b9fd52d93eb1dc4e22d21c7c5d50d109b4b5108aedc35fcc2e1ba1de1d901",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
@@ -2400,15 +2408,27 @@ test("the install screenshots were captured from the chrome this tree renders", 
   }
 
   const { files } = chromeClosure();
+  const digest = chromeDigest(files);
   assert.equal(
-    chromeDigest(files),
+    digest,
     CAPTURED_FROM.chrome,
     `the ${files.length} sources that decide what these screenshots show have changed since ` +
       `${CAPTURED_FROM.commit}, when the two files in public/ were taken, and the files in ` +
       `public/ have not. Whatever moved, the install dialog is still advertising the chrome ` +
-      `from before it. Recapture both frames and update CAPTURED_FROM — or, if the change ` +
-      `genuinely cannot be seen in either frame, re-stamp the chrome digest alone and say so ` +
-      `in the commit message.`,
+      `from before it.\n\n` +
+      `  Either recapture both frames and update all of CAPTURED_FROM, or — if the change ` +
+      `genuinely cannot be seen in either frame — re-stamp the chrome digest alone with\n\n` +
+      `    chrome: "${digest}",\n\n` +
+      `  and say so in the commit message.\n\n` +
+      `  🔴 A re-stamp is a claim that the rendered output did not move, so pay for it with ` +
+      `the output: rebuild and check the stylesheet is byte-identical to the one the frames ` +
+      `were captured against. Do NOT pay for it with the argument that the change looked ` +
+      `cosmetic. lib/tokens.ts is a Tailwind content file, and prose in one has leaked a ` +
+      `rule into the shipped stylesheet four times on this repo — once from the ordinary ` +
+      `English word \`transition\` sitting in a comment. A comment-only edit to a closure ` +
+      `file has already turned this guard red twice in one afternoon; one of those two also ` +
+      `left the stylesheet untouched and one did not, and only the rebuild could tell them ` +
+      `apart.`,
   );
 });
 
