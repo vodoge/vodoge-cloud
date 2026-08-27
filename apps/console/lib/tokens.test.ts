@@ -448,6 +448,11 @@ const NOT_A_RECIPE = new Set([
   "FONT_TOKENS",
   "SPACE_TOKENS",
   "RADIUS_TOKENS",
+  // The base and the ratios the radius table is derived from. `RADIUS_BASE`
+  // matters here: it is a bare string, so walking it as a recipe would ask
+  // the build for a class called `10px` and report the scale as broken.
+  "RADIUS_BASE",
+  "RADIUS_RATIOS",
   "SIZE_TOKENS",
   "THEMED_TOKENS",
   "STATIC_TOKENS",
@@ -6907,5 +6912,111 @@ test("flipping the theme repoints the status bar at the new background", () => {
   assert.ok(
     !/#[0-9a-fA-F]{3,8}\b/.test(helper),
     "a hex written into the toggle is another copy of --bg to keep in step",
+  );
+});
+
+/* ── The radius scale is derived, and the button has a press ──────────────
+ *
+ * The operator's complaint was that the buttons and the motion were hard,
+ * and the reference they pointed at is soft in three ways at once: a radius
+ * scale derived from one base, a 1px sink on press, and an easing that covers
+ * every property rather than only colour. Radius was three literals here, so
+ * softening it used to mean editing three numbers in two repos and trusting
+ * they still agreed. These assertions are about the derivation surviving, not
+ * about the numbers being pretty: the numbers are allowed to move, one at a
+ * time, from one place.
+ */
+
+/** A step's value is `var(--radius-base)` or a multiple of it, and nothing else. */
+const DERIVED_STEP = /^(?:var\(--radius-base\)|calc\(var\(--radius-base\) \* (\d+(?:\.\d+)?)\))$/;
+
+/** Resolve a declared step against a base, in px. Throws on a hand-written length. */
+function resolveRadiusStep(value: string, basePx: number): number {
+  const match = DERIVED_STEP.exec(value);
+  assert.ok(match, `not derived from the base: ${value}`);
+  return match[1] === undefined ? basePx : basePx * Number(match[1]);
+}
+
+test("every radius step is a multiple of one base, never a length of its own", () => {
+  const tokens = TOKENS.RADIUS_TOKENS as Record<string, string>;
+  const ratios = TOKENS.RADIUS_RATIOS as Record<string, number>;
+
+  // The table is exactly the base, the derived steps and the pill. A fourth
+  // step slipped in as a literal has to show up here first.
+  assert.deepEqual(
+    Object.keys(tokens).sort(),
+    ["radius-base", ...Object.keys(ratios), "radius-pill"].sort(),
+    "the radius table gained or lost a name",
+  );
+
+  // The base is the only length on the scale. The pill is the one value
+  // deliberately off it: a pill has to read as a pill at any base.
+  assert.match(tokens["radius-base"], /^\d+px$/, "the base is the one length here");
+  assert.equal(tokens["radius-pill"], "999px");
+
+  for (const [name, ratio] of Object.entries(ratios)) {
+    const value = tokens[name];
+    assert.match(value, DERIVED_STEP, `--${name} is written as a length instead of derived`);
+    // Recomputed here rather than by calling the helper in tokens.ts, so
+    // retuning one step's multiplier by hand goes red too — not only
+    // replacing it with a length.
+    const expected = ratio === 1 ? "var(--radius-base)" : `calc(var(--radius-base) * ${ratio})`;
+    assert.equal(value, expected, `--${name} does not state the ratio the table gives it`);
+  }
+});
+
+test("moving the base moves every step, and the proportions survive it", () => {
+  const tokens = TOKENS.RADIUS_TOKENS as Record<string, string>;
+  const names = Object.keys(TOKENS.RADIUS_RATIOS as Record<string, number>);
+  const basePx = Number.parseFloat(TOKENS.RADIUS_BASE);
+
+  // Negative control, and it is the whole point of the resolver: a step
+  // written as a plain length is not resolvable against any base. Without
+  // this, everything below would pass just as happily on three literals.
+  assert.throws(() => resolveRadiusStep("14px", basePx), /not derived from the base/);
+
+  // The geometry as shipped: a control, the middle step, a card.
+  const here = names.map((name) => resolveRadiusStep(tokens[name], basePx));
+  assert.deepEqual(here, [8, 10, 14]);
+
+  // One edit at the base, and every step follows it by the same factor.
+  const moved = names.map((name) => resolveRadiusStep(tokens[name], 16));
+  for (const [index, name] of names.entries()) {
+    assert.notEqual(moved[index], here[index], `--${name} did not follow the base`);
+    // Compared with a tolerance because 22.4/14 is 1.5999999999999999 while
+    // 16/10 is 1.6 — the same factor, two floats.
+    assert.ok(
+      Math.abs(moved[index] / here[index] - 16 / basePx) < 1e-9,
+      `--${name} moved by a different factor, so this is a new scale and not the same one resized`,
+    );
+  }
+});
+
+test("the button sinks and eases in the build, and the reference's ring would not", async () => {
+  const classes = BUTTON.base.split(" ");
+
+  // What the recipe asks for. Dropping one of these goes red here rather
+  // than going quiet in a browser nobody is looking at.
+  assert.ok(classes.includes("active:translate-y-px"), "the button stopped sinking when pressed");
+  assert.ok(classes.includes("transition-all"), "the easing is back to colour only, so the sink snaps");
+  assert.ok(classes.includes("focus-visible:ring"), "the focus ring is no longer the 3px default");
+  assert.ok(!classes.includes("transition-colors"), "the colour-only easing is still on the button");
+
+  const wanted = ["active:translate-y-px", "transition-all", "ring"];
+  // 🔴 `ring-3` is what the reference writes and what transcribing it would
+  // have put here. This ring scale is DEFAULT/0/2, so `ring-3` produces no
+  // CSS at all: a focus ring that reviews perfectly and renders as no ring.
+  // The recipe asks for the DEFAULT instead, which this repo already set to
+  // 3px. `translate-y-1` is the same trap on the other axis — spacing is a
+  // closed scale here, and `px` is on it while `1` is not.
+  const absent = ["ring-3", "translate-y-1"];
+  const generated = await generatedClasses([...wanted, ...absent, "p-s4"]);
+
+  assert.ok(generated.has("p-s4"), "the build produced nothing, so neither arm below means anything");
+  for (const name of wanted) assert.ok(generated.has(name), `${name} generates no CSS`);
+  assert.deepEqual(
+    absent.filter((name) => generated.has(name)),
+    [],
+    "a class this test relies on being absent is in fact generated",
   );
 });
