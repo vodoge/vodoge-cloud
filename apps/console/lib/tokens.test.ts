@@ -5038,22 +5038,120 @@ test("nav highlighting distinguishes the page from the section it is in", () => 
   assert.equal(navState("/proxy", "/settings"), null);
 });
 
-/* ── Two renderers, one list ─────────────────────────────────────────────
+/* ── Every renderer of the navigation, one list ──────────────────────────
  *
- * 🔴 The navigation is drawn twice — `components/sidebar.tsx` on a wide
- * screen, `components/mobile-nav.tsx` on a phone — and the whole risk of
- * drawing it twice is that the two copies drift. The four tests below are the
- * thing that makes drift impossible rather than merely unlikely, and they are
- * arranged so that changing `NAV_GROUPS` moves both renderers and changing
- * only one renderer fails.
+ * 🔴 The navigation is drawn more than once — `components/sidebar.tsx` on a
+ * wide screen, `components/mobile-nav.tsx` on a phone — and the whole risk of
+ * drawing it more than once is that the copies drift. The tests below are
+ * arranged so that changing `NAV_GROUPS` moves every renderer and changing
+ * only one of them fails.
  *
- * Neither `.tsx` can be rendered in a test here, so the check cannot be "do
- * they draw the same thing". It is stronger than that: **neither file is
- * allowed to contain a destination at all.** A second list cannot exist in a
- * file that may not write down a route or a message key.
+ * No `.tsx` can be rendered in a test here, so the check cannot be "do they
+ * draw the same thing". It is stronger than that: **a file that draws the
+ * navigation may not contain a destination at all.** A second list cannot
+ * exist in a file that may not write down a route or a message key.
+ *
+ * 🔴 **Which files those are is derived, not typed out.** This used to be a
+ * two-element array of filenames, and the sentence above was false of every
+ * file outside it — a check named for scanning the navigation's renderers
+ * while it actually scanned two names someone had typed. A third renderer was
+ * not scanned at all: it could hardcode a route and the suite stayed green.
+ * That was measured, not assumed, before this was changed.
+ *
+ * The derivation is two hops, and each is checked rather than assumed:
+ *
+ *  - `navApi()` reads `lib/tokens.ts` and returns every top-level export that
+ *    reaches `NAV_GROUPS`, transitively. That is the vocabulary a file has to
+ *    use in order to draw the navigation from the one array.
+ *  - `navRenderers()` keeps the `.tsx` whose *code* names one of them. The
+ *    universe it filters is `MIGRATED_SOURCES`, which the ledger test above
+ *    pins to every `.tsx` under `app/` and `components/` — so a new file is in
+ *    the universe the moment it exists, and a renderer written tomorrow is
+ *    covered the day it is written, by nobody remembering anything.
+ *
+ * Comments are stripped before the match, so a file that only mentions the
+ * navigation in prose is not dragged in — one does today.
+ *
+ * ⚠️ **What this does not catch**, written down so the paragraph above is not
+ * read as more than it is: a renderer that imports nothing and types all ten
+ * destinations out itself names no nav symbol, so the derivation never sees
+ * it, and its destinations are a plain second list. Nothing here closes that.
  */
 
-const NAV_RENDERERS = ["components/sidebar.tsx", "components/mobile-nav.tsx"];
+/**
+ * Every export of `lib/tokens.ts` that reaches `NAV_GROUPS`.
+ *
+ * Derived by walking the declarations rather than listing their names, because
+ * a list of names is the same mistake one level down: a new derived helper
+ * would be a way of drawing the navigation that this scan did not recognise.
+ */
+function navApi(): string[] {
+  const code = codeOnly(readSource("lib/tokens.ts"));
+  const declarations: { name: string; start: number; body: string }[] = [];
+  const pattern = /^export\s+(?:const|function|type|interface|class)\s+([A-Za-z0-9_]+)/gm;
+  for (let match = pattern.exec(code); match !== null; match = pattern.exec(code)) {
+    declarations.push({ name: match[1], start: match.index, body: "" });
+  }
+  for (let i = 0; i < declarations.length; i++) {
+    const end = i + 1 < declarations.length ? declarations[i + 1].start : code.length;
+    declarations[i].body = code.slice(declarations[i].start, end);
+  }
+
+  const reached = new Set(["NAV_GROUPS"]);
+  for (let growing = true; growing; ) {
+    growing = false;
+    for (const declaration of declarations) {
+      if (reached.has(declaration.name)) continue;
+      const uses = [...reached].some((name) => new RegExp(`\\b${name}\\b`).test(declaration.body));
+      if (uses) {
+        reached.add(declaration.name);
+        growing = true;
+      }
+    }
+  }
+  return [...reached].sort();
+}
+
+/** Every `.tsx` that draws the navigation, because it uses the navigation. */
+function navRenderers(): string[] {
+  const api = navApi();
+  return [...MIGRATED_SOURCES]
+    .filter((relative) => {
+      const code = codeOnly(readSource(relative));
+      return api.some((name) => new RegExp(`\\b${name}\\b`).test(code));
+    })
+    .sort();
+}
+
+test("the renderers being scanned are derived from the tree, not typed out", () => {
+  // Two positive controls, because both halves of the derivation fail silently
+  // by returning nothing — and every loop below would then pass on nothing,
+  // which is the shape this whole change exists to remove.
+  const api = navApi();
+  for (const required of ["NAV_GROUPS", "navItems", "bottomNavItems", "overflowNavItems"]) {
+    assert.ok(api.includes(required), `the nav API derivation lost ${required}: the scans below are empty`);
+  }
+
+  const found = navRenderers();
+  for (const known of ["components/sidebar.tsx", "components/mobile-nav.tsx"]) {
+    assert.ok(
+      found.includes(known),
+      `${known} draws the navigation and the derivation did not find it, so nothing is being scanned`,
+    );
+  }
+
+  // The two names above are a floor, not a jurisdiction: a third renderer
+  // joins `found` without anyone editing this file. What is pinned here is
+  // that using a nav symbol and importing it are the same thing — a file that
+  // names one without importing it has declared a second one of its own.
+  for (const relative of found) {
+    assert.match(
+      codeOnly(readSource(relative)),
+      /from "@\/lib\/tokens"/,
+      `${relative} uses a nav symbol it does not import: it has declared a second one`,
+    );
+  }
+});
 
 test("neither nav renderer writes down a destination of its own", () => {
   // Everything that identifies a destination: where it goes, what it is
@@ -5073,7 +5171,7 @@ test("neither nav renderer writes down a destination of its own", () => {
   // would pass on nothing.
   assert.equal(owned.size, 4 * navItems().length + 3, "the set of owned strings is not what it should be");
 
-  for (const relative of NAV_RENDERERS) {
+  for (const relative of navRenderers()) {
     const written = scan(readSource(relative))
       .literals.map((literal) => literal.text)
       .filter((text) => owned.has(text));
@@ -5101,7 +5199,7 @@ test("both nav renderers read the one array, and read it live", () => {
   // `codeOnly` keeps literals and drops comments, so naming the array in a
   // comment does not satisfy any of the above. Both files must also actually
   // import from the module rather than redeclaring something of that name.
-  for (const relative of NAV_RENDERERS) {
+  for (const relative of navRenderers()) {
     assert.match(
       codeOnly(readSource(relative)),
       /from "@\/lib\/tokens"/,
