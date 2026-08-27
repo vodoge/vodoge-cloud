@@ -682,3 +682,171 @@ func (store *failingFire) Fire(ctx context.Context, tenantID string, plan Plan) 
 	}
 	return store.Memory.Fire(ctx, tenantID, plan)
 }
+
+// ---------------------------------------------------------------------------
+// The tenant's hourly send limit reaches the scheduler.
+//
+// It used to stop at the console. The limit was enforced only in the
+// POST /v1/commands handler, so a schedule at the 60-second floor issued sixty
+// messages an hour against a limit of two -- and, because scheduled sends are
+// recorded as outbound, it spent a budget nothing on this path ever read.
+//
+// The hook is nil in most of the tests above, which is what "nil means
+// unlimited" buys: adding a limit did not change any existing expectation.
+
+// limitedRunner wires SendAllowed the way production does -- same question,
+// answered from the same count of what has actually been sent.
+func limitedRunner(store *Memory, now *time.Time, limit *int) *Runner {
+	runner := runnerFor(store, now)
+	runner.SendAllowed = func(context.Context, string) (bool, int, int) {
+		sent := len(store.Issued["t1"])
+		return sent < *limit, *limit, sent
+	}
+	return runner
+}
+
+// A limit of two means two, not sixty.
+//
+// This is the T018 regression in one assertion. Before the fix this same hour
+// produced sixty sends; fifty-eight of them were messages the tenant had
+// explicitly forbidden, and they reached real modems.
+func TestTheSchedulerIsHeldToTheTenantsHourlySendLimit(t *testing.T) {
+	store := bench()
+	start := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	now := start
+	limit := 2
+	runner := limitedRunner(store, &now, &limit)
+	taskID := store.Seed("t1", smsTask(time.Minute, start))
+
+	refused := 0
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		now = start.Add(elapsed)
+		refused += runner.Tick(context.Background()).Limited
+	}
+
+	if issued := len(store.Issued["t1"]); issued != 2 {
+		t.Fatalf("scheduler issued %d sends against hourly_limit=2, want 2 "+
+			"(60 is the pre-T018 bypass: the limit was never consulted)", issued)
+	}
+	if refused != 58 {
+		t.Fatalf("Report.Limited summed to %d over the hour, want 58 "+
+			"(60 occurrences fell due, 2 were issued)", refused)
+	}
+
+	// A schedule that quietly stops sending and a schedule that is being held
+	// back have to be distinguishable, or the operator has no way to find out
+	// why the number went quiet.
+	var task *Task
+	for _, candidate := range store.Tasks["t1"] {
+		if candidate.ID == taskID {
+			task = candidate
+		}
+	}
+	if task == nil {
+		t.Fatal("task vanished from the store")
+	}
+	if task.LastStatus != StatusSkippedLimit {
+		t.Fatalf("last_status = %q, want %q", task.LastStatus, StatusSkippedLimit)
+	}
+	if task.LastOccurrence != 60 {
+		t.Fatalf("last_occurrence = %d, want 60: refused occurrences are being "+
+			"left owed instead of closed", task.LastOccurrence)
+	}
+}
+
+// The refusals must not pile up into the burst the limit exists to prevent.
+//
+// A refused occurrence is closed, not owed. If it were owed, the moment the
+// hour rolled over and the budget came back, the whole backlog would go out at
+// once -- which is precisely the runaway the limit is there to stop.
+func TestRefusedOccurrencesAreDroppedRatherThanQueuedIntoABurst(t *testing.T) {
+	store := bench()
+	start := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	now := start
+	limit := 2
+	runner := limitedRunner(store, &now, &limit)
+	store.Seed("t1", smsTask(time.Minute, start))
+
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		now = start.Add(elapsed)
+		runner.Tick(context.Background())
+	}
+	if issued := len(store.Issued["t1"]); issued != 2 {
+		t.Fatalf("first hour issued %d, want 2", issued)
+	}
+
+	// The budget comes back. Exactly one occurrence is due.
+	limit = 1000
+	now = start.Add(61 * time.Minute)
+	runner.Tick(context.Background())
+
+	if issued := len(store.Issued["t1"]); issued != 3 {
+		t.Fatalf("after the limit lifted the scheduler had issued %d in total, want 3: "+
+			"%d refused occurrences were replayed as a burst", issued, issued-3)
+	}
+}
+
+// A nil hook means unlimited, and that is deliberate.
+//
+// The limit exists to stop a runaway loop, not to become an outage, so the
+// zero value of Runner sends. The cost is that forgetting the field brings the
+// bypass back, which is why the production wiring is asserted in package main
+// rather than trusted to review.
+func TestANilSendAllowedHookLeavesTheSchedulerUnlimited(t *testing.T) {
+	store := bench()
+	start := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	now := start
+	runner := runnerFor(store, &now)
+	if runner.SendAllowed != nil {
+		t.Fatal("runnerFor should leave SendAllowed nil for this test to mean anything")
+	}
+	store.Seed("t1", smsTask(time.Minute, start))
+
+	refused := 0
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		now = start.Add(elapsed)
+		refused += runner.Tick(context.Background()).Limited
+	}
+	if issued := len(store.Issued["t1"]); issued != 60 {
+		t.Fatalf("unlimited tenant issued %d sends, want 60", issued)
+	}
+	if refused != 0 {
+		t.Fatalf("Report.Limited = %d for a tenant with no limit, want 0", refused)
+	}
+}
+
+// The send limit counts messages, so it must not touch a schedule that sends
+// none. A public_ip_check reads a value the edge already reported; throttling
+// it because the SMS budget is gone would be a guard firing on the wrong axis.
+func TestANonSMSScheduleIsNotSubjectToTheSendLimit(t *testing.T) {
+	store := bench()
+	start := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	now := start
+	runner := runnerFor(store, &now)
+	// Refuse everything: the tenant's SMS budget is completely exhausted.
+	runner.SendAllowed = func(context.Context, string) (bool, int, int) {
+		return false, 1, 999
+	}
+	store.Seed("t1", Task{
+		Name:            "egress-ip-watch",
+		Enabled:         true,
+		Action:          ActionPublicIPCheck,
+		Selector:        Selector{Mode: SelectorCard, ICCID: "8986003031401770106"},
+		IntervalSeconds: 60,
+		AnchorAt:        start,
+	})
+
+	checked, refused := 0, 0
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		now = start.Add(elapsed)
+		report := runner.Tick(context.Background())
+		checked += report.Checked
+		refused += report.Limited
+	}
+	if refused != 0 {
+		t.Fatalf("a public_ip_check schedule was rate limited %d times, want 0", refused)
+	}
+	if checked != 60 {
+		t.Fatalf("public_ip_check ran %d times with the SMS budget exhausted, want 60", checked)
+	}
+}

@@ -38,6 +38,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/schedule"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/telegram"
@@ -3123,5 +3124,210 @@ func TestACardPolicyPushUsesTheSharedWindow(t *testing.T) {
 	if window < commands.CardPolicyTTL || window > commands.CardPolicyTTL+time.Minute {
 		t.Fatalf("expiry window = %v, want commands.CardPolicyTTL (%v)",
 			window, commands.CardPolicyTTL)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T018: the scheduler is subject to the tenant's hourly send limit.
+//
+// The limit used to be enforced only in the handler below, so anything that
+// reached app.enqueue_command by another route was unbounded. The scheduler was
+// that route, and it was not merely unchecked: its sends are recorded as
+// outbound, which is the very table the limit counts, so it spent the tenant's
+// budget without ever reading it.
+
+// t018Fictional identifiers. Deliberately not any module on the bench.
+const (
+	t018Tenant = "t-a"
+	t018Device = "d-a"
+	t018ICCID  = "80000000000000000001"
+	t018IMEI   = "800000000000001"
+)
+
+// scheduleLimitBench wires a process the way main.go wires production and
+// returns a runner whose clock the caller drives. Batch is left unset on
+// purpose so runner.batch() is the production default.
+//
+// Everything here is in memory: no database, no device, no network.
+func scheduleLimitBench(t *testing.T, hourlyLimit int) (
+	*process, *schedule.Memory, *schedule.Runner, *time.Time, http.Handler,
+) {
+	t.Helper()
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{
+		TenantID: t018Tenant, Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{Devices: map[string][]catalog.Device{
+		t018Tenant: {{ID: t018Device, Name: "lab-a", State: "online"}},
+	}}
+	proc.inbox = &messaging.Memory{}
+	config := &settings.Memory{}
+	if err := config.Put(context.Background(), t018Tenant, settings.SectionSMS,
+		map[string]any{"hourly_limit": hourlyLimit}); err != nil {
+		t.Fatal(err)
+	}
+	proc.config = config
+
+	store := &schedule.Memory{
+		Modems: map[string]schedule.Target{t018ICCID: {
+			DeviceID: t018Device, ModemIMEI: t018IMEI, ICCID: t018ICCID,
+		}},
+		Devices:  map[string]bool{t018Device: true},
+		Readings: map[string]schedule.PublicIPReading{},
+	}
+	proc.schedules = store
+
+	now := time.Now()
+	runner := &schedule.Runner{
+		Store:           store,
+		Live:            func() map[string][]string { return map[string][]string{t018Tenant: {t018Device}} },
+		Owner:           "t018-test",
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OnCommandIssued: proc.mirrorScheduledCommand,
+		SendAllowed:     proc.sendAllowed,
+		Now:             func() time.Time { return now },
+	}
+	return proc, store, runner, &now, proc.handler()
+}
+
+func t018KeepaliveTask(anchor time.Time) schedule.Task {
+	return schedule.Task{
+		Name:            "keepalive",
+		Enabled:         true,
+		Action:          schedule.ActionCommand,
+		CommandKind:     "send_sms",
+		Selector:        schedule.Selector{Mode: schedule.SelectorCard, ICCID: t018ICCID},
+		Request:         json.RawMessage(`{"to":"10086","body":"1"}`),
+		IntervalSeconds: 60,
+		AnchorAt:        anchor,
+	}
+}
+
+func t018ConsoleSend(handler http.Handler) int {
+	request := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/commands",
+		strings.NewReader(`{"device_id":"`+t018Device+`","kind":"send_sms",`+
+			`"modem_imei":"`+t018IMEI+`","to":"+15551212","body":"hi"}`)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response.Code
+}
+
+// The end-to-end shape, through the real sendAllowed and the real outbound
+// recorder rather than a stub of either.
+//
+// A limit of ten and a schedule at the 60-second floor: sixty occurrences fall
+// due in the hour and ten of them may be sent. Before T018 all sixty went out.
+func TestAScheduledSendIsCountedAgainstAndHeldToTheHourlyLimit(t *testing.T) {
+	proc, store, runner, now, handler := scheduleLimitBench(t, 10)
+	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	store.Seed(t018Tenant, t018KeepaliveTask(start))
+
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		*now = start.Add(elapsed)
+		runner.Tick(context.Background())
+	}
+
+	issued := len(store.Issued[t018Tenant])
+	if issued != 10 {
+		t.Fatalf("scheduler issued %d sends against hourly_limit=10, want 10 "+
+			"(60 is the pre-T018 bypass)", issued)
+	}
+
+	// The limiter must be able to see those sends. Without this the assertion
+	// above cannot tell "the scheduler was held" from "nothing was recorded".
+	allowed, limit, sent := proc.sendAllowed(context.Background(), t018Tenant)
+	if sent != 10 || limit != 10 {
+		t.Fatalf("limiter reads sent=%d limit=%d, want 10 and 10: scheduled sends "+
+			"are not reaching the count the limit is computed from", sent, limit)
+	}
+	if allowed {
+		t.Fatal("sendAllowed still permits sending with the budget exactly spent")
+	}
+
+	// The budget is now legitimately spent, so the console is refused too. This
+	// is a shared budget, not a reservation: T018 stops the scheduler
+	// OVERRUNNING the limit, it does not hold headroom back for the operator.
+	// Asserted so the 429 is a documented consequence rather than a surprise.
+	if code := t018ConsoleSend(handler); code != http.StatusTooManyRequests {
+		t.Fatalf("console send with the budget spent: status = %d, want 429", code)
+	}
+}
+
+// The operator keeps the headroom the tenant actually configured.
+//
+// The companion to the test above: with a limit above the schedule's own rate,
+// the scheduler takes its sixty and the console is still served. A guard that
+// fired here would be the same bug pointed the other way.
+func TestASchedulerUnderTheLimitDoesNotLockTheOperatorOut(t *testing.T) {
+	_, store, runner, now, handler := scheduleLimitBench(t, 100)
+	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	store.Seed(t018Tenant, t018KeepaliveTask(start))
+
+	for elapsed := time.Duration(0); elapsed <= time.Hour; elapsed += 15 * time.Second {
+		*now = start.Add(elapsed)
+		runner.Tick(context.Background())
+	}
+	if issued := len(store.Issued[t018Tenant]); issued != 60 {
+		t.Fatalf("scheduler issued %d sends against hourly_limit=100, want 60", issued)
+	}
+	if code := t018ConsoleSend(handler); code != http.StatusOK {
+		t.Fatalf("console send with 40 of 100 left: status = %d, want 200", code)
+	}
+}
+
+// The guard is nil-able, so the wiring is the guard.
+//
+// schedule.Runner.SendAllowed defaults to nil and nil means unlimited, so a
+// Runner built without it silently reopens the T018 bypass. No test inside
+// package schedule can catch that: they construct their own runners. The only
+// thing that can is an assertion about the literal in main.go itself.
+func TestTheProductionSchedulerIsWiredToTheSendLimit(t *testing.T) {
+	t.Parallel()
+
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, "main.go", nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	literals, wired := 0, 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		selector, ok := literal.Type.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Runner" {
+			return true
+		}
+		if pkg, ok := selector.X.(*ast.Ident); !ok || pkg.Name != "schedule" {
+			return true
+		}
+		literals++
+		for _, element := range literal.Elts {
+			pair, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if key, ok := pair.Key.(*ast.Ident); ok && key.Name == "SendAllowed" {
+				wired++
+			}
+		}
+		return true
+	})
+
+	// Nought found would make this test vacuous -- the failure mode where a
+	// guard reports success because it never looked at anything.
+	if literals == 0 {
+		t.Fatal("no schedule.Runner composite literal found in main.go: this test " +
+			"can no longer see the thing it is guarding")
+	}
+	if wired != literals {
+		t.Fatalf("%d of %d schedule.Runner literals in main.go set SendAllowed. "+
+			"A Runner without it is unlimited, which is the T018 bypass: the "+
+			"scheduler spends the tenant's hourly budget without ever reading it.",
+			wired, literals)
 	}
 }
