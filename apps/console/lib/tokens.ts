@@ -190,7 +190,14 @@ export const COLOR_TOKENS = {
   //
   // 🔴 `--bad` and `--info` are declared with the same names and values in the
   // edge panel's `:root`, in the other repository. Moving them here without
-  // moving them there is precisely the drift oracle 1 exists to catch.
+  // moving them there is real drift, and nothing in this package will notice:
+  // no test here opens the edge file, and neither CI sees both repositories at
+  // once. The comparison is `scripts/check-token-parity.cjs`; it needs both
+  // trees side by side, and nothing runs it automatically.
+  //
+  // ⚠️ This comment used to say oracle 1 caught it. Oracle 1 is a board
+  // acceptance criterion, judged once against the deployed ends — never a
+  // check that runs. Corrected by SN-T020.
   //
   // The four light values did move, and only because their backdrops did: the
   // light surfaces now darken as they rise, so the worst pairing is darker
@@ -281,9 +288,16 @@ export const SPACE_TOKENS = {
  * a step: a pill has to read as a pill at any base, and 999px is how that is
  * said. It is the one value here allowed to be a length of its own.
  *
- * The edge panel declares these same names with these same values, and that
- * agreement is what oracle 1 compares, so renaming one here breaks a check in
- * the other repo rather than anything nearby.
+ * The edge panel declares these same names with these same values. Renaming
+ * one here is a change to the other repository, and nothing nearby will fail:
+ * there is no check in the edge repo that reads its own tokens, and no test
+ * here that reads the edge panel's.
+ *
+ * `scripts/check-token-parity.cjs` is what compares them. It reads both trees,
+ * so it only runs where both are checked out — a workstation, or deploy time
+ * when the two ends ship together. Run it after touching any name here.
+ * ⚠️ Corrected by SN-T020: this used to claim renaming one here "breaks a
+ * check in the other repo". There was no such check.
  */
 export const RADIUS_BASE = "10px";
 
