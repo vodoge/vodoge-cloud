@@ -11,7 +11,7 @@ text is in [`LICENSE`](LICENSE), it applies to every path here, and there is no
 per-path exception. Third-party attribution is in [`NOTICE`](NOTICE).
 
 The source is published, free of charge and without an account, at
-<https://github.com/yuanshuai1122/vodoge-cloud>.
+<https://github.com/vodoge/vodoge-cloud>.
 
 `NOTICE` is not a claim that every dependency is permissive, and it is worth
 reading before you redistribute a build. The gateway's eleven third-party Go

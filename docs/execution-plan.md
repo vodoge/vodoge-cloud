@@ -287,11 +287,22 @@ base64 字符串，每台设备都拒收。
 
 #### 1.3 发送限额真正生效
 
-- **做什么**：`hourly_limit` 目前**只在设置里校验和存储**，
-  发送路径上没有任何地方读它。
-- **动哪里**：读取在 `apps/gateway/internal/settings/settings.go:139`，
-  执行点要加在发短信的命令入队处。
-- **判据**：限额设为 2，第三条发送被拒并给出明确原因。
+- 🔴 **这一节的事实前提已经过期，但它当初写下的那个意图恰恰指着今天真正的缺口，所以整段留着而不是删掉。**
+- **原文写的是**：`hourly_limit` 只在设置里校验和存储，发送路径上没有任何地方读它；
+  读取在 `apps/gateway/internal/settings/settings.go:139`，
+  而**执行点「要加在发短信的命令入队处」**。
+- **现状**（2026-08-27 复核）：**读它的地方已经有了。**
+  `apps/gateway/cmd/gateway/main.go` 的 `enqueueCommand` handler 里那段
+  `if spec.Kind == "send_sms"` 会调 `sendAllowed`，超限回 429 并带上「几条/上限几条」。
+- 🔴 **但计划说的是「入队处」，实现落在了 handler —— T018 的绕过缺口就是这个差别本身。**
+  `POST /v1/commands` 被挡住了；调度器走 `internal/schedule/store.go` 的 `SQL.Fire`，
+  它在事务里发自己的一份 `app.enqueue_command`，从不经过 handler。
+  **T018 实测：限额设为 2，实际发出 60 条。**
+- ⚠️ **不要照字面「把限流下沉到入队函数」** —— Go 侧不存在这样一个函数。
+  到 `app.enqueue_command` 有两条互不相交的路径（`commands.EnqueueTx` 与 `schedule.SQL.Fire`），
+  只改前者，调度器一条都拦不到。取舍写在板子的 note `T018-ratelimit-bypass.md` 里
+  （在**仓库之外**的 `docs/goals/vodoge-shape-nav/notes/`，不是本仓的 `docs/`）。
+- **判据**：限额设为 2，第三条发送被拒并给出明确原因 —— 🔴 **两条路径都要验，只验 handler 会假绿。**
 
 #### 1.4 短信补齐
 
