@@ -100,8 +100,18 @@
      the sRGB ceiling, so only the lightness moved. See lib/tokens.ts for the
      derivation and lib/tokens.test.ts for the pinned ratios.
 
-     🔴 These two are shared with the edge panel's :root. Changing them here
-     without changing them there breaks oracle 1. */
+     🔴 These two are shared with the edge panel's :root, in the other
+     repository, which copies these names and values by hand.
+
+     Nothing in this repository checks that. No test here opens the edge file,
+     and no CI can: cloud CI checks out cloud, edge CI checks out edge. The
+     comparison lives in `scripts/check-token-parity.cjs`, it needs both trees
+     side by side, and NOTHING RUNS IT AUTOMATICALLY — run it before shipping a
+     token change, and at deploy time when both ends go out together.
+
+     Until SN-T020 this comment said changing them here "breaks oracle 1".
+     It did not. Oracle 1 is a board acceptance criterion, judged once against
+     the deployed ends; it was never a check that runs. */
   --ok: #4ade9b;
   --warn: #f0b429;
   --bad: #ffa9ac;

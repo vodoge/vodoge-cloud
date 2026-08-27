@@ -1176,8 +1176,20 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
  *    going red.
  *
  *    ⚠️ **These two names are declared in the edge panel's `:root` as well.**
- *    A change here is a change to the other repository, and oracle 1 compares
- *    the two sets after normalisation.
+ *    A change here is a change to the other repository — and 🔴 **nothing in
+ *    this file, or anywhere in this package, checks that.** The tests here
+ *    hold `globals.css` equal to `tokens.ts`; both are inside `apps/console`.
+ *    No test in this repository has ever opened the edge panel.
+ *
+ *    The cross-repo comparison is `scripts/check-token-parity.cjs`, which
+ *    needs both repositories checked out side by side and is run by hand.
+ *
+ *    ⚠️ Corrected by SN-T020. This comment used to say "oracle 1 compares the
+ *    two sets after normalisation", which read as a description of a running
+ *    check. Oracle 1 is a board acceptance criterion that was judged once,
+ *    against the deployed ends. 🔴 A false claim that a guard exists is at its
+ *    most dangerous inside a test file: someone checking whether the guard is
+ *    real looks here first, and stops searching.
  *
  * ② **The neutral accent is four identities, not four coincidences.** A green
  *    accent needed `--fg-accent` and `--accent-edge` to be separate values in
