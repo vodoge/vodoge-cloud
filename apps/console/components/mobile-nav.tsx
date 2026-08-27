@@ -53,7 +53,7 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
                 className={cn(BOTTOM_NAV.cell, state ? BOTTOM_NAV.cellCurrent : undefined)}
               >
                 <NavIcon d={item.icon} />
-                {t(item.shortKey, locale)}
+                <span className={BOTTOM_NAV.cellLabel}>{t(item.shortKey, locale)}</span>
               </Link>
             );
           })}
@@ -66,7 +66,7 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
                 should stay still while the sheet moves. */}
             <summary className={BOTTOM_NAV.moreTrigger} aria-haspopup="menu">
               <NavIcon d={NAV_MORE.icon} />
-              {t(NAV_MORE.shortKey, locale)}
+              <span className={BOTTOM_NAV.cellLabel}>{t(NAV_MORE.shortKey, locale)}</span>
             </summary>
 
             <div className={BOTTOM_NAV.sheet}>

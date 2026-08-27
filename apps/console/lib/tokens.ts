@@ -1345,14 +1345,55 @@ export const BOTTOM_NAV = {
    * padding away and all five come out at exactly 78.00.
    *
    * 🔴 **Not a defect — what would make it one is the floor, not the span.**
-   * The narrowest cell is 71.59 against a `SIZE_TOKENS.touch` of 44, and
-   * horizontal overflow is 0. ⚠️ Both readings are for the labels shipped
-   * today. Cell widths *do* follow the text, so neither number is a constant:
-   * a thirteen-letter Latin label was measured putting the trigger at 67.30,
-   * still clear of 44. A cell under 44 is the failure worth looking for.
+   * The narrowest cell is 71.59 against a `SIZE_TOKENS.touch` of 44.
+   *
+   * 🔴 **The floor is stated, and stating it is what stops the text deciding
+   * it.** A share of the row with no minimum of its own has its content's, so
+   * the longest label in the row used to settle what every other cell was left
+   * with. Measured: a twenty-one-letter German compound took the four links to
+   * 128.77 apiece and left the overflow trigger — the only way to the other six
+   * destinations — 24.00px wide, with that trigger and the fourth link both
+   * past the right-hand edge of a 390px screen, and the bar 13.19px taller than
+   * the gutter that holds the source footer clear of it. Neither language
+   * shipped today can reach any of that; the narrowest cell zh or en can make
+   * is 71.59, so it is the next translation that meets it.
+   *
+   * Stating a minimum *replaces* the content-based one rather than adding to
+   * it, so the label loses that power outright — and what it is replaced by is
+   * `SIZE_TOKENS.touch`, the same token the height is floored at, so there is
+   * no second number here to keep in step.
+   *
+   * ⚠️ **Nothing was taken from the other four cells to pay for it.** What they
+   * gave up is the claim to be as wide as their longest word, which was never a
+   * claim about the target size. Measured after: zh and en draw the same five
+   * widths to the hundredth of a pixel, and the German label now draws them
+   * too. The arrangement holds down to a 220px viewport, below which five
+   * targets no longer fit side by side at all. Geometry and the mutation run
+   * are in the T012 note under `docs/goals/vodoge-shape-nav/notes/`.
    */
-  cell: "flex min-h-touch flex-1 flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
+  cell: "flex min-h-touch min-w-touch flex-1 flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
   cellCurrent: "font-semibold text-fg-accent",
+  /**
+   * The label, in an element of its own so that there is something to clip.
+   *
+   * With the cell's width settled by the floor above, a label longer than its
+   * cell still has to go somewhere, and both places it can go are defects. A
+   * bare text node paints across its neighbours. A wrapping one makes the row
+   * taller — and the gutter below is pinned at one target size, so a bar that
+   * grows is a bar that no longer matches the gutter holding the source footer
+   * clear of it. That is the 45 → 58.19px measured on the long label, and the
+   * 13.33px of footer it buried.
+   *
+   * Capped to the cell and cut off with an ellipsis, it does neither. Measured
+   * with the twenty-one-letter label in place: every cell reports its scrollable
+   * width equal to its visible width, so no ink leaves any cell, and the bar
+   * stays level with its gutter at every viewport from 220 to 767.
+   *
+   * ⚠️ **The sheet's rows deliberately do not carry this.** They are full
+   * width with a whole viewport to lay a word out in, and cutting them off
+   * would shorten labels that fit.
+   */
+  cellLabel: "max-w-full truncate",
   /**
    * The trigger, which is a `<summary>`.
    *
@@ -1374,8 +1415,12 @@ export const BOTTOM_NAV = {
    * width: carrying no padding of its own, it settles 8.02px under the four
    * links. `BOTTOM_NAV.cell` holds the measurement and why that is the shape
    * this row is supposed to have rather than a defect.
+   *
+   * 🔴 It carries the same floor as the other four, and it is the cell that
+   * needed it: the remainder of the row lands here, so this is the one that
+   * collapsed — to 24.00px — when a long label made the four links greedy.
    */
-  more: "flex flex-1",
+  more: "flex min-w-touch flex-1",
   /**
    * The sheet, opening upwards out of the bar.
    *

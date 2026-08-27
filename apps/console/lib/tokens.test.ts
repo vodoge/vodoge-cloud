@@ -5149,6 +5149,197 @@ test("five cells, because ten would be below the target size the operator signed
 });
 
 /**
+ * The other half of the 44px promise, and the half nothing was watching.
+ *
+ * `SIZE_TOKENS.touch` reaches this row as a minimum *height*. Nothing pinned a
+ * cell's width, and a cell's width is not a constant: with a zero basis and no
+ * explicit minimum, a flex item's automatic minimum size is its content's, so
+ * the longest label in the row decides what the other cells are left with. The
+ * four links win that argument every time, because their labels are words and
+ * the overflow trigger's is two characters.
+ *
+ * 🔴 **Measured, not reasoned.** Replacing the ten short labels with
+ * `Netzwerkeinstellungen` — twenty-one letters, the ordinary German compound
+ * for "network settings", nothing exotic — put the row at 390x844 at
+ *
+ *     128.77  132.63  128.77  128.77   24.00
+ *
+ * which is three separate failures out of one label. The overflow trigger, the
+ * only way to the other six destinations, was 24px wide. That trigger and the
+ * fourth link were both entirely off the right-hand edge, the row's ink running
+ * 153px past the viewport. And the bar grew from 45px to 58.19px while its
+ * gutter stayed at 45, which dropped the source footer 13.33px underneath it —
+ * the very occlusion the gutter exists to prevent.
+ *
+ * ⚠️ **None of the three can be reproduced in either language shipped today.**
+ * The narrowest cell zh or en can make is 71.59. This is a defect that arrives
+ * with the next translation, which is the case `NavItem.shortKey` exists to
+ * prepare for.
+ *
+ * 🔴 **A floor alone would not have been enough, and the near miss is worth
+ * keeping.** With all five labels German the narrowest cell measures 128.77 —
+ * comfortably over 44, and still 257px off the right-hand edge of a 390px
+ * screen. A width check that only asks "is every cell at least a touch target"
+ * returns green on that layout. What closes it is that an explicit minimum
+ * width *replaces* the automatic one instead of adding to it, so the label
+ * loses the power to push at all; the test next door keeps the label inside
+ * the cell that replacement leaves it.
+ *
+ * That replacement is also the answer to where the room comes from. Nothing is
+ * taken from the other four cells that they were entitled to: what they give
+ * up is their claim to be as wide as their longest word, which was never a
+ * claim about touchability. Measured after, at 390: zh and en are unchanged to
+ * the hundredth of a pixel at 79.59 / 79.61 / 79.59 / 79.61 / 71.59, and the
+ * German label now lands on those same five numbers. The arrangement holds
+ * down to a 220px viewport, below which five touch targets no longer fit on a
+ * screen at all.
+ *
+ * The membership of the row is derived rather than listed: a cell is a recipe
+ * that takes a share of the row, and nothing else in this object grows. A
+ * sixth cell is covered without this test being edited.
+ */
+test("a cell of the phone bar has a floor on its width, from the token that gives it its height", async () => {
+  // `as const` makes every value a literal type, so a type predicate widening
+  // them back to `string` is rejected. The runtime filter is kept — a non-string
+  // creeping into this object should drop out here rather than be stringified.
+  const recipes = Object.entries(BOTTOM_NAV).flatMap(([name, value]) =>
+    typeof value === "string" ? [[name, value] as [string, string]] : [],
+  );
+  const split = (recipe: string) => recipe.split(/\s+/).filter(Boolean);
+
+  const cells = recipes.filter(([, recipe]) => split(recipe).includes("flex-1"));
+  // An extractor that had stopped finding anything would leave the loop below
+  // empty, and an empty loop passes.
+  assert.ok(
+    cells.length >= 2,
+    `only ${cells.length} recipe(s) take a share of the row: the four links and the overflow trigger ` +
+      "are two recipes between them, so this has stopped reading the bar",
+  );
+
+  const widthFloors = new Set<string>();
+  for (const [name, recipe] of cells) {
+    const floor = split(recipe).find((part) => part.startsWith("min-w-"));
+    assert.ok(
+      floor,
+      `BOTTOM_NAV.${name} takes a share of the row with nothing under its width: its cell becomes ` +
+        `whatever the longest label in the row leaves over, measured at 24.00px against a ` +
+        `${SIZE_TOKENS.touch} target`,
+    );
+    widthFloors.add(floor.slice("min-w-".length));
+  }
+
+  // One token rather than two numbers kept in step. Both sets are read off the
+  // recipes, so a floor written as a length of its own arrives here as a second
+  // entry instead of quietly drifting away from the height.
+  const heightFloors = new Set(
+    recipes
+      .flatMap(([, recipe]) => split(recipe).filter((part) => part.startsWith("min-h-")))
+      .map((part) => part.slice("min-h-".length)),
+  );
+  assert.deepEqual(
+    [...widthFloors].sort(),
+    ["touch"],
+    `the row's cells are floored at ${[...widthFloors].join(", ")} rather than at the target size`,
+  );
+  assert.deepEqual(
+    [...heightFloors].sort(),
+    ["touch"],
+    `the bar's heights are floored at ${[...heightFloors].join(", ")}, so the width floor no longer names the same token`,
+  );
+  assert.equal(SIZE_TOKENS.touch, "44px");
+
+  // The utility has to exist, or the floor is a class that styles nothing. The
+  // negative arm is on the same axis on purpose: an axis that accepted an
+  // invented length would let a future cell be floored at something that is not
+  // the token, which is the drift this whole file is built to refuse.
+  const generated = await generatedClasses(["min-w-touch", "min-w-13px"]);
+  assert.ok(generated.has("min-w-touch"), "the width floor generates no rule, so nothing is floored");
+  assert.ok(
+    !generated.has("min-w-13px"),
+    "the minimum-width axis accepts a length of its own: a cell can be floored off the scale",
+  );
+});
+
+/**
+ * What keeps the label inside the cell the floor gives it.
+ *
+ * With the cell's width settled, a label longer than the cell has to go
+ * somewhere, and the two places it can go are both defects. Left to spill, it
+ * paints across its neighbours. Left to wrap, it makes the row taller — and the
+ * bar's gutter is a separate element pinned at one touch target, so a bar that
+ * grows is a bar that stops matching the gutter holding the source footer clear
+ * of it. That is not hypothetical: it is the 45 → 58.19px growth measured above,
+ * and the 13.33px of footer it buried.
+ *
+ * So every label the bar draws goes inside an element that clips. Measured
+ * after: with the German label in place, every cell reports `scrollWidth`
+ * equal to `clientWidth` — no ink outside any cell — and the bar stays 45px
+ * against a 45px gutter at every width from 220 to 767.
+ *
+ * ⚠️ **The sheet's links deliberately do not get this.** They are full-width
+ * rows with a whole viewport to lay a word out in, and clipping them would
+ * truncate labels that fit. The subject here is the bar's cells only.
+ */
+test("a label on the phone bar is clipped rather than allowed to widen its cell", async () => {
+  const tags = openingTags(readSource("components/mobile-nav.tsx"));
+
+  // 🔴 The lookahead is not decoration. `BOTTOM_NAV.cellCurrent` and
+  // `BOTTOM_NAV.cellLabel` both contain `BOTTOM_NAV.cell`, so a plain substring
+  // test counts three cells where there is one — the "one string is a substring
+  // of another" miscount this repo has already been bitten by twice.
+  const cells = tags.filter((tag) => /BOTTOM_NAV\.(?:cell|moreTrigger)(?![A-Za-z])/.test(tag.text));
+  const labels = tags.filter((tag) => /BOTTOM_NAV\.cellLabel(?![A-Za-z])/.test(tag.text));
+
+  assert.ok(
+    cells.length >= 2,
+    `${cells.length} element(s) carry a cell recipe: the links and the overflow trigger are two ` +
+      "between them, so this has stopped reading the component",
+  );
+  assert.equal(
+    labels.length,
+    cells.length,
+    `${cells.length} cell(s) on the bar and ${labels.length} clipped label(s): a cell whose label is ` +
+      "drawn bare will spill across its neighbours, or wrap and take the bar out of step with the " +
+      "gutter that holds the source footer clear of it",
+  );
+
+  // What "clips" has to mean, asked of the real build rather than of the class
+  // name — a recipe that clipped by some other spelling should pass, and one
+  // that stopped clipping must not.
+  const propertiesOf = async (recipe: string) => {
+    const result = await postcss([
+      tailwindcss({ ...tailwindConfig, content: [{ raw: recipe, extension: "html" }] }),
+    ]).process("@tailwind utilities;", { from: undefined });
+    const properties = new Set<string>();
+    result.root.walkRules((rule) => {
+      rule.walkDecls((declaration) => {
+        properties.add(declaration.prop);
+      });
+    });
+    return properties;
+  };
+
+  const clipping = await propertiesOf(BOTTOM_NAV.cellLabel);
+  for (const property of ["overflow", "text-overflow", "white-space", "max-width"]) {
+    assert.ok(
+      clipping.has(property),
+      `BOTTOM_NAV.cellLabel sets no ${property}: it is ${JSON.stringify(BOTTOM_NAV.cellLabel)}, which ` +
+        "does not contain a label that outgrows its cell",
+    );
+  }
+
+  // The negative arm. Without it the reading above would pass just as well if
+  // `propertiesOf` returned every property in Tailwind.
+  const notClipping = await propertiesOf(BOTTOM_NAV.more);
+  for (const property of ["text-overflow", "white-space"]) {
+    assert.ok(
+      !notClipping.has(property),
+      `reading BOTTOM_NAV.more reports ${property}, so the reading above decides nothing`,
+    );
+  }
+});
+
+/**
  * The footer's clearance under the phone bar is a fact about the order two
  * components are drawn in, and nothing else in the suite looks at it.
  *
