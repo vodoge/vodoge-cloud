@@ -3,12 +3,12 @@ import { DM_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { ConnectionStatus } from "@/components/connection-status";
 import { InstallPrompt, ServiceWorker } from "@/components/pwa";
-import { Shell } from "@/components/shell";
+import { Shell, SourceFooter } from "@/components/shell";
 import { htmlLang, t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { TENANT_HEADER } from "@/lib/tenant";
 import { getTenantFromHeaders, sessionToken } from "@/lib/tenant-headers";
-import { COLOR_TOKENS, SAFE_AREA } from "@/lib/tokens";
+import { COLOR_TOKENS, SAFE_AREA, SHELL } from "@/lib/tokens";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -178,26 +178,42 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             dismiss: t("pwa.install.dismiss", locale),
           }}
         />
-        {tenant && signedIn ? (
-          <>
-            <Shell tenant={tenant} locale={locale} pathname={pathname}>
-              {children}
-            </Shell>
-            {/* A sibling of the shell rather than part of it: the banner is
-                this card's, the shell is T007's, and they have to be able to
-                change without touching each other. */}
-            <ConnectionStatus
-              labels={{
-                lost: t("connection.lost", locale),
-                stale: t("connection.stale", locale),
-                retry: t("connection.retry", locale),
-              }}
-              loadedAt={loadedAt}
-            />
-          </>
-        ) : (
-          children
-        )}
+        {/* 🔴 The one column every route is drawn in, and the source footer
+            at the end of it, are outside the gate below. That is the whole of
+            this card. The shell used to own both, and the shell is the thing
+            the gate withholds — so the source links were on all nine signed-in
+            pages and missing from /login, which is the only page a stranger
+            can reach. T094 measured that on the deployed console: 200 in both
+            languages, no footer, no repository links at all.
+
+            The column moved up here rather than the footer moving down into
+            the shell, because a footer the shell owns is a footer the gate
+            owns. What a signed-in page renders is unchanged by the move: the
+            same header, the same content column, the same footer, the same
+            three children of the same one column. */}
+        <div className={SHELL.root}>
+          {tenant && signedIn ? (
+            <>
+              <Shell tenant={tenant} locale={locale} pathname={pathname}>
+                {children}
+              </Shell>
+              {/* A sibling of the shell rather than part of it: the banner is
+                  this card's, the shell is T007's, and they have to be able to
+                  change without touching each other. */}
+              <ConnectionStatus
+                labels={{
+                  lost: t("connection.lost", locale),
+                  stale: t("connection.stale", locale),
+                  retry: t("connection.retry", locale),
+                }}
+                loadedAt={loadedAt}
+              />
+            </>
+          ) : (
+            children
+          )}
+          <SourceFooter locale={locale} />
+        </div>
       </body>
     </html>
   );
