@@ -1743,21 +1743,46 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
 
     // And the other direction. The content column is padded by an equal gutter
     // on both sides, so the commonest left/right pair in the frame is
-    // symmetric — 24|24 on 713 of the narrow rows and 523 of the wide ones.
-    // Lay the page out wider than the frame and the right gutter is gone; lay
-    // it out narrower and the right gutter is enormous. Either way this pair
-    // stops matching, which is what a crop looks like from the pixels.
+    // symmetric. Lay the page out wider than the frame and the right gutter is
+    // gone; lay it out narrower and the right gutter is enormous. Either way
+    // this pair stops matching, which is what a crop looks like from the
+    // pixels.
+    //
+    // 🔴 The gutter is measured from WHERE THE CANVAS STARTS, not from the
+    // frame edge, and that is not a loosening — it is what keeps this
+    // answerable at all. The original scan began at x=0 and dropped any row
+    // whose ink reached the left edge (`first <= 0`). From `md` up this
+    // console now mounts a full-height rail AT x=0, so on the wide frame every
+    // single row was dropped: the histogram came back empty and the test
+    // failed with "only 0 rows share a gutter pair (none)" against a perfectly
+    // good capture. A criterion no correct frame can satisfy manufactures a
+    // false red, and this one had become one the moment the rail landed.
+    //
+    // Starting at the first canvas pixel puts the measurement back on the
+    // content column wherever that column begins. On a frame with no rail the
+    // first canvas pixel is x=0 and this is byte-for-byte the original
+    // computation, which is why the narrow frame's numbers do not move.
     const pairs = new Map<string, number>();
     for (let y = 0; y < image.height; y++) {
+      let canvasFrom = -1;
+      for (let x = 0; x < image.width; x++) {
+        if (isCanvas(x, y)) {
+          canvasFrom = x;
+          break;
+        }
+      }
+      // A row with no canvas at all (inside the bar, inside the header band)
+      // has no content column to measure, exactly as before.
+      if (canvasFrom < 0) continue;
       let first = -1;
       let last = -1;
-      for (let x = 0; x < image.width; x++) {
+      for (let x = canvasFrom; x < image.width; x++) {
         if (isCanvas(x, y)) continue;
         if (first < 0) first = x;
         last = x;
       }
-      if (first <= 0 || last >= image.width - 1) continue;
-      const key = `${first}|${image.width - 1 - last}`;
+      if (first < 0 || last >= image.width - 1) continue;
+      const key = `${first - canvasFrom}|${image.width - 1 - last}`;
       pairs.set(key, (pairs.get(key) ?? 0) + 1);
     }
     const [modal, rows] = [...pairs.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
@@ -1801,8 +1826,8 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
  * offsets, so all three are load-bearing.
  */
 const TOP_PROFILE: Record<string, { fg: number; line: number; content: number }> = {
-  "/screenshot-mobile.png": { fg: 29, line: 88, content: 16 },
-  "/screenshot-wide.png": { fg: 26, line: 8, content: 8 },
+  "/screenshot-mobile.png": { fg: 54, line: 16, content: 16 },
+  "/screenshot-wide.png": { fg: 18, line: 0, content: 0 },
 };
 
 test("each screenshot starts at the top of the document, not part way down it", () => {
@@ -2309,11 +2334,16 @@ function chromeDigest(files: string[]): string {
  * note that guard B will not accept it for anything structural.
  */
 const CAPTURED_FROM = {
-  commit: "5edf5a3",
-  chrome: "9e0fff7b008e2058df5b04a9f5e11be278965b2da8e752192cd865945409f027",
+  // The commit whose CHROME these frames show. The PNGs themselves are written
+  // by the commit that carries this stamp, which cannot name its own hash; this
+  // one is what `git archive <commit> apps/console` has to be run against to
+  // reproduce the digest below, and it is exact because the recapture commit
+  // touches no file in the closure (it changes only this test and public/).
+  commit: "61659b2",
+  chrome: "c6978afa637dc81eac2b29ebc53ab62dc51260cd5e9b93aa0591a694a57e13bf",
   shots: {
-    "/screenshot-mobile.png": "ceb31711176516450b2e460ab3a8eaea6a0c9dc4a99ef4823ed6e38b7becc4a6",
-    "/screenshot-wide.png": "4f5ffb9141724b3fb3e493e0afcbed06baa1870357e3b3a22c61365bc7ca6dd8",
+    "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
+    "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
   } as Record<string, string>,
 };
 
