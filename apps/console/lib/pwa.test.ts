@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -459,14 +460,150 @@ test("the service worker caches the shell and nothing that goes stale", () => {
   assert.deepEqual(cacheable.sort(), ["/_next/static/", "/icon.svg"]);
 });
 
+/**
+ * The files `install` precaches, read straight out of sw.js, with each
+ * identifier (e.g. OFFLINE_URL) resolved to its `const NAME = "..."`.
+ *
+ * Derived from the source rather than transcribed, so adding OR removing a
+ * precached file is itself a change the digest below will see — the same reason
+ * the cacheable list above is parsed instead of listed.
+ */
+function precachedPaths(code: string): string[] {
+  const call = /addAll\(\s*\[([^\]]*)\]/.exec(code);
+  assert.ok(call, "sw.js install no longer calls cache.addAll([...]) — this parser is stale");
+  const paths = call[1]
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const literal = /^["']([^"']+)["']$/.exec(token);
+      if (literal) return literal[1];
+      const bound = new RegExp(`\\b${token}\\s*=\\s*["']([^"']+)["']`).exec(code);
+      assert.ok(bound, `sw.js precaches \`${token}\` but nothing defines it as a string`);
+      return bound[1];
+    });
+  assert.ok(paths.length > 0, "sw.js precaches nothing — this parser is stale");
+  return paths.sort();
+}
+
+/**
+ * A digest of the bytes every precached file will put in the cache.
+ *
+ * Line endings are normalised to LF first, on purpose: the repo is
+ * autocrlf=true, so a working tree is CRLF on Windows and LF in the git blob,
+ * and a digest that flipped with the checkout would be a false red on the next
+ * machine to run this. Normalised, it is the content's own digest either way.
+ */
+function precacheDigest(paths: string[]): string {
+  const perFile = paths.map((path) => {
+    const lf = readPublic(path.replace(/^\//, "")).toString("latin1").replace(/\r\n/g, "\n");
+    return `${path}:${createHash("sha256").update(lf, "latin1").digest("hex")}`;
+  });
+  return createHash("sha256").update(perFile.join("\n")).digest("hex");
+}
+
+/**
+ * The precache digest recorded against each cache version.
+ *
+ * This is a frozen literal, NOT a value measured from the files it checks. A
+ * digest recomputed from the same bytes on both sides would always agree with
+ * them: it could catch "the digest was computed wrong" and never "a precached
+ * file changed and nobody bumped the version" — which is the whole failure this
+ * guards. The person who edits offline.html has no reason to open this file, so
+ * the mismatch surfaces on their machine, in the run they were going to make.
+ *
+ * Bumping CACHE means adding the new version's digest here; the failure message
+ * prints the exact line to paste. Past versions stay as a record.
+ */
+const PRECACHE_DIGESTS: Record<number, string> = {
+  3: "aa289d84e9f88eb565630f623be3fd26b18afd93aba5e09ab88f13867b05e8b4",
+};
+
 test("the cache name is bumped when a precached file changes", () => {
   const code = serviceWorkerCode();
-  // `install` is the only writer of the offline page and it only runs when the
-  // bytes of sw.js differ. Editing offline.html without touching this leaves
-  // every installed console serving the old one forever.
+  // `install` is the only writer of these files and the browser only re-runs it
+  // when the bytes of sw.js differ, so a precached file can change while every
+  // already-installed console keeps the old bytes. Binding their digest to the
+  // version is what makes that impossible to do silently.
   const version = /CACHE\s*=\s*["']vodoge-shell-v(\d+)["']/.exec(code);
   assert.ok(version, "the cache name no longer carries a version");
-  assert.ok(Number(version[1]) >= 2, "offline.html changed in T016; the cache was not bumped");
+  const at = Number(version[1]);
+  const digest = precacheDigest(precachedPaths(code));
+
+  const recorded = PRECACHE_DIGESTS[at];
+  assert.ok(
+    recorded !== undefined,
+    `CACHE is at v${at} but PRECACHE_DIGESTS has no entry for it. If you bumped the ` +
+      `version, record this build's precache digest:\n    ${at}: "${digest}",`,
+  );
+  assert.equal(
+    digest,
+    recorded,
+    `a precached file changed but CACHE is still v${at}: install will not re-run for ` +
+      `consoles installed before the change, so they would serve the old shell ` +
+      `forever. Bump CACHE and record\n    ${at + 1}: "${digest}",\nin PRECACHE_DIGESTS.`,
+  );
+});
+
+/**
+ * Run sw.js the way a browser would — execute its top level so its listeners
+ * register — against a mock `self` and `caches`, and return the handlers with a
+ * record of what it opened and deleted. This executes the real file, so the
+ * claim that activate self-cleans on a bump is run, not read off the source.
+ */
+type SWEvent = { waitUntil(promise: Promise<unknown>): void };
+type SWHandler = (event: SWEvent) => void;
+
+function runServiceWorker(): { handlers: Record<string, SWHandler>; present: Set<string>; deleted: string[] } {
+  const handlers: Record<string, SWHandler> = {};
+  const present = new Set<string>();
+  const deleted: string[] = [];
+  const cacheApi = {
+    keys: async () => [...present],
+    open: async (name: string) => {
+      present.add(name);
+      return { addAll: async () => {}, put: async () => {} };
+    },
+    delete: async (name: string) => {
+      deleted.push(name);
+      return present.delete(name);
+    },
+    match: async () => undefined,
+  };
+  const swSelf = {
+    addEventListener: (type: string, fn: SWHandler) => {
+      handlers[type] = fn;
+    },
+    skipWaiting: () => {},
+    clients: { claim: async () => {} },
+  };
+  // sw.js reads the bare globals `self`, `caches` and `URL`; pass all three so
+  // running it touches nothing in the real environment.
+  new Function("self", "caches", "URL", readPublic("sw.js").toString("utf8"))(swSelf, cacheApi, URL);
+  return { handlers, present, deleted };
+}
+
+test("activate deletes every cache but the current one, so bumping self-cleans", async () => {
+  const current = /CACHE\s*=\s*["'](vodoge-shell-v\d+)["']/.exec(serviceWorkerCode());
+  assert.ok(current, "the cache name no longer carries a version");
+  const sw = runServiceWorker();
+  // What older workers and the runtime cache would have left behind, plus the
+  // cache the current worker is about to serve from.
+  for (const name of ["vodoge-shell-v1", "vodoge-shell-v2", current[1], "vodoge-runtime"]) {
+    sw.present.add(name);
+  }
+  const activate = sw.handlers.activate;
+  assert.ok(activate, "sw.js registered no activate handler");
+  const waits: Promise<unknown>[] = [];
+  activate({ waitUntil: (promise) => waits.push(promise) });
+  await Promise.all(waits);
+
+  assert.ok(sw.present.has(current[1]), "activate deleted the cache the current worker serves from");
+  assert.deepEqual(
+    [...sw.present].sort(),
+    [current[1]],
+    "activate left an old cache behind, so a bump would not self-clean and caches pile up",
+  );
 });
 
 /* ── The offline page ────────────────────────────────────────────────── */

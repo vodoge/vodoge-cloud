@@ -18,8 +18,11 @@
  * cache by name, so the bump is also what stops them accumulating.
  *
  * v2: offline.html became bilingual (T016).
+ * v3: offline.html's corner and type went on the scale and the page was
+ *     rewritten (T013); this bump is what carries that fix to consoles that
+ *     were installed before it, which install alone never would.
  */
-const CACHE = "vodoge-shell-v2";
+const CACHE = "vodoge-shell-v3";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {
