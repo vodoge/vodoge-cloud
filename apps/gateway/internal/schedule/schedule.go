@@ -96,6 +96,10 @@ const (
 	// StatusStoreFailed means the enqueue transaction did not commit. Safe to
 	// retry for the same reason every other repeat is safe.
 	StatusStoreFailed = "store_failed"
+	// StatusSkippedLimit means the tenant's hourly send limit was already
+	// reached, so this occurrence was not issued. It is closed rather than
+	// retried, for the same reason StatusSkippedStale is.
+	StatusSkippedLimit = "skipped_limit"
 )
 
 // Errors the preparation stage can return. All of them are retryable: none has
@@ -402,9 +406,48 @@ type Runner struct {
 	// scheduled SMS belongs in the conversation the same as a clicked one.
 	// Called after the enqueue transaction commits, so it cannot roll it back.
 	OnCommandIssued func(tenantID string, plan Plan, commandID string)
-	Now             func() time.Time
-	Logger          *slog.Logger
+	// SendAllowed is asked before every send_sms occurrence. It is the same
+	// question POST /v1/commands asks, answered by the same function
+	// (process.sendAllowed), so the two paths cannot drift into counting
+	// different things.
+	//
+	// Why the scheduler has to ask at all: scheduled sends are already
+	// *counted* against the tenant's hourly budget, because OnCommandIssued
+	// records them as outbound messages and that is the table the limit counts.
+	// A scheduler that spends the budget without ever reading it does not
+	// merely evade the limit -- it exhausts the tenant's quota and locks the
+	// operator out of the console with a 429.
+	//
+	// Three properties of this guard are deliberate. Do not read it as strict.
+	//
+	//  1. Nil means unlimited: a fail-open default, matching sendAllowed's own
+	//     fail-open branches. A limit exists to stop a runaway loop, not to
+	//     become an outage. The cost is that a future Runner literal that
+	//     forgets this field bypasses the limit again -- the same shape as the
+	//     bug this field fixes, one level down. That is why the production
+	//     wiring is pinned by an assertion in package main rather than left to
+	//     reviewer attention; search for SendAllowed in cmd/gateway/main_test.go.
+	//  2. It is checked here, in Go, OUTSIDE the Store.Fire transaction, so it
+	//     is TOCTOU across processes. More than one gateway may tick at a time,
+	//     and each reads the count independently, so a limit of 1 can still let
+	//     2 messages out. This is known and accepted, not overlooked: only a
+	//     check inside the enqueue transaction would be exact. Treat this as a
+	//     bound on runaway volume, not as an exact quota.
+	//  3. It bounds messages. Batch bounds tasks. They are different units; see
+	//     the comment on Batch.
+	SendAllowed func(ctx context.Context, tenantID string) (allowed bool, limit, sent int)
+	Now         func() time.Time
+	Logger      *slog.Logger
 	// Batch bounds how many tasks one tenant can claim per tick.
+	//
+	// It is NOT a send ceiling and must not be read as one: it counts
+	// scheduled_tasks rows claimed, not messages. Each claim yields exactly one
+	// occurrence, the tick is 15s, the interval floor is 60s, and nothing caps
+	// how many tasks a tenant may create -- so the default of 32 permits on the
+	// order of 32*60 = 1920 sends an hour. Before SendAllowed existed that was
+	// the only numeric ceiling on this path, roughly three orders of magnitude
+	// above any plausible hourly limit. Reading "32" as a message cap is the
+	// mistake this comment exists to prevent.
 	Batch int
 	// Lease is how long a claim is held before another worker may take it.
 	Lease time.Duration
@@ -421,6 +464,7 @@ type Report struct {
 	Expired  int
 	Pruned   int
 	Conflict int
+	Limited  int
 }
 
 func (runner *Runner) now() time.Time {
@@ -591,6 +635,29 @@ func (runner *Runner) issueCommand(
 		ExpiresAt:      now.Add(commandTTL(claim.IntervalSeconds)),
 		To:             request.To,
 		Body:           request.Body,
+	}
+
+	if plan.Kind == "send_sms" && runner.SendAllowed != nil {
+		if allowed, limit, sent := runner.SendAllowed(ctx, tenantID); !allowed {
+			// Closed, not retried. Mapping a refusal onto StatusStoreFailed --
+			// documented "safe to retry" -- would retry a limited occurrence
+			// every tick for the rest of the hour. Dropping it matches
+			// StatusSkippedStale: a limited keepalive that queued its refusals
+			// would deliver the whole backlog the moment the hour rolled over,
+			// which is the burst the limit exists to prevent.
+			report.Limited++
+			occurrence := claim.Occurrence
+			runner.logger().Warn("scheduled send skipped, tenant hourly limit reached",
+				"tenant_id", tenantID, "task_id", claim.Task.ID, "task", claim.Task.Name,
+				"occurrence", occurrence, "limit", limit, "sent", sent)
+			runner.finish(ctx, tenantID, Completion{
+				TaskID:     claim.Task.ID,
+				Occurrence: &occurrence,
+				Status:     StatusSkippedLimit,
+				Detail:     mustDetail(map[string]any{"limit": limit, "sent": sent}),
+			})
+			return
+		}
 	}
 
 	commandID, err := runner.Store.Fire(ctx, tenantID, plan)

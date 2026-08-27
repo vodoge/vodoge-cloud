@@ -233,6 +233,7 @@ func main() {
 		Owner:           schedulerOwner(),
 		Sweep:           proc.sweep,
 		OnCommandIssued: proc.mirrorScheduledCommand,
+		SendAllowed:     proc.sendAllowed,
 		Logger:          logger,
 	}
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
