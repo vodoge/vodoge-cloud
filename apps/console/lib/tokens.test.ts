@@ -5022,10 +5022,20 @@ test("nav highlighting distinguishes the page from the section it is in", () => 
  * false failure for `role="contentinfo"`, which is the correct landmark for a
  * page footer. A test that fails when someone adds correct ARIA is a test that
  * teaches the next card to remove it.
+ *
+ * 🔴 **There was a second gate, and every assertion below stayed green while
+ * it was shut.** For eleven days `app/layout.tsx` drew the shell — and so the
+ * footer — only for `tenant && signedIn`. The footer was ungated *inside a
+ * component that was itself gated*, and from inside the component those two
+ * read exactly the same. That is what the next test is for, and why this one
+ * now reads a component the layout renders on its own.
  */
-test("the shell still carries the source footer, for every account", () => {
+test("the source footer is one ungated component, and nothing in it is withheld", () => {
   const source = readSource("components/shell.tsx");
   const { masked, code } = scan(source);
+
+  const componentAt = masked.indexOf("export function SourceFooter");
+  assert.notEqual(componentAt, -1, "the footer is no longer a component of its own");
 
   for (const key of [
     "source.label",
@@ -5040,16 +5050,11 @@ test("the shell still carries the source footer, for every account", () => {
   ]) {
     assert.ok(code.includes(`"${key}"`), `the footer no longer renders ${key}`);
   }
-  assert.equal(
-    (code.match(/target="_blank"/g) ?? []).length,
-    4,
-    "four source links: console, console licensing, edge, edge licensing",
-  );
 
-  const footerAt = masked.indexOf("<footer");
+  const footerAt = masked.indexOf("<footer", componentAt);
   assert.notEqual(footerAt, -1, "the footer element is gone");
-  const returnAt = masked.indexOf("return (");
-  assert.ok(returnAt !== -1 && returnAt < footerAt, "the shell no longer returns a single tree");
+  const returnAt = masked.indexOf("return (", componentAt);
+  assert.ok(returnAt !== -1 && returnAt < footerAt, "the footer component returns something else");
 
   // Every brace opened after the `return (` is closed again before the footer,
   // so the footer is not the consequent of a `? :`, not the right-hand side of
@@ -5063,10 +5068,134 @@ test("the shell still carries the source footer, for every account", () => {
   );
 
   // And no link inside it is gated one at a time.
-  const inside = masked.slice(footerAt, masked.indexOf("</footer>", footerAt));
+  const closeAt = masked.indexOf("</footer>", footerAt);
+  assert.notEqual(closeAt, -1, "the footer element is never closed");
+  const inside = masked.slice(footerAt, closeAt);
   assert.ok(
     !/\?|&&|\|\|/.test(inside),
     "a conditional inside the footer: one of the source links is being withheld",
+  );
+  // Counted inside the element, not across the file: four anchors in a footer
+  // and four anchors somewhere in the same module are not the same claim.
+  assert.equal(
+    (code.slice(footerAt, closeAt).match(/target="_blank"/g) ?? []).length,
+    4,
+    "four source links: console, console licensing, edge, edge licensing",
+  );
+});
+
+/**
+ * 🔴 The gate the footer spent eleven days behind.
+ *
+ * `app/layout.tsx` draws the shell for `tenant && signedIn` and the bare page
+ * otherwise. While the footer was part of the shell, "the footer is ungated"
+ * was true of the shell and false of the console: all nine signed-in pages had
+ * it and `/login` did not — and `/login` is the only page anyone without an
+ * account can reach, which is the whole of why a source link is worth putting
+ * on a page. That is measured, not reasoned: T094 fetched the deployed console
+ * running no JavaScript and got 200, no footer, and zero links to either
+ * repository, in English and in Chinese.
+ *
+ * The same gate is what once made a review conclude the login page had a theme
+ * toggle — the strings were in the delivered chunk, so the control looked
+ * shipped. Neither a string in a chunk nor an ungated element inside a gated
+ * component can say which pages draw it. Where the layout puts it can.
+ */
+test("the root layout draws the source footer outside the sign-in gate", () => {
+  const { masked, code } = scan(readSource("app/layout.tsx"));
+
+  assert.match(
+    code,
+    /import \{[^}]*\bSourceFooter\b[^}]*\} from "@\/components\/shell"/,
+    "the layout does not import the footer component",
+  );
+
+  const layoutAt = masked.indexOf("function RootLayout");
+  assert.notEqual(layoutAt, -1, "the root layout component has been renamed");
+  const returnAt = masked.indexOf("return (", layoutAt);
+  assert.notEqual(returnAt, -1, "the root layout no longer returns a tree");
+
+  const calls = [...code.matchAll(/<SourceFooter\b/g)];
+  assert.equal(calls.length, 1, `the layout draws the footer ${calls.length} times, not once`);
+  const footerAt = calls[0].index;
+  assert.ok(footerAt > returnAt, "the footer is not in the tree the layout returns");
+
+  // The same brace count as the check above, for the same reason: the whole
+  // `{tenant && signedIn ? … : …}` is one expression container, so a footer in
+  // either arm of it leaves an unclosed `{` in this slice.
+  const before = masked.slice(returnAt, footerAt);
+  assert.equal(
+    (before.match(/\{/g) ?? []).length,
+    (before.match(/\}/g) ?? []).length,
+    "the footer is inside an expression container in the layout: it is gated again",
+  );
+
+  // And the gate directly, rather than only by counting: find the container
+  // the sign-in test sits in and require the footer to be outside it.
+  const gateAt = masked.indexOf("signedIn ?", returnAt);
+  assert.notEqual(gateAt, -1, "the sign-in gate is not in the layout's tree any more");
+  let open = -1;
+  for (let i = gateAt, depth = 0; i >= returnAt; i--) {
+    if (masked[i] === "}") depth += 1;
+    else if (masked[i] === "{") {
+      if (depth === 0) {
+        open = i;
+        break;
+      }
+      depth -= 1;
+    }
+  }
+  assert.notEqual(open, -1, "the sign-in gate is not inside an expression container");
+  let close = -1;
+  for (let i = open, depth = 0; i < masked.length; i++) {
+    if (masked[i] === "{") depth += 1;
+    else if (masked[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  assert.notEqual(close, -1, "the gate's expression container is never closed");
+  assert.ok(
+    footerAt < open || footerAt > close,
+    "the footer is inside the branch the sign-in gate picks: /login would lose it again",
+  );
+});
+
+/**
+ * One footer per document, from both ends.
+ *
+ * Moving the footer up a level is exactly the change that leaves a copy
+ * behind, and two footers is the console stating its terms twice — one of
+ * which the next card will edit and the other it will not. Enumerated from
+ * `MIGRATED_SOURCES`, which the ledger test above pins to every `.tsx` under
+ * `app/` and `components/`, so a footer added in a file nobody thought of is
+ * still counted. The live counterpart is in the note: the served HTML of a
+ * signed-in page, fetched with no JavaScript, holds one `<footer>`.
+ */
+test("exactly one element in the tree is a page footer, drawn from exactly one place", () => {
+  // A floor, because this test passes loudest if the ledger comes back empty.
+  assert.ok(MIGRATED_SOURCES.length >= 30, `only ${MIGRATED_SOURCES.length} sources to read`);
+
+  const elements: string[] = [];
+  const drawn: string[] = [];
+  for (const relative of MIGRATED_SOURCES) {
+    const { masked, code } = scan(readSource(relative));
+    elements.push(...(masked.match(/<footer\b/g) ?? []).map(() => relative));
+    drawn.push(...(code.match(/<SourceFooter\b/g) ?? []).map(() => relative));
+  }
+
+  assert.deepEqual(
+    elements,
+    ["components/shell.tsx"],
+    "a second footer element: a page would state the terms twice",
+  );
+  assert.deepEqual(
+    drawn,
+    ["app/layout.tsx"],
+    "the footer component is drawn somewhere else as well",
   );
 });
 
