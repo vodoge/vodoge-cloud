@@ -323,11 +323,31 @@ a {
  * one thing on the page not required to be visible. The edge token exists for
  * this: same hue, same saturation, dark enough to be seen as a line. In the
  * dark theme it is the value that was already here, so nothing moves there.
+ *
+ * ⚠️ **There is deliberately no `border-radius` here, and its absence is a
+ * repair rather than an oversight.** This rule carried `border-radius: 4px`
+ * from the first design-system commit until T008 removed it. It was the wrong
+ * property to set on a focus rule, twice over.
+ *
+ * An `outline` already follows the corner radius of the element it surrounds,
+ * so a control that has a radius has never needed help from here. And this
+ * rule is layered while the utilities are not, so on every one of those
+ * controls the declaration was outranked and did nothing whatever: measured
+ * in the browser against this stylesheet, a 4px rule injected into this layer
+ * computes 8px beside the control utility and 999px beside the pill one,
+ * while the same rule with nothing competing computes 4px.
+ *
+ * Where it was *not* outranked -- a focusable element carrying no corner
+ * utility -- it did not shape the ring so much as reshape the control. The
+ * disclosure summary in `components/ui/card.tsx` carries a bottom border and
+ * no radius, and a checkbox is painted by the user agent with preflight off,
+ * so both visibly changed shape at the instant they took focus. A number here
+ * can only be inert or wrong, and no other number would have been better, so
+ * the ring is left to trace whatever the element already is.
  */
 :focus-visible {
   outline: 2px solid var(--accent-edge);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* Respect the reduced-motion setting rather than assuming everyone wants
