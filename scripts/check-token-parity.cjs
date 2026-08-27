@@ -20,17 +20,33 @@
  * the same shape as `scripts/sync-contract.sh`, and for the same reason: a
  * cross-repo invariant can only be scored where both trees are present.
  *
- * 🔴 NOTHING RUNS THIS AUTOMATICALLY. Neither CI can: cloud CI checks out
- * cloud, edge CI checks out edge. It is a workstation and deploy-time gate.
- * Say so plainly rather than letting the next reader assume coverage — that
- * assumption is the whole defect T020 was opened to fix.
+ * WHAT RUNS IT  (SN-T024 — this paragraph used to say nothing did)
+ *
+ * The `tokens` job in .github/workflows/ci.yml, on every push and pull
+ * request to this repository. It clones the edge repository into a sibling
+ * directory and passes both roots explicitly. Both repositories are public, so
+ * no credential, deploy key or secret is involved — the same shape the edge
+ * repository's own CI already uses to materialise its read-only vowifi-go
+ * mirror beside $GITHUB_WORKSPACE.
+ *
+ * 🔴 What that job does NOT cover, so that nobody reads more into it: it fires
+ * on CLOUD activity. A one-sided drift committed to the edge repository is not
+ * seen until the next push here. And it reads edge `main`, so a token change
+ * that has to move both ends must land on the EDGE side first — see
+ * deploy/RUNBOOK.md, "Design tokens live in two repositories".
+ *
+ * "Nothing runs it automatically" was true from T020 until T024, and the four
+ * comments quoting that sentence (globals.css, lib/tokens.ts x2,
+ * lib/tokens.test.ts) are now stale in the harmless direction — they undersell
+ * the coverage rather than invent it. They still need correcting.
  *
  * USAGE
- *   node scripts/check-token-parity.cjs [cloudRoot] [edgeRoot]
+ *   node scripts/check-token-parity.cjs <cloudRoot> <edgeRoot>
  *                                       [--mutate-cloud <tok>=<val>]
  *                                       [--mutate-edge  <tok>=<val>]
  *
- *   With no arguments it scores the two repo MAIN trees.
+ *   🔴 Both roots are REQUIRED. There are no defaults — see the block above
+ *   the argument parsing for the false green that removing them closed.
  *
  *   --mutate-cloud / --mutate-edge are the built-in negative controls. They
  *   edit an in-memory copy of one side only, never a file, and the run must go
@@ -39,8 +55,8 @@
  * EXIT CODES  (🔴 the 2 is load-bearing — see below)
  *   0  parity holds
  *   1  parity is broken: the two ends really disagree
- *   2  the check could not run at all (a tree is missing, a block will not
- *      parse, the allowlist is malformed)
+ *   2  the check could not run at all (no roots given, a tree is missing, a
+ *      block will not parse, the allowlist is malformed)
  *
  * 🔴 Why 1 and 2 must differ: the tool this replaces threw an uncaught ENOENT
  * and exited 1 when pointed at a missing edge tree — the same code it used for
@@ -152,20 +168,58 @@ for (const f of ["--mutate-edge", "--mutate-cloud"]) {
 }
 const positional = argv.filter((a, i) => !a.startsWith("--") && !excluded.has(i));
 
-const CLOUD_ROOT = positional[0] || "E:/justworkhere/play/vodoge/vodoge-cloud";
-const EDGE_ROOT = positional[1] || "E:/justworkhere/play/vodoge/vodoge-edge";
-
-const CLOUD = path.join(CLOUD_ROOT, "apps/console/app/globals.css");
-const EDGE = path.join(EDGE_ROOT, "edge-panel/src/index.html");
-
 /** Could not run. Distinct from "ran and found drift". */
 function cannotRun(msg) {
   console.error(`cannot run: ${msg}`);
   console.error("");
-  console.error("usage: node scripts/check-token-parity.cjs [cloudRoot] [edgeRoot]");
-  console.error("       with no arguments, scores the two repo main trees");
+  console.error("usage: node scripts/check-token-parity.cjs <cloudRoot> <edgeRoot>");
+  console.error("       both roots are required; there are no defaults");
   process.exit(2);
 }
+
+/* 🔴 BOTH ROOTS ARE REQUIRED. (SN-T024)
+ *
+ * Two hardcoded absolute paths used to sit here as defaults, naming one
+ * workstation's two main trees. They were a false-green generator, and they
+ * failed in both directions at once:
+ *
+ *   · anywhere those paths do not exist — every Linux runner — the script
+ *     exited 2 on the first read. In that form it had never once run.
+ *   · on the machine where they did exist it ran from ANY directory and
+ *     silently scored the two MAIN trees. Measured: a throwaway copy with
+ *     `--touch` genuinely broken at one end scored PARITY OK, exit 0, because
+ *     the copy was never what it read. This repository has 30 worktrees and
+ *     every one of them inherited that.
+ *
+ * 🔴 The worse half is what the defaults did to evidence. Someone who ran the
+ * no-argument form while editing the main trees got correct answers — by luck,
+ * not by design, and with nothing in the output to tell the two apart. That is
+ * this board's recurring shape: a probe returning a perfect pass on the wrong
+ * object. The fix is the same one the board keeps arriving at — make the tool
+ * name what it read, and refuse to guess.
+ *
+ * ⚠️ `--edge <path>` is not accepted and never was, though a card recommended
+ * it: `--edge` is dropped by the `startsWith("--")` filter and its value falls
+ * through as positional[0], i.e. it would have set the CLOUD root and left the
+ * edge on the default. That form now exits 2 instead of scoring the wrong pair.
+ */
+if (positional.length !== 2) {
+  cannotRun(
+    positional.length === 0
+      ? "no roots given. Pass both explicitly; there are no default paths.\n" +
+          "            A default scores whichever trees it was written for, not the ones you are in."
+      : `expected exactly 2 roots, got ${positional.length}: ${JSON.stringify(positional)}`,
+  );
+}
+
+/* Absolute and normalised, so the banner names the real tree rather than
+ * whatever relative form the caller typed. `$GITHUB_WORKSPACE/../vodoge-edge`
+ * and `.` are both legitimate to pass, and neither is legible in a CI log. */
+const CLOUD_ROOT = path.resolve(positional[0]);
+const EDGE_ROOT = path.resolve(positional[1]);
+
+const CLOUD = path.join(CLOUD_ROOT, "apps/console/app/globals.css");
+const EDGE = path.join(EDGE_ROOT, "edge-panel/src/index.html");
 
 /* ── provenance ────────────────────────────────────────────────────────────
  * A linked worktree has a .git FILE, the main worktree a .git DIRECTORY. That
@@ -240,6 +294,22 @@ function edgeRoot(text) {
   return found;
 }
 
+/* ── provenance, printed BEFORE anything is read ───────────────────────────
+ * 🔴 SN-T024: this block used to sit after both files had been read and
+ * parsed, which meant the one run that needs it most — the run that cannot
+ * happen at all — never reached it. Two absolute paths and two HEADs, first,
+ * always. When the next line says `cannot run`, you can still see which pair
+ * of trees the answer was about.
+ *
+ * This is the only thing that ever caught the old defaults, and it is the same
+ * rule this board applies to browser probes: make the instrument assert what
+ * it is pointed at, in its own output. */
+console.log(`cloud  ${CLOUD}`);
+console.log(`       ${provenance(CLOUD_ROOT)}`);
+console.log(`edge   ${EDGE}`);
+console.log(`       ${provenance(EDGE_ROOT)}`);
+console.log("");
+
 /* ── read both trees ───────────────────────────────────────────────────────*/
 function readOrDie(p, what) {
   try {
@@ -270,13 +340,8 @@ if (MUTATE_CLOUD || MUTATE_EDGE) console.log("");
 const cloud = cloudDarkRoot(cloudText);
 const edge = edgeRoot(edgeText);
 
-console.log(`cloud  ${CLOUD}`);
-console.log(`       ${provenance(CLOUD_ROOT)}`);
-console.log(`       ${cloud.size} custom properties in the dark :root`);
-console.log(`edge   ${EDGE}`);
-console.log(`       ${provenance(EDGE_ROOT)}`);
-console.log(`       ${edge.size} custom properties in the VoDoge :root`);
-if (positional.length === 0) console.log("       (no roots given -> both repo main trees)");
+console.log(`cloud  ${cloud.size} custom properties in the dark :root`);
+console.log(`edge   ${edge.size} custom properties in the VoDoge :root`);
 console.log("");
 
 /* ── scoring ───────────────────────────────────────────────────────────────*/

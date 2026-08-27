@@ -295,6 +295,70 @@ So syncing is one command that does all three parts:
 
 Run it after any schema change, before pushing either repository.
 
+## Design tokens live in two repositories
+
+The same story as the contract, with a different resolution. The console's
+`apps/console/app/globals.css` and the edge panel's `edge-panel/src/index.html`
+declare the same token names with the same values. The edge copies them **by
+hand**: it is one self-contained HTML file served by a Rust binary with no
+toolchain on the box, so there is no build step and no generator to lean on.
+
+The guarantee is the `tokens` job in `.github/workflows/ci.yml`. It clones the
+edge repository beside the checkout and scores both trees on every push and
+pull request to this repository, with no credential — both repositories are
+public. **Nothing about it has to be remembered.**
+
+Fast feedback on the workstation, from the repository root, before you push:
+
+```sh
+node scripts/check-token-parity.cjs . ../vodoge-edge   # 0 agree, 1 drift, 2 could not run
+```
+
+**That command is fast feedback, not the guarantee** — the same distinction the
+`tar -tzf` block above draws, and for the same reason: it fails minutes earlier
+and next to the fix. If it and CI ever disagree, CI is right; it is the one that
+runs whether or not anybody read this file.
+
+🔴 **Both roots are required, and there are no defaults.** Passing none exits 2
+and says so. Two hardcoded absolute paths used to sit in that script as
+defaults, and they were a false-green generator: on the one workstation whose
+paths they were, the no-argument form ran from **any** directory and silently
+scored the two main trees. Measured — a throwaway copy with `--touch` genuinely
+broken at one end returned `PARITY OK`, exit 0, because the copy was never what
+it read. This repository has thirty worktrees. Every run now prints the two
+absolute paths and the two HEADs it actually read, first, before anything else.
+
+⚠️ `--edge <path>` does not work and never did, though it has been recommended
+in writing. `--edge` is discarded as an unknown flag and the path after it
+becomes the **cloud** root, so the run fails looking for a stylesheet under the
+edge tree. Pass two bare paths.
+
+### Landing order: the edge side goes first
+
+The job reads edge `main`, which makes the order one-directional:
+
+| Change | Order |
+| --- | --- |
+| A token moving at **both** ends | **Merge the edge PR first**, then the cloud one. |
+| Anything else | No constraint. |
+
+Doing it the other way round leaves the cloud PR red until the edge merge
+lands. **That is the guard working, not the guard broken** — write it off as a
+false alarm and you have taught yourself to ignore the one check that reads
+both trees. It is not a deadlock: only one direction queues, because only one
+side checks.
+
+Two consequences worth knowing before they surprise you:
+
+- **It floats.** A commit that was green here can go red when re-run, because
+  edge `main` moved underneath it. The verdict is correct — that is real drift
+  — but re-running an old commit is not reproducible. ⚠️ **Do not pin the edge
+  ref to fix this.** A pinned copy is the two-snapshots design that was
+  rejected, and the reason still holds: each repository's author can edit their
+  own snapshot, so both CIs go green while the two trees really have drifted.
+- **It fires on cloud activity only.** A one-sided drift committed to the edge
+  repository sits undetected until the next push here.
+
 ## Rate limits
 
 | Endpoint | Limit | Keyed by |
