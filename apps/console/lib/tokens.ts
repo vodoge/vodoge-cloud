@@ -508,6 +508,17 @@ export const TAILWIND_Z_INDEX = {
 export const TAILWIND_WIDTH = {
   auto: "auto",
   full: "100%",
+  /**
+   * The desktop navigation rail, and the one width here that is not spacing.
+   *
+   * A named step rather than a spacing token because it is not spacing: the
+   * scale tops out at 3rem, which is an icon and no word beside it, and the
+   * next thing up is the whole content column. What settles this number is the
+   * longest label the rail draws — `nav.group.settings` beside a 1rem glyph —
+   * and it is the same 14rem the reference console this board is modelled on
+   * arrived at from the same list.
+   */
+  rail: "14rem",
   ...TAILWIND_SPACING,
 } as const;
 
@@ -624,6 +635,17 @@ export const TAILWIND_RING_OFFSET_WIDTH = {
 export const TAILWIND_INSET = {
   "0": "0px",
   auto: "auto",
+  /**
+   * The edge of the parent rather than a length — for something parked
+   * immediately above or beside its anchor.
+   *
+   * The phone bar's overflow sheet needs to open upwards from a bar that is
+   * itself pinned to the bottom of the viewport, and "as tall as whatever it
+   * is sitting on" is not a number this scale could hold: the bar's height is
+   * a touch target plus the home-indicator inset, which is a device fact. The
+   * one alternative was an arbitrary value, and this system rejects those.
+   */
+  full: "100%",
 } as const;
 
 /**
@@ -1111,72 +1133,266 @@ export const BADGE = {
 export const SHELL = {
   root: "flex min-h-dvh flex-col",
   /**
-   * Sticky from `sm` up, not below it.
+   * The rail and the content column, side by side.
    *
-   * The four groups show all ten destinations without a horizontal scroller,
-   * which costs about three wrapped rows on a phone. Pinning that to the top
-   * would hand a quarter of a 390px screen to navigation permanently. Above
-   * `sm` the same nav is one or two rows, so it stays pinned there. The
-   * alternative — keeping it sticky and hiding destinations behind a scroller
-   * — is the arrangement this card was written to replace.
-   *
-   * ⚠️ This read "nine destinations" until 2026-08-27, and the count was never
-   * nine. `NAV_GROUPS` below holds 4 + 4 + 1 + 1 = ten hrefs, all different,
-   * and that array is byte-identical to the pre-refactor baseline — so nothing
-   * removed one and nothing is missing. The sentence was simply wrong from the
-   * day it was written, which is the hard kind of wrong: it describes the file
-   * it sits in, so it reads as observed rather than remembered.
-   *
-   * It is corrected rather than deleted because the wrong number travelled.
-   * "Four groups, nine destinations" reappeared in a goal document and in a
-   * review note, and this is the most likely place it was copied from. A count
-   * written down as an expectation is a check that can never go green: whoever
-   * verifies the navigation against nine will report a defect that nobody
-   * introduced and that no change can fix. Recount from the array, not here.
+   * A row at every width. Below `md` the rail removes itself and this is a row
+   * of one, which costs nothing and means there is no second arrangement to
+   * keep in step with the first.
    */
-  header: "z-20 border-b border-line bg-surface sm:sticky sm:top-0",
+  layout: "flex w-full flex-1",
+  /**
+   * The column beside the rail: header, then content.
+   *
+   * `min-w-0` is load-bearing rather than defensive. A flex item's automatic
+   * minimum size is its content, so one wide table on one page would push the
+   * whole column past the viewport and take the rail off the side of the
+   * screen with it — the sort of overflow that only appears on the one page
+   * with the widest row in it.
+   */
+  column: "flex min-w-0 flex-1 flex-col",
+  /**
+   * Pinned to the top at every width, which it could not be before.
+   *
+   * ⚠️ **The reason it used to unpin below `sm` is gone, and the old note is
+   * kept here in outline because the number in it travelled.** The header
+   * carried the navigation, four groups wrapping to about three rows on a
+   * phone, and pinning that would have handed a quarter of a 390px screen to
+   * navigation permanently. The phone now navigates from `BOTTOM_NAV` and the
+   * header is one row of brand and controls, so there is nothing left to
+   * unpin for.
+   *
+   * ⚠️ That old note also read "nine destinations" until 2026-08-27, and the
+   * count was never nine — `NAV_GROUPS` holds 4 + 4 + 1 + 1 = ten hrefs, all
+   * different. The wrong number reached a goal document and a review note
+   * before anybody recounted. **Recount from the array, never from prose**,
+   * and note that ten is still ten after this card: what changed is where they
+   * are drawn, not how many there are.
+   */
+  header: "sticky top-0 z-20 border-b border-line bg-surface",
   bar: "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s2 sm:px-s5",
-  brand: "flex items-center gap-s2 text-base font-semibold tracking-tight text-fg",
+  /**
+   * The brand in the header, which withdraws once the rail carries it.
+   *
+   * `SHELL.railHeader` arrives at the same breakpoint this leaves at, so the
+   * console's name is on screen once at every width rather than twice at some
+   * of them.
+   */
+  brand: "flex items-center gap-s2 text-base font-semibold tracking-tight text-fg md:hidden",
+  /**
+   * The word beside the mark, withheld on the narrowest screens.
+   *
+   * 🔴 **This line is what makes the header one row, and one row is what makes
+   * pinning it honest.** Measured at 390px: the brand is 84px, the controls
+   * are 302px, and 84 + 12 + 302 = 398 against 366px of usable width — so it
+   * wrapped, and the header stood at 101px. Pinned, that plus the bar would
+   * have taken 146px of a 844px screen permanently, where the old three-row
+   * header took 156px that *scrolled away*. A pinned two-row header is a
+   * worse trade than the arrangement this card replaced, which is the trap
+   * `SHELL.header`'s old note was written about.
+   *
+   * The mark stays, so the console is still identified in the corner; the
+   * word returns at `sm`, and the rail spells it out in full from `md`.
+   *
+   * 🔴 **`sr-only`, not `hidden`, and the difference is the whole link.** The
+   * mark beside it is `aria-hidden` — it is a letter in a box, not a word — so
+   * `display: none` on the text would leave this anchor with no accessible
+   * name at all on exactly the screens the bar is for. `sr-only` takes the
+   * word out of the layout and leaves it in the accessibility tree.
+   */
+  brandName: "sr-only sm:not-sr-only",
   brandMark:
     "flex size-s5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink",
   side: "ml-auto flex flex-wrap items-center gap-s2",
   tenant:
     "inline-flex items-center gap-s2 rounded-pill border border-line bg-surface-hover px-s3 py-s1 text-xs text-fg-muted",
   tenantSlug: "font-semibold text-fg",
-  tenantRegion: "text-fg-faint",
   /**
-   * Laid out with flex, wrapping.
+   * The region beside the slug, withheld on a phone.
    *
-   * The gaps are split: groups need horizontal room to read as groups, but a
-   * matching vertical gap only makes a wrapped nav taller. On a 390px phone in
-   * English this is the difference between a 304px and a 320px header.
+   * 🔴 **This is what decides whether the header is one row or two, and the
+   * header being one row is what makes pinning it affordable.** Measured at
+   * 390px: with the region in the chip the bar wraps and the header is 101px;
+   * without it, one row. The old header was 156px but scrolled away, so a
+   * pinned two-row header would have been a *worse* trade than the thing this
+   * card replaced — 146px of a 844px screen gone permanently.
+   *
+   * The slug is what identifies the tenant; the region is a property of it,
+   * and it is still one tap away on the settings page. Withholding the less
+   * identifying half of a chip is the smallest cut that buys the row.
    */
-  nav: "mx-auto flex w-full max-w-page flex-wrap items-center gap-x-s3 gap-y-s2 px-s3 pb-s2 sm:gap-x-s4 sm:px-s5",
+  tenantRegion: "hidden text-fg-faint sm:inline",
+  /**
+   * The desktop rail, which removes itself on a phone.
+   *
+   * 🔴 **It draws from `NAV_GROUPS`, and so does `BOTTOM_NAV`.** That is the
+   * whole point of this pair: the same ten destinations, two arrangements,
+   * one array. Two lists that happened to agree on the day they were written
+   * are the thing `tokens.test.ts` is set up to reject — it reads both
+   * renderers and fails if either one names a destination itself.
+   *
+   * Below `md` this is `display: none` and the phone bar is what is drawn, so
+   * exactly one of the two is ever on screen.
+   */
+  rail: "hidden w-rail shrink-0 flex-col border-r border-line bg-surface md:flex",
+  /**
+   * The rail's own head, carrying the brand the slim header gives up on wide
+   * screens. `SHELL.brand` withdraws at the same breakpoint this arrives at,
+   * so the name is on screen exactly once.
+   */
+  railHeader:
+    "flex items-center gap-s2 border-b border-line px-s4 py-s3 text-base font-semibold tracking-tight text-fg",
+  /**
+   * A column, scrolling on its own if the groups ever outgrow the viewport.
+   */
+  nav: "flex flex-1 flex-col gap-s3 overflow-y-auto p-s2",
   /**
    * A rule between groups, not only a caption.
    *
    * `uppercase` does the work in English and nothing at all in Chinese, where
    * a dimmer label sitting next to links of the same size still reads as a
    * twelfth link. The divider is what makes the four groups four groups in
-   * both languages.
+   * both languages. It moved from the leading edge to the top edge with the
+   * rail, because a vertical rule between stacked groups separates nothing.
    */
-  navGroup:
-    "flex flex-wrap items-center gap-s1 border-l border-line-strong pl-s3 first:border-l-0 first:pl-0",
+  navGroup: "flex flex-col gap-s1 border-t border-line-strong pt-s3 first:border-t-0 first:pt-0",
   navGroupLabel: "px-s1 font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
-  /**
-   * Full touch height at every width. The horizontal padding and the type
-   * shrink on a phone instead, because a 32px-tall target is the wrong thing
-   * to save space on.
-   */
+  /** Full touch height, and a glyph in front of the word. */
   navLink:
-    "inline-flex min-h-touch items-center rounded px-s2 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg sm:px-s3 sm:text-sm",
+    "flex min-h-touch items-center gap-s2 rounded px-s3 text-sm text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg",
   navLinkCurrent: "bg-accent-wash font-semibold text-fg-accent",
+  /**
+   * The glyph itself, at both sizes it is drawn.
+   *
+   * `shrink-0` because a long label in a narrow rail would otherwise squeeze
+   * the glyph rather than wrap, and a squeezed circle reads as a defect.
+   */
+  navIcon: "size-s4 shrink-0",
   main: "mx-auto w-full max-w-page flex-1 px-s3 py-s4 sm:px-s5 sm:py-s5",
   footer:
     "mx-auto flex w-full max-w-page flex-wrap items-center gap-s3 px-s3 py-s4 text-sm text-fg-muted sm:px-s5",
   footerLabel: "text-fg-faint",
   /** Anchors are `text-decoration: none` globally, so a bare link has to say so. */
   footerLink: "underline transition-colors hover:text-fg",
+} as const;
+
+/* ── The phone's bottom bar ──────────────────────────────────────────────
+ *
+ * 🔴 **The second renderer of `NAV_GROUPS`, and it is not allowed to hold a
+ * list of its own.** `SHELL.rail` draws the same array as four labelled
+ * groups; this draws four of them as cells with a glyph, and puts the other
+ * six behind an overflow trigger. Which four is `NavItem.bottomSlot`; which
+ * six is everything without one, by subtraction. Neither renderer names a
+ * destination, and `tokens.test.ts` fails if either starts to.
+ *
+ * **Five cells, because of arithmetic and not taste.** 390px is the narrowest
+ * phone this console is checked on. Ten destinations laid out at once give
+ * each one 39px, and `SIZE_TOKENS.touch` — the target size the operator signed
+ * off — is 44px. Five give 78px. `bottomNavCellWidth()` computes both, and the
+ * suite recomputes them rather than quoting them, so a sixth cell fails a test
+ * instead of shipping a target nobody can hit.
+ *
+ * ⚠️ **The overflow trigger deliberately does not sink when pressed.** Every
+ * other control in this console does — `BUTTON.base` carries the press — and
+ * the reference this board follows guards that press so it skips anything with
+ * `aria-haspopup`: a control that opens something should stay put while the
+ * thing it opened moves. That guard is written there as a variant with square
+ * brackets in it, and this system rejects every class containing one, so the
+ * guard is expressed by construction instead: the trigger is a `<summary>`
+ * with its own recipe and it never reads `BUTTON.base`. `tokens.test.ts` pins
+ * that, because "we simply did not add it" is the kind of decision that gets
+ * undone by someone tidying up.
+ *
+ * ⚠️ **`env(safe-area-inset-bottom)` cannot be a class here.** `position:
+ * fixed` takes the bar out of `<body>`'s padding box, so it inherits none of
+ * the inset `app/globals.css` puts there, and the class form would need an
+ * arbitrary value. It is an inline style — `SAFE_AREA.fixedBottom`, the same
+ * one the connection banner uses.
+ */
+
+export const BOTTOM_NAV = {
+  /**
+   * ⚠️ Shares `z-20` and this exact corner with `BANNER.bar`. The banner is
+   * rendered later in `app/layout.tsx`, so when the connection drops it paints
+   * over the bar rather than under it. That is the right way round — a banner
+   * nobody can see is worse than a nav briefly covered — but it is an overlap
+   * rather than a stack, and it is worth knowing before adding a third thing
+   * to this corner.
+   */
+  bar: "fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-line bg-surface md:hidden",
+  /**
+   * `relative` so the sheet can hang off the whole bar rather than off the one
+   * 78px cell that opens it.
+   */
+  row: "relative mx-auto flex w-full max-w-page items-stretch",
+  /**
+   * One cell. `flex-1` with a zero basis is what makes the five equal without
+   * anybody dividing 390 by 5 in a class name.
+   */
+  cell: "flex min-h-touch flex-1 flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
+  cellCurrent: "font-semibold text-fg-accent",
+  /**
+   * The trigger, which is a `<summary>`.
+   *
+   * `list-none` removes the disclosure marker; the glyph below is the
+   * affordance instead. Same arrangement as `CARD.disclosureSummary`, and the
+   * same reason: `<details>` works with JavaScript off and needs no client
+   * boundary, which is what keeps this whole bar server-rendered and its
+   * labels in the language the server resolved.
+   *
+   * It repeats `BOTTOM_NAV.cell` rather than composing it because it is the
+   * one cell that must **not** pick up a press or an `aria-current`. Sharing
+   * the recipe and subtracting from it is how the press would arrive here the
+   * next time someone adds one to `cell`.
+   */
+  moreTrigger:
+    "flex min-h-touch w-full cursor-pointer list-none flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
+  /** The `<details>` itself, sized like a cell so the row stays five equal columns. */
+  more: "flex flex-1",
+  /**
+   * The sheet, opening upwards out of the bar.
+   *
+   * `bottom-full` is why `TAILWIND_INSET` has a `full` step: the bar's height
+   * is a touch target plus a device inset, which is not a number this scale
+   * could have held.
+   */
+  sheet:
+    "absolute inset-x-0 bottom-full flex max-h-panel flex-col gap-s1 overflow-y-auto border-b border-line bg-surface p-s2 shadow-lg",
+  sheetLabel: "px-s2 py-s1 font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
+  sheetLink:
+    "flex min-h-touch items-center gap-s3 rounded px-s3 text-sm text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg",
+  sheetLinkCurrent: "bg-accent-wash font-semibold text-fg-accent",
+  /**
+   * The gutter, and the reason it is an element rather than padding.
+   *
+   * A bar with `position: fixed` covers whatever the document ends with, and
+   * what this document ends with is the source footer — the one thing on the
+   * page addressed to people who are not signed in. Padding on the shell root
+   * would not reach it, because `app/layout.tsx` draws the footer as a sibling
+   * of the shell and not inside it; padding on the root itself would also land
+   * on `/login`, which has no bar to clear.
+   *
+   * So the gutter is drawn after the footer, by the same component that draws
+   * the bar, and it is exactly as tall: one border plus a touch target plus
+   * the same inline inset. It goes away with the bar at `md`.
+   *
+   * ⚠️ **The content-box sizing on this line is the whole of it.** Measured:
+   * under the inherited border-box rule the gutter came out 44px against the
+   * bar's 45px, and the source footer sat 0.97px underneath the bar. The bar's
+   * height is its 44px touch row *plus* its 1px top border, because nothing
+   * constrains it; the gutter's minimum was swallowing the border inside the
+   * same 44px. Sizing to the content makes the minimum apply to the content,
+   * so both boxes are one border plus a touch target plus the same inline
+   * inset — equal by construction rather than by two numbers kept in step.
+   *
+   * ⚠️ The utility's own name is deliberately not written in this comment.
+   * This file is Tailwind content, so spelling it here would make the rule
+   * ship whether or not any recipe still asks for it — and the check that
+   * finds an orphaned rule would then answer for the prose instead of for the
+   * layout. That is not hypothetical: it happened, and it made a mutation
+   * that removes this class look as though it had been caught by a height
+   * check when nothing here can measure a height.
+   */
+  spacer: "box-content min-h-touch border-0 border-t border-solid border-transparent md:hidden",
 } as const;
 
 /**
@@ -1228,7 +1444,23 @@ export const SAFE_AREA = {
  */
 
 export const CENTERED = {
-  root: "flex min-h-dvh flex-col items-center justify-center p-s5",
+  /**
+   * Fills what is left of the shell root, rather than claiming the viewport.
+   *
+   * 🔴 **It asked for `min-h-dvh` until this card, and that made `/login`
+   * taller than the screen by exactly the height of the footer.** The footer
+   * moved out of the shell so that a stranger could see the source links, and
+   * it is drawn as the last child of `SHELL.root` — which is itself
+   * `min-h-dvh`. A child also demanding a full viewport therefore adds the
+   * footer's height on top of it, and a page whose entire job is one centred
+   * card scrolled.
+   *
+   * `flex-1` asks for the same thing the layout actually meant: everything the
+   * root has that the footer is not using. The card stays centred in it, and a
+   * card taller than the space still grows, because a flex item's automatic
+   * minimum is its content.
+   */
+  root: "flex flex-1 flex-col items-center justify-center p-s5",
   card: "flex w-full max-w-measure flex-col gap-s4 rounded-lg border border-line bg-surface p-s6 shadow-lg",
   brand: "flex items-center gap-s2 text-lg font-semibold text-fg",
   hint: "m-0 text-sm text-fg-muted",
@@ -1728,7 +1960,53 @@ export const SEGMENTED = {
  * this replaces.)
  */
 
-export type NavItem = { readonly href: string; readonly key: string };
+export type NavItem = {
+  readonly href: string;
+  readonly key: string;
+  /**
+   * The label the phone bar draws, which has 78px to draw it in.
+   *
+   * A second key rather than a shortened copy of the first: the two renderers
+   * want different lengths of the same word, and a translator has to be able
+   * to shorten one without the other moving. The reference console this board
+   * is modelled on separates them the same way. Several are the same sentence
+   * in both catalogues today, and that is fine — what matters is that there is
+   * somewhere to put a shorter one when a language needs it, which is the
+   * thing a single key does not have.
+   */
+  readonly shortKey: string;
+  /**
+   * `d` of one path drawn in a 24×24 box, stroked, no fill.
+   *
+   * ⚠️ Absolute commands and no minus signs anywhere, on purpose. This file is
+   * scanned by Tailwind, which reads text and not meaning, so a coordinate
+   * pair that happens to spell a utility name would put a rule nobody asked
+   * for into the stylesheet the console downloads. Upper-case commands with
+   * no separators cannot spell one. The check that would catch it either way
+   * is "the stylesheet contains no rule that no file asks for".
+   */
+  readonly icon: string;
+  /**
+   * Where the phone's bottom bar draws it, or `null` for the ones behind the
+   * overflow trigger.
+   *
+   * 🔴 **This is the whole of "which four are on the bar", and it lives on the
+   * item.** A separate array of four hrefs would be a second list, and the two
+   * would be free to disagree the first time a destination was renamed — which
+   * is the failure this card was written to make impossible. Both sets are
+   * read off this field: the bar is the items that have a number, in that
+   * order, and the overflow sheet is *everything else*, derived by
+   * subtraction rather than typed out. A destination added to a group above
+   * and given no number appears in the sheet without anybody editing a list.
+   *
+   * The order is the operator's, confirmed 2026-08-27, and it is not the order
+   * the groups happen to be in: overview, devices, inbox, journal puts the two
+   * most-read pages side by side, while the flattened groups would interleave
+   * `/journal` between them. That is the only reason this is a number and not
+   * a boolean.
+   */
+  readonly bottomSlot: number | null;
+};
 export type NavGroup = {
   /** `null` when the group is a single link whose own label names it. */
   readonly label: string | null;
@@ -1739,32 +2017,176 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: "nav.group.fleet",
     items: [
-      { href: "/", key: "nav.overview" },
-      { href: "/devices", key: "nav.devices" },
-      { href: "/journal", key: "nav.journal" },
-      { href: "/audit", key: "nav.audit" },
+      {
+        href: "/",
+        key: "nav.overview",
+        shortKey: "nav.overviewShort",
+        icon: "M4 4H10V10H4ZM14 4H20V10H14ZM4 14H10V20H4ZM14 14H20V20H14Z",
+        bottomSlot: 1,
+      },
+      {
+        href: "/devices",
+        key: "nav.devices",
+        shortKey: "nav.devicesShort",
+        icon: "M7 3H17V21H7ZM10 18H14",
+        bottomSlot: 2,
+      },
+      {
+        href: "/journal",
+        key: "nav.journal",
+        shortKey: "nav.journalShort",
+        icon: "M6 3H15L19 7V21H6ZM9 12H16M9 16H14",
+        bottomSlot: 4,
+      },
+      {
+        href: "/audit",
+        key: "nav.audit",
+        shortKey: "nav.auditShort",
+        icon: "M12 3L20 6V12C20 17 16 20 12 21C8 20 4 17 4 12V6Z M9 12L11 14L15 10",
+        bottomSlot: null,
+      },
     ],
   },
   {
     label: "nav.group.comms",
     items: [
-      { href: "/inbox", key: "nav.inbox" },
-      { href: "/sessions", key: "nav.sessions" },
-      { href: "/rules", key: "nav.rules" },
-      { href: "/schedule", key: "nav.schedule" },
+      {
+        href: "/inbox",
+        key: "nav.inbox",
+        shortKey: "nav.inboxShort",
+        icon: "M3 6H21V18H3Z M3 7L12 13L21 7",
+        bottomSlot: 3,
+      },
+      {
+        href: "/sessions",
+        key: "nav.sessions",
+        shortKey: "nav.sessionsShort",
+        icon: "M21 12C21 16 17 19 12 19C11 19 10 19 9 18L4 20L5 16C4 15 3 14 3 12C3 8 7 5 12 5C17 5 21 8 21 12Z",
+        bottomSlot: null,
+      },
+      {
+        href: "/rules",
+        key: "nav.rules",
+        shortKey: "nav.rulesShort",
+        icon: "M4 7H20M4 17H20 M9 4V10M15 14V20",
+        bottomSlot: null,
+      },
+      {
+        href: "/schedule",
+        key: "nav.schedule",
+        shortKey: "nav.scheduleShort",
+        icon: "M4 6H20V20H4ZM4 10H20M9 3V7M15 3V7",
+        bottomSlot: null,
+      },
     ],
   },
   {
     label: "nav.group.network",
-    items: [{ href: "/proxy", key: "nav.proxy" }],
+    items: [
+      {
+        href: "/proxy",
+        key: "nav.proxy",
+        shortKey: "nav.proxyShort",
+        icon: "M4 4H10V10H4ZM14 14H20V20H14ZM10 7H17V14",
+        bottomSlot: null,
+      },
+    ],
   },
   {
     label: "nav.group.settings",
     items: [
-      { href: "/settings", key: "nav.settings" },
+      {
+        href: "/settings",
+        key: "nav.settings",
+        shortKey: "nav.settingsShort",
+        icon: "M12 8A4 4 0 1 0 12 16A4 4 0 1 0 12 8Z M12 2V5M12 19V22M2 12H5M19 12H22",
+        bottomSlot: null,
+      },
     ],
   },
 ];
+
+/**
+ * The fifth cell, which is not a destination.
+ *
+ * It opens the sheet holding everything the bar has no room for. It carries
+ * the same three fields a destination carries so that the bar draws five cells
+ * from one shape rather than four of one shape and a special case — and so
+ * that its label is checked by the same assertion that checks the other ten.
+ *
+ * It deliberately has no `href` and no `bottomSlot`: it is not somewhere to
+ * go, and `NAV_GROUPS` is where somewhere-to-go is written down. Keeping it
+ * out of that array is what keeps "ten destinations" countable.
+ */
+export const NAV_MORE = {
+  key: "nav.more",
+  shortKey: "nav.moreShort",
+  icon: "M5 10A2 2 0 1 0 5 14A2 2 0 1 0 5 10Z M12 10A2 2 0 1 0 12 14A2 2 0 1 0 12 10Z M19 10A2 2 0 1 0 19 14A2 2 0 1 0 19 10Z",
+} as const;
+
+/**
+ * Every destination, in the order the groups declare them.
+ *
+ * The desktop rail keeps the groups; the phone bar and its sheet want one
+ * sequence. Both start here, so neither can be looking at a set the other is
+ * not.
+ */
+export function navItems(): readonly NavItem[] {
+  return NAV_GROUPS.flatMap((group) => group.items);
+}
+
+/**
+ * The four the phone bar draws, in the operator's order.
+ *
+ * Derived, and the sort is what makes `bottomSlot` mean position rather than
+ * merely membership.
+ */
+export function bottomNavItems(): readonly NavItem[] {
+  return navItems()
+    .filter((item) => item.bottomSlot !== null)
+    .slice()
+    .sort((a, b) => (a.bottomSlot as number) - (b.bottomSlot as number));
+}
+
+/**
+ * Everything else — the six behind the overflow trigger.
+ *
+ * 🔴 **By subtraction, never by enumeration.** A hand-written list of six is a
+ * list that silently loses an entry the day an eleventh destination is added,
+ * and a destination that is on neither renderer is a page reachable only by
+ * typing its URL. This cannot under-report: whatever is not on the bar is
+ * here, by construction.
+ */
+export function overflowNavItems(): readonly NavItem[] {
+  return navItems().filter((item) => item.bottomSlot === null);
+}
+
+/**
+ * How many cells the phone bar draws: the destinations on it, plus the
+ * overflow trigger.
+ *
+ * A count rather than a literal five, because the arithmetic below is the
+ * reason the operator chose four destinations and not ten, and an arithmetic
+ * check reading a literal is a check that agrees with itself.
+ */
+export function bottomNavCellCount(): number {
+  return bottomNavItems().length + 1;
+}
+
+/**
+ * What one cell gets, across a viewport of `width` CSS pixels.
+ *
+ * 🔴 **This is the constraint that settled the design, so it is computed and
+ * not remembered.** At 390px — the narrowest phone this console is checked on
+ * — ten destinations laid out at once give 39px a cell, and `SIZE_TOKENS.touch`
+ * is 44px. Five cells give 78px. The operator was shown both numbers and chose
+ * five; `tokens.test.ts` recomputes them from this function rather than
+ * quoting them, so a sixth cell fails the suite instead of shipping a target
+ * nobody can hit.
+ */
+export function bottomNavCellWidth(width: number, cells = bottomNavCellCount()): number {
+  return width / cells;
+}
 
 /** Exact match, an ancestor of the current path, or neither. */
 export type NavState = "page" | "section" | null;
@@ -2861,11 +3283,13 @@ export const MIGRATED_SOURCES = [
   "components/live-reload.tsx",
   "components/locale-switch.tsx",
   "components/login-form.tsx",
+  "components/mobile-nav.tsx",
   "components/proxy-manager.tsx",
   "components/pwa.tsx",
   "components/send-sms.tsx",
   "components/settings-form.tsx",
   "components/shell.tsx",
+  "components/sidebar.tsx",
   "components/sign-out.tsx",
   "components/theme-toggle.tsx",
   "components/ui/badge.tsx",
