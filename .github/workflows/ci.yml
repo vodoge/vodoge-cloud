@@ -107,6 +107,48 @@ jobs:
         # node builtins.
         run: node scripts/check-token-parity.cjs "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/../vodoge-edge"
 
+
+  # One lone CR -- a 0x0D that is not followed by 0x0A -- switches end-of-line
+  # normalisation off for the WHOLE file, makes git classify the file as binary,
+  # and reports none of it: `git status` stays clean. Commit 62f4b6dd wrote 7428
+  # changed lines of which only 116 were semantic; the seed was one stray CR after
+  # an array bracket. SN-T025 established the mechanism with a controlled A/B and
+  # SN-T031 turned it into this gate.
+  lone-cr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: The guard can still tell a lone CR from a merely mixed file
+        # Runs FIRST, deliberately. A scan that reports "none found" is worth
+        # nothing unless something has just demonstrated it is still able to find
+        # one. That matters more than usual here: this guard's byte classifier is
+        # a verbatim copy of an out-of-tree original, so its behaviour has to be
+        # shown in this repo rather than assumed from the file it was copied from.
+        #
+        # 12 cases, both directions. The load-bearing negative is MIXED line
+        # endings WITHOUT a lone CR: SN-T025 found 7 mixed files and only 1 with a
+        # lone CR, so a guard that conflated them would fire on 6 innocent files
+        # and be switched off within a day.
+        run: node scripts/check-lone-cr.cjs --self-test
+      - name: No tracked text file carries an undeclared lone CR
+        # The root is passed explicitly. The script has no default and exits 2
+        # rather than silently scoring whatever directory it happened to start in
+        # -- the same defect the tokens job above had to fix.
+        #
+        # Scope is THIS repo only. vodoge-edge and the docs repo are NOT scanned
+        # from here. A gate belongs in the repo it gates: a red light that the
+        # author of this PR has no way to clear is one that gets learned around,
+        # and an edge commit cannot be blocked by a cloud workflow anyway. Wiring
+        # those two is separate work and is named as an open gap in SN-T031.
+        #
+        # core.autocrlf is off on this runner, so worktree bytes are the committed
+        # bytes. What this gates is therefore a lone CR ENTERING the repository.
+        # It does NOT gate what a Windows checkout later does to a worktree.
+        run: node scripts/check-lone-cr.cjs "$GITHUB_WORKSPACE"
+
   # Every migration, applied in order to an empty database.
   #
   # Applying them one at a time to a fresh database is the only thing that
