@@ -1176,13 +1176,22 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
  *    going red.
  *
  *    ⚠️ **These two names are declared in the edge panel's `:root` as well.**
- *    A change here is a change to the other repository — and 🔴 **nothing in
- *    this file, or anywhere in this package, checks that.** The tests here
- *    hold `globals.css` equal to `tokens.ts`; both are inside `apps/console`.
- *    No test in this repository has ever opened the edge panel.
+ *    A change here is a change to the other repository — and 🔴 **no test in
+ *    this package checks that.** The tests here hold `globals.css` equal to
+ *    `tokens.ts`; both are inside `apps/console`. No test in this repository
+ *    has ever opened the edge panel.
  *
- *    The cross-repo comparison is `scripts/check-token-parity.cjs`, which
- *    needs both repositories checked out side by side and is run by hand.
+ *    🔴 **A guard does exist and it runs — do not stop reading here.** The
+ *    cross-repo comparison is `scripts/check-token-parity.cjs`, and the
+ *    `tokens` job in .github/workflows/ci.yml runs it on every push and pull
+ *    request to this repository, cloning the edge repository beside the
+ *    checkout so both trees are present. It is a CI job rather than a test,
+ *    which is why nothing in this file reaches it. "No test checks it" and
+ *    "nothing checks it" are different sentences, and only the first is true.
+ *
+ *    🔴 What that job does not cover: it fires on activity in THIS repository
+ *    and reads edge `main`, so a one-sided edit committed on the edge side is
+ *    not seen until the next push here.
  *
  *    ⚠️ Corrected by SN-T020. This comment used to say "oracle 1 compares the
  *    two sets after normalisation", which read as a description of a running

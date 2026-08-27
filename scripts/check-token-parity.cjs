@@ -35,10 +35,25 @@
  * that has to move both ends must land on the EDGE side first — see
  * deploy/RUNBOOK.md, "Design tokens live in two repositories".
  *
- * "Nothing runs it automatically" was true from T020 until T024, and the four
- * comments quoting that sentence (globals.css, lib/tokens.ts x2,
- * lib/tokens.test.ts) are now stale in the harmless direction — they undersell
- * the coverage rather than invent it. They still need correcting.
+ * "Nothing runs it automatically" was true from T020 until T024. SN-T029
+ * corrected every comment that quoted it.
+ *
+ * 🔴 THERE WERE SIX SITES, NOT FOUR, AND THIS PARAGRAPH IS WHY ANYONE THOUGHT
+ * FOUR. It used to enumerate them by hand — globals.css, lib/tokens.ts x2,
+ * lib/tokens.test.ts — which omitted vodoge-edge/edge-panel/src/index.html,
+ * where the same sentence appears verbatim, and omitted itself. That list was
+ * then read out of this file into a chat message, and out of the chat message
+ * into a card, so the undercount reproduced itself three times; a worker
+ * fixing "four" would have left two sites still lying. SN-T020's own receipt
+ * had already recorded the identical shape one card earlier — "card said the
+ * comments live in TWO files; actually FIVE sites in FOUR files; a worker
+ * fixing 'two' would have left three lying" — and that receipt was not read
+ * when this list was written.
+ *
+ * ⇒ Derive this set, never copy it. Search for the claim, not for the list:
+ *   grep -rn "runs it automatically\|neither CI\|by hand" across BOTH repos.
+ * A hand-written enumeration of where a stale sentence lives goes stale in
+ * exactly the same way the sentence did.
  *
  * USAGE
  *   node scripts/check-token-parity.cjs <cloudRoot> <edgeRoot>

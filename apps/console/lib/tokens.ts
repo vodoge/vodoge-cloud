@@ -190,10 +190,15 @@ export const COLOR_TOKENS = {
   //
   // 🔴 `--bad` and `--info` are declared with the same names and values in the
   // edge panel's `:root`, in the other repository. Moving them here without
-  // moving them there is real drift, and nothing in this package will notice:
-  // no test here opens the edge file, and neither CI sees both repositories at
-  // once. The comparison is `scripts/check-token-parity.cjs`; it needs both
-  // trees side by side, and nothing runs it automatically.
+  // moving them there is real drift, and nothing inside this package will
+  // notice: no test here opens the edge file. CI does. The `tokens` job in
+  // .github/workflows/ci.yml runs `scripts/check-token-parity.cjs` on every
+  // push and pull request to this repository, cloning the edge repository
+  // beside the checkout so both trees are present, and passing both roots.
+  //
+  // 🔴 It fires on activity in THIS repository and reads edge `main`, so a
+  // one-sided edit committed on the edge side is not seen until the next push
+  // here. Running the script yourself is fast feedback, not the guarantee.
   //
   // ⚠️ This comment used to say oracle 1 caught it. Oracle 1 is a board
   // acceptance criterion, judged once against the deployed ends — never a
@@ -293,9 +298,12 @@ export const SPACE_TOKENS = {
  * there is no check in the edge repo that reads its own tokens, and no test
  * here that reads the edge panel's.
  *
- * `scripts/check-token-parity.cjs` is what compares them. It reads both trees,
- * so it only runs where both are checked out — a workstation, or deploy time
- * when the two ends ship together. Run it after touching any name here.
+ * `scripts/check-token-parity.cjs` is what compares them, and the `tokens` job
+ * in .github/workflows/ci.yml runs it on every push and pull request to this
+ * repository, cloning the edge tree beside the checkout so both roots exist.
+ * 🔴 That job fires on activity HERE and reads edge `main`: an edit made only
+ * on the edge side waits for the next push here. Running it yourself after
+ * touching any name is fast feedback, not the guarantee.
  * ⚠️ Corrected by SN-T020: this used to claim renaming one here "breaks a
  * check in the other repo". There was no such check.
  */
