@@ -5148,6 +5148,73 @@ test("five cells, because ten would be below the target size the operator signed
   );
 });
 
+/**
+ * The footer's clearance under the phone bar is a fact about the order two
+ * components are drawn in, and nothing else in the suite looks at it.
+ *
+ * `MobileNav` draws a `position: fixed` bar and then a gutter of the bar's own
+ * height as its last element. That gutter holds the source footer out from
+ * under the bar only if the whole component is drawn *after* the footer — a
+ * decision recorded nowhere but the order of two lines in `app/layout.tsx`.
+ *
+ * ⚠️ **The reason to guard it is silence, not a near miss.** As shipped there
+ * is room to spare, and the design is exact rather than lucky: bar and gutter
+ * both measure 45px, and the footer's text stops 18px above the top of the
+ * bar. Nothing is covered today. What is missing is any way to be told when
+ * that stops being true. Measured in a browser at 390x844, scrolled to the
+ * bottom with the scroll itself confirmed: moving the bar and its gutter ahead
+ * of the footer buries the footer under the whole 45px, and deleting the
+ * gutter does exactly the same. Neither failure throws, neither changes a
+ * class, and on a page too short to scroll neither is visible at all.
+ *
+ * 🔴 **This reads source order, which is not rendered geometry.** Two server
+ * components with nothing reordering them in between make the two coincide,
+ * and that is the whole of the warrant. What it cannot see is a change that
+ * keeps the order and still moves the boxes — that needs a browser, and those
+ * measurements are in `docs/goals/vodoge-shape-nav/notes/T007-loose-ends.md`.
+ */
+test("the phone bar is drawn after the source footer, and its gutter last of all", () => {
+  // `code`, not the raw text: comments are blanked, so naming either component
+  // in a comment cannot satisfy this. Both files do name them in comments —
+  // `app/layout.tsx` immediately above the very line being checked, and
+  // `components/mobile-nav.tsx` names the gutter in the comment above it.
+  const { code: layout } = scan(readSource("app/layout.tsx"));
+
+  const footers = [...layout.matchAll(/<SourceFooter\b/g)];
+  const bars = [...layout.matchAll(/<MobileNav\b/g)];
+  assert.equal(
+    footers.length,
+    1,
+    `the layout draws the source footer ${footers.length} times, not once, so an order check on it decides nothing`,
+  );
+  assert.equal(
+    bars.length,
+    1,
+    `the layout draws the phone bar ${bars.length} times, not once, so an order check on it decides nothing`,
+  );
+  assert.ok(
+    (footers[0].index as number) < (bars[0].index as number),
+    "app/layout.tsx draws <MobileNav> before <SourceFooter>: the fixed bar then covers the source " +
+      "footer, which is the one thing on the page addressed to people who are not signed in",
+  );
+
+  // The other half of the same guarantee, failing in exactly the same way and
+  // just as quietly: the gutter has to be the last thing the component draws.
+  const { code: nav } = scan(readSource("components/mobile-nav.tsx"));
+  const closes = [...nav.matchAll(/<\/nav>/g)];
+  const gutters = [...nav.matchAll(/BOTTOM_NAV\.spacer\b/g)];
+  assert.equal(closes.length, 1, `components/mobile-nav.tsx closes a nav ${closes.length} times, not once`);
+  assert.equal(
+    gutters.length,
+    1,
+    `components/mobile-nav.tsx draws the gutter ${gutters.length} times, not once — with none of them the footer has nothing holding it clear of the bar`,
+  );
+  assert.ok(
+    (closes[0].index as number) < (gutters[0].index as number),
+    "the gutter is drawn inside the fixed bar rather than after it, so it takes up no room in the document and holds nothing clear",
+  );
+});
+
 test("every nav label exists in both catalogues at both lengths", () => {
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));

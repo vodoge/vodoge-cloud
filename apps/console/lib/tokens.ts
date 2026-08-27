@@ -1287,8 +1287,10 @@ export const SHELL = {
  * **Five cells, because of arithmetic and not taste.** 390px is the narrowest
  * phone this console is checked on. Ten destinations laid out at once give
  * each one 39px, and `SIZE_TOKENS.touch` — the target size the operator signed
- * off — is 44px. Five give 78px. `bottomNavCellWidth()` computes both, and the
- * suite recomputes them rather than quoting them, so a sixth cell fails a test
+ * off — is 44px. Five give 78px. ⚠️ **Both are budgets rather than
+ * measurements** — the row draws no cell of 78, and `BOTTOM_NAV.cell` carries
+ * the shape it does draw. `bottomNavCellWidth()` computes both, and the suite
+ * recomputes them rather than quoting them, so a sixth cell fails a test
  * instead of shipping a target nobody can hit.
  *
  * ⚠️ **The overflow trigger deliberately does not sink when pressed.** Every
@@ -1325,8 +1327,29 @@ export const BOTTOM_NAV = {
    */
   row: "relative mx-auto flex w-full max-w-page items-stretch",
   /**
-   * One cell. `flex-1` with a zero basis is what makes the five equal without
-   * anybody dividing 390 by 5 in a class name.
+   * One cell, grown from a zero basis so that nobody divides 390 by 5 in a
+   * class name.
+   *
+   * ⚠️ **The five are not equal: measured, they span 8.02px.** At 390 the row
+   * draws 79.59 / 79.61 / 79.59 / 79.61 / 71.59, summing to 389.99, and no
+   * cell is the 78 that `bottomNavCellWidth()` returns — that function is the
+   * budget the design was chosen against, not a description of the boxes.
+   *
+   * The 8.02 is this recipe's own horizontal padding, `SPACE_TOKENS.s1` a
+   * side. Under the inherited border-box rule a zero basis cannot fall below
+   * an item's own padding, so the four links enter the share-out already
+   * carrying 8px while the overflow trigger carries nothing — its padding sits
+   * on the `<summary>` within it rather than on the cell. The five then split
+   * what is left, (390 − 32) / 5 = 71.6 apiece, which puts the links at 79.6
+   * and the trigger at 71.6. Measured from the other side as well: take this
+   * padding away and all five come out at exactly 78.00.
+   *
+   * 🔴 **Not a defect — what would make it one is the floor, not the span.**
+   * The narrowest cell is 71.59 against a `SIZE_TOKENS.touch` of 44, and
+   * horizontal overflow is 0. ⚠️ Both readings are for the labels shipped
+   * today. Cell widths *do* follow the text, so neither number is a constant:
+   * a thirteen-letter Latin label was measured putting the trigger at 67.30,
+   * still clear of 44. A cell under 44 is the failure worth looking for.
    */
   cell: "flex min-h-touch flex-1 flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
   cellCurrent: "font-semibold text-fg-accent",
@@ -1346,7 +1369,12 @@ export const BOTTOM_NAV = {
    */
   moreTrigger:
     "flex min-h-touch w-full cursor-pointer list-none flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
-  /** The `<details>` itself, sized like a cell so the row stays five equal columns. */
+  /**
+   * The `<details>` itself, taking a cell's share of the row — a share, not a
+   * width: carrying no padding of its own, it settles 8.02px under the four
+   * links. `BOTTOM_NAV.cell` holds the measurement and why that is the shape
+   * this row is supposed to have rather than a defect.
+   */
   more: "flex flex-1",
   /**
    * The sheet, opening upwards out of the bar.
@@ -2179,7 +2207,9 @@ export function bottomNavCellCount(): number {
  * 🔴 **This is the constraint that settled the design, so it is computed and
  * not remembered.** At 390px — the narrowest phone this console is checked on
  * — ten destinations laid out at once give 39px a cell, and `SIZE_TOKENS.touch`
- * is 44px. Five cells give 78px. The operator was shown both numbers and chose
+ * is 44px. Five cells give 78px. ⚠️ **This is a budget, not a rendered width**
+ * — measured at 390 the row draws 79.59 / 79.61 / 79.59 / 79.61 / 71.59, and
+ * `BOTTOM_NAV.cell` says why. The operator was shown both numbers and chose
  * five; `tokens.test.ts` recomputes them from this function rather than
  * quoting them, so a sixth cell fails the suite instead of shipping a target
  * nobody can hit.
