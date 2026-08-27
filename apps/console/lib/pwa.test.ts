@@ -2339,8 +2339,20 @@ const CAPTURED_FROM = {
   // one is what `git archive <commit> apps/console` has to be run against to
   // reproduce the digest below, and it is exact because the recapture commit
   // touches no file in the closure (it changes only this test and public/).
-  commit: "61659b2",
-  chrome: "c6978afa637dc81eac2b29ebc53ab62dc51260cd5e9b93aa0591a694a57e13bf",
+  //
+  // ⚠️ The frames were shot on 61659b2 and this digest is 4d7451d's, one commit
+  // later. That gap is the re-stamp path this docblock describes, and it was
+  // taken on evidence rather than on the argument that comments cannot matter:
+  // SN-T020 edited two closure files (lib/tokens.ts, app/globals.css) in
+  // comments only, which moves this content digest but should move nothing a
+  // camera can see. `lib/tokens.ts` is a Tailwind content file, and prose in
+  // one has leaked a rule into the shipped stylesheet four times on this repo
+  // — once from the ordinary English word `transition` in a comment — so the
+  // claim was checked instead of assumed: rebuilt on the rebased tree, the
+  // stylesheet is dff3987b0c0d88a7.css at sha256 05b044b9…cc8e, byte-identical
+  // to the build the frames were taken against. Nothing rendered moved.
+  commit: "4d7451d",
+  chrome: "6afa1b23b6099ea12339ef867b76e729110e3da9af79dbe211a14f56812e540d",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
