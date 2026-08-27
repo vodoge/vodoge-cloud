@@ -261,20 +261,49 @@ export const SPACE_TOKENS = {
 } as const;
 
 /**
- * Corner radii, tightened to Warp's scale.
+ * Corner radii, derived from one base rather than written out four times.
  *
- * `radius` is the control default — buttons, inputs, tabs — and keeps that
- * meaning at the new value, which is why no recipe had to move: `rounded`
- * still means "a control". `radius-md` is the one new name and is the card
- * step; `radius-lg` is for the largest surfaces. The edge panel declares
- * these same four names with these same four values, and that agreement is
- * what oracle 1 compares, so renaming one here breaks a check in the other
- * repo rather than anything nearby.
+ * The corners here were three literals — 3px, 4px, 6px — and the operator's
+ * word for the result was "hard". Literals are also why they were hard to
+ * soften together: it meant editing three numbers and trusting they still
+ * agreed with each other and with the other repo. So the names stay and the
+ * numbers go. One base, `--radius-base`, and a ratio per step, with each step
+ * written as a multiple of that base so the derivation survives into the
+ * stylesheet instead of being flattened here. Moving the base moves every
+ * step, in both repos, and nobody edits a step to do it.
+ *
+ * The base is the one the operator pointed at: 10px. The ratios are three the
+ * same source declares — 0.8, 1, 1.4 — and they are assigned by role rather
+ * than by name, which is why the two roles that source can be read for land
+ * on its values exactly: a control at 8px, a card at 14px.
+ *
+ * `--radius-pill` is off the scale and has to stay off it. It is a shape, not
+ * a step: a pill has to read as a pill at any base, and 999px is how that is
+ * said. It is the one value here allowed to be a length of its own.
+ *
+ * The edge panel declares these same names with these same values, and that
+ * agreement is what oracle 1 compares, so renaming one here breaks a check in
+ * the other repo rather than anything nearby.
  */
+export const RADIUS_BASE = "10px";
+
+/** Each derived step, as a multiple of `--radius-base`. */
+export const RADIUS_RATIOS = {
+  radius: 0.8,
+  "radius-md": 1,
+  "radius-lg": 1.4,
+} as const;
+
+/** A step's value: a multiple of the base, never a length of its own. */
+export function radiusStep(ratio: number): string {
+  return ratio === 1 ? "var(--radius-base)" : `calc(var(--radius-base) * ${ratio})`;
+}
+
 export const RADIUS_TOKENS = {
-  radius: "3px",
-  "radius-md": "4px",
-  "radius-lg": "6px",
+  "radius-base": RADIUS_BASE,
+  radius: radiusStep(RADIUS_RATIOS.radius),
+  "radius-md": radiusStep(RADIUS_RATIOS["radius-md"]),
+  "radius-lg": radiusStep(RADIUS_RATIOS["radius-lg"]),
   "radius-pill": "999px",
 } as const;
 
@@ -979,7 +1008,7 @@ export const TABLE = {
 } as const;
 
 export const BUTTON = {
-  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-edge focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
+  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-all active:translate-y-px focus-visible:outline-none focus-visible:ring focus-visible:ring-accent-edge focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
   variant: {
     primary: "bg-accent text-accent-ink hover:bg-accent-strong",
     ghost:
