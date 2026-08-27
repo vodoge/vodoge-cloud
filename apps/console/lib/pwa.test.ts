@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
@@ -1743,21 +1743,46 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
 
     // And the other direction. The content column is padded by an equal gutter
     // on both sides, so the commonest left/right pair in the frame is
-    // symmetric — 24|24 on 713 of the narrow rows and 523 of the wide ones.
-    // Lay the page out wider than the frame and the right gutter is gone; lay
-    // it out narrower and the right gutter is enormous. Either way this pair
-    // stops matching, which is what a crop looks like from the pixels.
+    // symmetric. Lay the page out wider than the frame and the right gutter is
+    // gone; lay it out narrower and the right gutter is enormous. Either way
+    // this pair stops matching, which is what a crop looks like from the
+    // pixels.
+    //
+    // 🔴 The gutter is measured from WHERE THE CANVAS STARTS, not from the
+    // frame edge, and that is not a loosening — it is what keeps this
+    // answerable at all. The original scan began at x=0 and dropped any row
+    // whose ink reached the left edge (`first <= 0`). From `md` up this
+    // console now mounts a full-height rail AT x=0, so on the wide frame every
+    // single row was dropped: the histogram came back empty and the test
+    // failed with "only 0 rows share a gutter pair (none)" against a perfectly
+    // good capture. A criterion no correct frame can satisfy manufactures a
+    // false red, and this one had become one the moment the rail landed.
+    //
+    // Starting at the first canvas pixel puts the measurement back on the
+    // content column wherever that column begins. On a frame with no rail the
+    // first canvas pixel is x=0 and this is byte-for-byte the original
+    // computation, which is why the narrow frame's numbers do not move.
     const pairs = new Map<string, number>();
     for (let y = 0; y < image.height; y++) {
+      let canvasFrom = -1;
+      for (let x = 0; x < image.width; x++) {
+        if (isCanvas(x, y)) {
+          canvasFrom = x;
+          break;
+        }
+      }
+      // A row with no canvas at all (inside the bar, inside the header band)
+      // has no content column to measure, exactly as before.
+      if (canvasFrom < 0) continue;
       let first = -1;
       let last = -1;
-      for (let x = 0; x < image.width; x++) {
+      for (let x = canvasFrom; x < image.width; x++) {
         if (isCanvas(x, y)) continue;
         if (first < 0) first = x;
         last = x;
       }
-      if (first <= 0 || last >= image.width - 1) continue;
-      const key = `${first}|${image.width - 1 - last}`;
+      if (first < 0 || last >= image.width - 1) continue;
+      const key = `${first - canvasFrom}|${image.width - 1 - last}`;
       pairs.set(key, (pairs.get(key) ?? 0) + 1);
     }
     const [modal, rows] = [...pairs.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
@@ -1801,8 +1826,8 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
  * offsets, so all three are load-bearing.
  */
 const TOP_PROFILE: Record<string, { fg: number; line: number; content: number }> = {
-  "/screenshot-mobile.png": { fg: 29, line: 88, content: 16 },
-  "/screenshot-wide.png": { fg: 26, line: 8, content: 8 },
+  "/screenshot-mobile.png": { fg: 54, line: 16, content: 16 },
+  "/screenshot-wide.png": { fg: 18, line: 0, content: 0 },
 };
 
 test("each screenshot starts at the top of the document, not part way down it", () => {
@@ -2148,4 +2173,365 @@ test("the two affordances cannot land on the same edge of the screen", () => {
   assert.ok(!PWA.install.bar.includes("fixed"), "the install bar floats over the content");
   assert.ok(PWA.connection.bar.includes("fixed"), "the banner scrolls away with the page");
   assert.ok(PWA.connection.bar.includes("bottom-0"));
+});
+
+/* ── The fifth seam: are these still pictures of THIS console? ─────────
+ *
+ * 🔴 EVERY SCREENSHOT GUARD ABOVE COMPARES THESE TWO FILES TO A PALETTE OR TO
+ * THEMSELVES. NOT ONE COMPARES THEM TO THE SOURCE THAT LAYS OUT THE CHROME.
+ *
+ * The seven checks split into three kinds, and all three are blind to a
+ * relayout that holds the palette still:
+ *
+ *   - colour — wired live to `COLOR_TOKENS`, so they do fire when the palette
+ *     moves. That is how the recolour was caught. They cannot fire when it
+ *     does not move.
+ *   - size — the frame against the manifest's own declaration. The manifest
+ *     declares the frame; rearranging what is inside it moves neither number.
+ *   - geometry — and this is the trap. Both LOOK layout-sensitive. "each
+ *     screenshot is the page at its own width" compares the frame to itself:
+ *     are the gutters symmetric. "each screenshot starts at the top of the
+ *     document" compares it to TOP_PROFILE — three numbers measured off these
+ *     very files. Its docblock claims it is "the one thing in this file that a
+ *     legitimate layout change will turn red — deliberately".
+ *     🔴 IT IS NOT, AND THE CLAIM IS THE DANGEROUS PART. Both of its operands
+ *     are frozen artefacts of the same capture, so it can catch a BAD
+ *     RECAPTURE and can never catch a MISSING one. A guard that reads as
+ *     layout-sensitive is worse than none: it is why nobody looked again.
+ *
+ * What went past all of it: the navigation moved off the top of the page onto
+ * a fixed phone bar and a desktop rail, and the radius scale went from 3/4/6
+ * to 8/10/14. Neither touched a colour. 52 tests stayed green over two frames
+ * showing chrome that no longer exists — the phone frame shows a page with no
+ * bottom bar, taken when `components/mobile-nav.tsx` was not yet a file.
+ *
+ * The two guards below supply the missing term, and they fail differently on
+ * purpose:
+ *
+ *   A. PROVENANCE — what tree were these captured from, and is it this one?
+ *      This is the "when was it taken" the charter asks every snapshot asset
+ *      to carry. It catches any chrome change and names none of them.
+ *   B. WHAT IS IN THE PICTURE — the phone frame must show the bar this console
+ *      mounts, the desktop frame must show the rail. Narrower, but it cannot
+ *      be satisfied by editing this file. Only by taking the photograph again.
+ */
+
+/**
+ * Every source file that helps decide what is inside these two frames,
+ * DERIVED rather than listed.
+ *
+ * The roots are the two files Next.js composes to build the captured URL: the
+ * root layout and the overview page. The set is their transitive local-import
+ * closure. Hand-listing it is the move that has under-reported three times on
+ * this board; the only hand-written part here is the two entry points, which
+ * are not a set.
+ *
+ * 🔴 `unresolved` is the non-vacuity half, and it is not decoration. A
+ * specifier that looks local and does not resolve means the walker missed a
+ * file, and a walker that silently misses files hands out a green stamp for a
+ * tree it never read. The first draft did exactly that: its regex forbade
+ * newlines, so the multi-line `import { … } from "@/components/ui/card"` in
+ * app/page.tsx was invisible, and card.tsx and table.tsx — which draw the stat
+ * cards and the message table that ARE IN THESE SCREENSHOTS — were not in the
+ * closure. It reported 25 files and looked entirely reasonable.
+ */
+const CHROME_ROOTS = ["app/layout.tsx", "app/page.tsx"];
+
+const MODULE_SPECIFIER =
+  /(?:\bimport\b|\bexport\b)(?:[\s\S](?!\bimport\b|\bexport\b))*?from\s*["']([^"']+)["']|(?:^|\n)\s*import\s+["']([^"']+)["']/g;
+
+function chromeClosure(): { files: string[]; unresolved: string[] } {
+  const isFile = (p: string) => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  // null = a package, not our source. undefined = local-looking and missing.
+  const resolveLocal = (spec: string, from: string): string | null | undefined => {
+    let base: string;
+    if (spec.startsWith("@/")) base = join(root, spec.slice(2));
+    else if (spec.startsWith("./") || spec.startsWith("../")) base = join(dirname(from), spec);
+    else return null;
+    for (const c of [
+      base,
+      `${base}.ts`,
+      `${base}.tsx`,
+      `${base}.css`,
+      `${base}.json`,
+      join(base, "index.ts"),
+      join(base, "index.tsx"),
+    ]) {
+      if (isFile(c)) return c;
+    }
+    return undefined;
+  };
+
+  const unresolved: string[] = [];
+  const seen = new Set<string>();
+  const stack = CHROME_ROOTS.map((r) => join(root, r));
+  while (stack.length) {
+    const file = stack.pop() as string;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    // css and json are leaves: hashed for their contents, not parsed.
+    if (!/\.tsx?$/.test(file)) continue;
+    for (const m of readFileSync(file, "utf8").matchAll(MODULE_SPECIFIER)) {
+      const spec = m[1] ?? m[2];
+      if (!spec) continue;
+      const hit = resolveLocal(spec, file);
+      if (hit === null) continue;
+      if (hit === undefined) {
+        unresolved.push(`${relative(root, file)} -> ${spec}`);
+        continue;
+      }
+      stack.push(hit);
+    }
+  }
+  return {
+    files: [...seen].map((f) => relative(root, f).split(sep).join("/")).sort(),
+    unresolved,
+  };
+}
+
+/**
+ * 🔴 LINE ENDINGS ARE NORMALISED BEFORE HASHING, AND THAT IS LOAD-BEARING.
+ * The working tree is CRLF and the repo has no .gitattributes, so the same
+ * file arriving through `git archive`, a patch, or an editor that writes LF is
+ * byte-different and content-identical. Hashing raw bytes would turn this
+ * guard red for a reason that has nothing to do with the screenshots, which is
+ * the third CRLF trap in the charter. Checked both ways: converting all 232
+ * CRLF lines of app/layout.tsx to LF leaves this digest unchanged, and the
+ * capture-commit tree still hashes differently from this one.
+ */
+function chromeDigest(files: string[]): string {
+  const h = createHash("sha256");
+  for (const rel of files) {
+    h.update(rel);
+    h.update("\0");
+    h.update(readFileSync(join(root, rel), "utf8").replace(/\r\n/g, "\n"));
+    h.update("\0");
+  }
+  return h.digest("hex");
+}
+
+/**
+ * Where the two files in public/ came from.
+ *
+ * 🔴 THESE ARE FACTS ABOUT A COMMIT, NOT NUMBERS SOMEBODY CHOSE. `chrome` is
+ * `chromeDigest` run against the tree of the commit that last wrote these
+ * PNGs; recover it with
+ *
+ *     git archive <commit> apps/console | tar -x -C <tmp>
+ *     node -e '…chromeDigest over <tmp>/apps/console…'
+ *
+ * and `shots` are those PNGs' own hashes. The pair is what makes a re-stamp
+ * legible: recapturing changes all three, whereas editing `chrome` alone is a
+ * one-line diff that leaves the PNG hashes untouched — which is exactly what
+ * it should look like, a claim that the chrome moved in a way the picture does
+ * not show. Make that claim in the commit message rather than silently, and
+ * note that guard B will not accept it for anything structural.
+ */
+const CAPTURED_FROM = {
+  // The commit whose CHROME these frames show. The PNGs themselves are written
+  // by the commit that carries this stamp, which cannot name its own hash; this
+  // one is what `git archive <commit> apps/console` has to be run against to
+  // reproduce the digest below, and it is exact because the recapture commit
+  // touches no file in the closure (it changes only this test and public/).
+  //
+  // ⚠️ The frames were shot against two different builds of the same chrome,
+  // and they came out byte-identical. That is the evidence this stamp rests on,
+  // and it is worth reading before re-stamping anything here yourself.
+  //
+  // SN-T022 moved BOTTOM_NAV.bar from z-20 to z-10 so the connection banner
+  // stops being painted over. That is a real class change, not a comment: the
+  // built stylesheet went from dff3987b0c0d88a7.css to 6395ac6053b94fdd.css.
+  // The frames were therefore reshot against the new build — and both PNGs
+  // hashed exactly as before (08d8ea54…, d7d8a9b5…), because nothing overlaps
+  // the bar while the connection is up and the banner is not on screen.
+  //
+  // 🔴 The point is the order of operations. "The banner is not in my frames,
+  // so a z-index between them cannot matter" is a correct argument, and it was
+  // still not what this was settled with — the frames were retaken and the
+  // bytes compared. A guard that freezes an upstream digest has to be paid for
+  // with the artefact, because the one time the reasoning is wrong it is wrong
+  // silently. `lib/tokens.ts` is a Tailwind content file and prose in one has
+  // leaked a rule into the shipped stylesheet four times on this repo, once
+  // from the ordinary English word `transition` sitting in a comment.
+  commit: "7b24441",
+  chrome: "922b9fd52d93eb1dc4e22d21c7c5d50d109b4b5108aedc35fcc2e1ba1de1d901",
+  shots: {
+    "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
+    "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
+  } as Record<string, string>,
+};
+
+test("the chrome closure is derived from the roots and reaches every file that draws the frame", () => {
+  const { files, unresolved } = chromeClosure();
+  assert.deepEqual(
+    unresolved,
+    [],
+    "a local import did not resolve, so the closure is short a file and its digest is a " +
+      "stamp for a tree that was never fully read",
+  );
+  assert.ok(files.length >= 20, `the chrome closure is only ${files.length} files — walker broke`);
+  // A floor, not the set: these are things that must be reachable from the
+  // roots for the digest to mean anything. The set itself stays derived.
+  for (const must of [
+    "app/globals.css",
+    "app/layout.tsx",
+    "app/page.tsx",
+    "components/mobile-nav.tsx",
+    "components/shell.tsx",
+    "components/sidebar.tsx",
+    "components/ui/card.tsx",
+    "components/ui/table.tsx",
+    "lib/tokens.ts",
+  ]) {
+    assert.ok(
+      files.includes(must),
+      `${must} is not in the chrome closure, so a change to it would not move the digest`,
+    );
+  }
+});
+
+test("the install screenshots were captured from the chrome this tree renders", () => {
+  for (const [src, want] of Object.entries(CAPTURED_FROM.shots)) {
+    const got = createHash("sha256").update(readPublic(src.slice(1))).digest("hex");
+    assert.equal(
+      got,
+      want,
+      `${src} is not the file CAPTURED_FROM describes. If it was just recaptured, update the ` +
+        `hash and the chrome digest together.`,
+    );
+  }
+
+  const { files } = chromeClosure();
+  const digest = chromeDigest(files);
+  assert.equal(
+    digest,
+    CAPTURED_FROM.chrome,
+    `the ${files.length} sources that decide what these screenshots show have changed since ` +
+      `${CAPTURED_FROM.commit}, when the two files in public/ were taken, and the files in ` +
+      `public/ have not. Whatever moved, the install dialog is still advertising the chrome ` +
+      `from before it.\n\n` +
+      `  Either recapture both frames and update all of CAPTURED_FROM, or — if the change ` +
+      `genuinely cannot be seen in either frame — re-stamp the chrome digest alone with\n\n` +
+      `    chrome: "${digest}",\n\n` +
+      `  and say so in the commit message.\n\n` +
+      `  🔴 A re-stamp is a claim that the rendered output did not move, so pay for it with ` +
+      `the output: rebuild and check the stylesheet is byte-identical to the one the frames ` +
+      `were captured against. Do NOT pay for it with the argument that the change looked ` +
+      `cosmetic. lib/tokens.ts is a Tailwind content file, and prose in one has leaked a ` +
+      `rule into the shipped stylesheet four times on this repo — once from the ordinary ` +
+      `English word \`transition\` sitting in a comment.\n\n` +
+      `  This went stale twice in the afternoon the frames were first taken, and the two ` +
+      `cases looked identical from here. One was a comment-only edit to lib/tokens.ts that ` +
+      `left the built stylesheet byte-identical; the other moved one utility class and ` +
+      `changed it. Only the rebuild separated them — and in that second case the frames, ` +
+      `reshot, still hashed the same, so neither "the digest moved" nor "the stylesheet ` +
+      `moved" tells you on its own whether the picture is wrong.`,
+  );
+});
+
+/* ── B. What has to be in the picture ─────────────────────────────────
+ *
+ * The colour guards ask whether the palette in these files is current. These
+ * ask whether the LAYOUT is — and unlike A, they cannot be answered by editing
+ * this file, because the only way to put a bottom bar into a PNG is to point a
+ * browser at a page that has one.
+ *
+ * Both derive their expectation from the recipe rather than restating it, so
+ * that a deliberate change to the bar or the rail rewrites the question
+ * instead of producing a failure nobody can act on.
+ */
+
+const shotFor = (factor: string) =>
+  consoleManifest().screenshots.find((s) => s.form_factor === factor);
+
+test("the phone screenshot shows the bottom bar this console mounts", () => {
+  const bar = ALL_TOKENS.BOTTOM_NAV.bar;
+  const cls = bar.split(/\s+/);
+  assert.ok(
+    ["fixed", "inset-x-0", "bottom-0", "border-t", "md:hidden"].every((c) => cls.includes(c)) &&
+      cls.includes("border-line"),
+    `BOTTOM_NAV.bar is no longer a phone-only full-bleed bottom bar closed by a --line rule ` +
+      `(${bar}). Rewrite the pixel assertion below to match what it is now — do not delete it.`,
+  );
+
+  const shot = shotFor("narrow");
+  assert.ok(shot, "the manifest declares no narrow screenshot");
+  const image = pngPixels(readPublic(shot.src.slice(1)));
+  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
+  const line = pack(...rgbOf(COLOR_TOKENS.line.dark));
+  const canvasInRow = (y: number) => {
+    let n = 0;
+    for (let x = 0; x < image.width; x++) if (near(image.at(x, y), canvas, 2)) n++;
+    return n;
+  };
+
+  // An element that is full-bleed and pinned to the bottom means the last row
+  // of the frame cannot show page canvas. Deliberately dpr-free: it asks
+  // whether the bar is there, not how tall it came out, so it cannot false-red
+  // on a capture taken at a different device pixel ratio.
+  const last = image.height - 1;
+  const bleed = canvasInRow(last);
+  assert.equal(
+    bleed,
+    0,
+    `${shot.src}: the bottom row shows ${bleed} pixels of page canvas at its edges, so nothing ` +
+      `is pinned over it — but this console mounts a full-bleed bottom bar at every width below ` +
+      `md. This frame was captured before the bar existed. Recapture it.`,
+  );
+
+  // And the band has to be closed by the bar's own rule. This is what tells it
+  // apart from the offline banner, which is also fixed inset-x-0 bottom-0 but
+  // rules in --bad: a frame captured with the banner up would satisfy the
+  // check above for the wrong reason.
+  let band = 0;
+  while (band < image.height && canvasInRow(last - band) === 0) band++;
+  const top = last - band + 1;
+  let ruled = 0;
+  for (let x = 0; x < image.width; x++) {
+    const p = image.at(x, top);
+    if (pack(p[0], p[1], p[2]) === line) ruled++;
+  }
+  assert.ok(
+    ruled >= image.width * 0.99,
+    `${shot.src}: the ${band}-row full-bleed band at the bottom opens with ${ruled}/${image.width} ` +
+      `pixels of --line, so it is not the nav bar's rule. Something else is pinned there.`,
+  );
+});
+
+test("the desktop screenshot shows the rail this console mounts", () => {
+  const rail = ALL_TOKENS.SHELL.rail;
+  const cls = rail.split(/\s+/);
+  assert.ok(
+    ["hidden", "w-rail", "border-r", "bg-surface", "md:flex"].every((c) => cls.includes(c)),
+    `SHELL.rail is no longer a bordered full-height surface column shown from md up (${rail}). ` +
+      `Rewrite the pixel assertion below to match what it is now — do not delete it.`,
+  );
+
+  const shot = shotFor("wide");
+  assert.ok(shot, "the manifest declares no wide screenshot");
+  const image = pngPixels(readPublic(shot.src.slice(1)));
+  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
+
+  // The rail is the leftmost thing on the page at this width, so no page
+  // canvas can reach x=0. Measured over the middle half of the frame rather
+  // than all of it: the header is above the rail and the source footer is
+  // below it, and neither is what this is about — sampling the middle keeps
+  // the check from depending on how tall either of them happens to be.
+  let n = 0;
+  const from = image.height >> 2;
+  const to = image.height - (image.height >> 2);
+  for (let y = from; y < to; y++) if (near(image.at(0, y), canvas, 2)) n++;
+  assert.equal(
+    n,
+    0,
+    `${shot.src}: column x=0 is page canvas on ${n} of the ${to - from} rows between y=${from} ` +
+      `and y=${to}. The rail is a full-height surface column at the left edge from md up, so at ` +
+      `this frame width nothing can put canvas at x=0. This frame predates the rail. Recapture it.`,
+  );
 });
