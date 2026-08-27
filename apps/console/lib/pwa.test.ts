@@ -2425,10 +2425,13 @@ test("the install screenshots were captured from the chrome this tree renders", 
       `were captured against. Do NOT pay for it with the argument that the change looked ` +
       `cosmetic. lib/tokens.ts is a Tailwind content file, and prose in one has leaked a ` +
       `rule into the shipped stylesheet four times on this repo — once from the ordinary ` +
-      `English word \`transition\` sitting in a comment. A comment-only edit to a closure ` +
-      `file has already turned this guard red twice in one afternoon; one of those two also ` +
-      `left the stylesheet untouched and one did not, and only the rebuild could tell them ` +
-      `apart.`,
+      `English word \`transition\` sitting in a comment.\n\n` +
+      `  This went stale twice in the afternoon the frames were first taken, and the two ` +
+      `cases looked identical from here. One was a comment-only edit to lib/tokens.ts that ` +
+      `left the built stylesheet byte-identical; the other moved one utility class and ` +
+      `changed it. Only the rebuild separated them — and in that second case the frames, ` +
+      `reshot, still hashed the same, so neither "the digest moved" nor "the stylesheet ` +
+      `moved" tells you on its own whether the picture is wrong.`,
   );
 });
 
