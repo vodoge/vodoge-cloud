@@ -103,11 +103,18 @@
      🔴 These two are shared with the edge panel's :root, in the other
      repository, which copies these names and values by hand.
 
-     Nothing in this repository checks that. No test here opens the edge file,
-     and no CI can: cloud CI checks out cloud, edge CI checks out edge. The
-     comparison lives in `scripts/check-token-parity.cjs`, it needs both trees
-     side by side, and NOTHING RUNS IT AUTOMATICALLY — run it before shipping a
-     token change, and at deploy time when both ends go out together.
+     The `tokens` job in .github/workflows/ci.yml checks it, on every push and
+     pull request to this repository: it clones the edge repository beside the
+     checkout and runs `scripts/check-token-parity.cjs` over both trees, with
+     both roots passed explicitly. No test here opens the edge file — the guard
+     is that CI job, not a test, so do not read "no test" as "unguarded".
+
+     🔴 What it does not cover, so nobody reads more into it: it fires on
+     activity in THIS repository, and it reads edge `main`. A one-sided edit
+     committed on the edge side is not seen until the next push here, and a
+     token change that has to move both ends has to land on the edge side
+     first. Running the script yourself before shipping one is fast feedback,
+     not the guarantee.
 
      Until SN-T020 this comment said changing them here "breaks oracle 1".
      It did not. Oracle 1 is a board acceptance criterion, judged once against

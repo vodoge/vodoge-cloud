@@ -2360,7 +2360,7 @@ const CAPTURED_FROM = {
   // leaked a rule into the shipped stylesheet four times on this repo, once
   // from the ordinary English word `transition` sitting in a comment.
   commit: "7b24441",
-  chrome: "922b9fd52d93eb1dc4e22d21c7c5d50d109b4b5108aedc35fcc2e1ba1de1d901",
+  chrome: "365c0c31bbc55873dad0fd5d05b27b6295d319d35bca2237b1c01d0c0df479bd",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
