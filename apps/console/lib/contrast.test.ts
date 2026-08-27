@@ -842,13 +842,14 @@ type RadiusExemption = {
 const RADIUS_EXEMPTIONS: readonly RadiusExemption[] = [
   {
     file: "public/offline.html",
-    declaration: "border-radius:12px",
+    declaration: "border-radius:14px",
     reason:
-      "The offline page's mark. 12px is off the 8/10/14 scale and belongs to a token, " +
-      "but public/offline.html is not in T008's allowed_files and this card may not edit " +
-      "it. Recorded rather than skipped: the file is scanned, so the next stray radius in " +
-      "it still fails. Needs its own card — the fix also has to bump the service worker " +
-      "cache version, which lib/pwa.test.ts asserts and this card cannot reach.",
+      "The offline page's mark, fixed by SN-T013: 14px IS the card step of the scale, " +
+      "hand-copied because this page must render with no network and so cannot read the " +
+      "app stylesheet — being self-contained is its job, not an oversight. The comment " +
+      "above the rule names the token it mirrors. The literal therefore stays; what this " +
+      "exemption does is pin it to exactly one declaration, so a second literal in the " +
+      "file — or this one drifting off the scale again — still fails.",
   },
 ];
 
