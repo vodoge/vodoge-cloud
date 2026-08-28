@@ -2319,26 +2319,60 @@ function chromeDigest(files: string[]): string {
 /**
  * Where the two files in public/ came from.
  *
- * 🔴 THESE ARE FACTS ABOUT A COMMIT, NOT NUMBERS SOMEBODY CHOSE. `chrome` is
- * `chromeDigest` run against the tree of the commit that last wrote these
- * PNGs; recover it with
+ * 🔴 THESE ARE FACTS ABOUT TWO DIFFERENT TREES, NOT NUMBERS SOMEBODY CHOSE,
+ * AND WHICH TREE EACH ONE DESCRIBES IS THE PART THAT KEEPS GOING WRONG.
  *
- *     git archive <commit> apps/console | tar -x -C <tmp>
- *     node -e '…chromeDigest over <tmp>/apps/console…'
+ *   `shots`  the two PNGs' own hashes.
+ *   `commit` the tree the frames were CAPTURED AGAINST. An observation; it
+ *            moves only when someone reshoots.
+ *   `chrome` chromeDigest over the closure of the tree of THE COMMIT THAT
+ *            CARRIES THIS STAMP. It moves on every re-stamp.
  *
- * and `shots` are those PNGs' own hashes. The pair is what makes a re-stamp
- * legible: recapturing changes all three, whereas editing `chrome` alone is a
- * one-line diff that leaves the PNG hashes untouched — which is exactly what
- * it should look like, a claim that the chrome moved in a way the picture does
- * not show. Make that claim in the commit message rather than silently, and
+ * After a re-stamp those are two different trees, and the distance between
+ * them is not a defect — it IS the re-stamp claim: the chrome moved in a way
+ * neither frame can show. Do not close the gap by re-pointing `commit`. The
+ * one time `commit` legitimately moved (a265143, 4d7451d → 7b24441) it was
+ * paid for by reshooting the frames, which came back byte-identical. Moving it
+ * without a reshoot files an inference in the slot reserved for an observation.
+ *
+ * ⚠️ THIS DOCBLOCK USED TO CARRY A RECIPE THAT RECOVERED `chrome` FROM
+ * `commit`, AND IT WAS UNSATISFIABLE BY CONSTRUCTION. `git archive <commit>`
+ * then chromeDigest reproduces the value only while the stamp rides a commit
+ * that changes nothing in the closure — true of a recapture, false of a
+ * re-stamp, because a re-stamp exists precisely because a closure member
+ * moved. A commit cannot name its own hash, so a self-contained re-stamp has
+ * no earlier commit to point at: the recipe died at the moment it was needed.
+ * SN-T029 re-stamped, the recipe went on reproducing the superseded
+ * 922b9fd5…, and nothing caught it, because no assertion has ever read
+ * `commit`. It is prose. Guard A reads `chrome`.
+ *
+ * 💡 Provenance is still checkable — derive it instead of writing it down:
+ *
+ *     git log -1 --format=%H -S'<the chrome value below>' \
+ *       -- apps/console/lib/pwa.test.ts          # the commit that stamped it
+ *     git archive <that commit> apps/console | tar -x -C <tmp>
+ *     cp apps/console/lib/pwa.test.ts <tmp>/apps/console/lib/
+ *     cd <tmp>/apps/console && node --test --experimental-strip-types \
+ *       --test-name-pattern 'captured from the chrome this tree renders' \
+ *       lib/pwa.test.ts
+ *
+ * Guard A going green there IS the reproduction, and guard A is also the
+ * comparator, so no second implementation can drift away from this one.
+ * Copying this file in is sound, and that is its own proof: run the same steps
+ * on 7b24441 and the digest still comes out 922b9fd5…, the value a265143
+ * computed on that tree against a different copy of this file.
+ *
+ * Recapturing changes all three fields; editing `chrome` alone is a one-line
+ * diff that leaves the PNG hashes untouched — exactly what a re-stamp should
+ * look like. Make that claim in the commit message rather than silently, and
  * note that guard B will not accept it for anything structural.
  */
 const CAPTURED_FROM = {
-  // The commit whose CHROME these frames show. The PNGs themselves are written
-  // by the commit that carries this stamp, which cannot name its own hash; this
-  // one is what `git archive <commit> apps/console` has to be run against to
-  // reproduce the digest below, and it is exact because the recapture commit
-  // touches no file in the closure (it changes only this test and public/).
+  // The tree these frames were CAPTURED AGAINST — an observation, last re-taken
+  // when a265143 reshot them for SN-T022 (below). It is NOT the tree `chrome`
+  // was taken on, and has not been since SN-T029 re-stamped: `git archive
+  // 7b24441` reproduces the superseded 922b9fd5…, verified rather than assumed.
+  // Move this only by reshooting.
   //
   // ⚠️ The frames were shot against two different builds of the same chrome,
   // and they came out byte-identical. That is the evidence this stamp rests on,
@@ -2413,9 +2447,10 @@ test("the install screenshots were captured from the chrome this tree renders", 
     digest,
     CAPTURED_FROM.chrome,
     `the ${files.length} sources that decide what these screenshots show have changed since ` +
-      `${CAPTURED_FROM.commit}, when the two files in public/ were taken, and the files in ` +
-      `public/ have not. Whatever moved, the install dialog is still advertising the chrome ` +
-      `from before it.\n\n` +
+      `the digest below was last stamped, and the files in public/ have not. Whatever moved, ` +
+      `the install dialog is still advertising the chrome from before it. (The frames were ` +
+      `shot against ${CAPTURED_FROM.commit}; after a re-stamp the digest is newer than that ` +
+      `— see CAPTURED_FROM.)\n\n` +
       `  Either recapture both frames and update all of CAPTURED_FROM, or — if the change ` +
       `genuinely cannot be seen in either frame — re-stamp the chrome digest alone with\n\n` +
       `    chrome: "${digest}",\n\n` +
