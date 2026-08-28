@@ -6077,38 +6077,229 @@ function tableColumns(source: string): { headers: Column[]; cells: Column[] }[] 
   return tables;
 }
 
-const NARROW_SCREEN_TABLES = ["app/devices/page.tsx", "components/card-policies.tsx"];
+/**
+ * Every `.tsx` that renders the data grid, derived rather than typed out.
+ *
+ * 🔴 This was a two-element array of filenames. The suite therefore checked
+ * the narrow-screen pattern on two files and said nothing about the other
+ * eleven that render a `<Table>` — a check named for the phone while it
+ * actually scanned two names someone had typed. That was measured before it
+ * was changed: 13 files, 21 tables, 95 columns, against 2/3/22 here.
+ *
+ * The universe is `MIGRATED_SOURCES`, which the ledger test above pins to
+ * every `.tsx` under `app/` and `components/`, so a page written tomorrow is
+ * in scope the day it is written and nobody has to remember anything.
+ *
+ * `codeOnly` strips comments before the match, so a file that only mentions
+ * the grid in prose is not dragged in — `components/ui/card.tsx` does exactly
+ * that today, and matching raw source pulls it in and then fails on it for
+ * rendering no table.
+ *
+ * ⚠️ `SpecTable` is deliberately NOT in scope. It is the other table shape —
+ * a term/detail pair whose own docblock says it "reads the same at 390px as
+ * at 1400px" — and it has no columns to drop. Matching `<Table` as a bare
+ * substring instead of on a word boundary sweeps in the two files that
+ * render only a `<TableBody>` inside a `SpecTable` and would demand a
+ * narrow-screen treatment of something that does not have one.
+ */
+function narrowScreenTables(): string[] {
+  return [...MIGRATED_SOURCES]
+    .filter((relative) => /<Table\b/.test(codeOnly(readSource(relative))))
+    .sort();
+}
+
+/**
+ * A cell that spans the table is a detail row, not a column.
+ *
+ * `components/journal.tsx` puts the expanded envelope in a `<TableRow>` of
+ * its own holding one `colSpan={PAYLOAD_COLUMNS}` cell. `tableColumns`
+ * flattens every `<TableCell>` in a table into one list, so that row reads as
+ * a fifth column against four headers. Ignoring spanning cells here is what
+ * lets the derived list include the journal at all; the span itself has its
+ * own test ("the journal's payload row spans every column the table has").
+ */
+const isColumn = (column: Column) => !/\bcolSpan\b/.test(column.attributes);
+
+/**
+ * Tables where every column has to survive the phone, with the reason.
+ *
+ * An exception without a reason is the next defect, so each says why. Each of
+ * these is **a sibling table in the same file minus the column that sibling
+ * already drops** — so the columns left are exactly the ones this codebase has
+ * already decided survive a phone, and the decision is not being made here.
+ *
+ * ⚠️ That argument is structural. **No width was measured**; see
+ * `TABLES_NOT_MEASURED` for why none of these can be, and do not read these
+ * three as "measured and found to fit".
+ */
+const TABLES_WITH_NOTHING_TO_DROP: Record<string, string> = {
+  "components/esim-panel.tsx#2":
+    "structural, not measured: table 0 of this file is these same three " +
+    "columns plus two more, and it marks those two secondary. This table is " +
+    "precisely table 0's phone view, so there is nothing left to drop.",
+  "components/proxy-manager.tsx#2":
+    "structural, not measured: table 0 of this file is name/address plus a " +
+    "probe column it drops. This table is name/address, and its third cell " +
+    "is RowActions, which the controls test below forbids hiding.",
+  "components/proxy-manager.tsx#3":
+    "structural, not measured: a country-to-upstream rule IS both of its " +
+    "columns — dropping either leaves a row stating half a mapping — and " +
+    "the third cell is RowActions, which may not hide.",
+};
+
+/**
+ * 🔴 Confirmed defects. Recorded, not excused.
+ *
+ * Not "probably wrong" and not awaiting a measurement: each is an
+ * **inconsistency** — the same thing treated two ways in one codebase, with
+ * the reasoning for the other treatment written down next to it. Fixing one
+ * means editing a page file, which the card that derived this list was
+ * forbidden to touch, so they are named here until a card fixes them.
+ *
+ * The assertions below let this map only shrink: an entry whose table has
+ * since gained a dropped column fails until the entry is deleted.
+ */
+const NARROW_SCREEN_DEFECTS: Record<string, string> = {
+  "app/page.tsx#0":
+    "DEFECT: `inbox.colReceived` — the identical column key — is secondary " +
+    "in app/inbox/page.tsx table 1, whose comment calls it context and the " +
+    "widest fixed column. Here the same column does not drop. The body cell " +
+    "also lacks `wrap`, which app/sessions/page.tsx gives the same content " +
+    "and which TableCell's own docblock names an SMS body as the case for. " +
+    "This is the landing page: the first screen on a phone.",
+};
+
+/**
+ * ⚠️ Not measured, and here is why none of them can be from a test.
+ *
+ * 🔴 **These are not adjudicated exceptions.** Whether each should drop a
+ * column is open, and parking it here is a statement that nobody has looked
+ * with a ruler — not a finding that it is fine.
+ *
+ * Why a measurement was not taken rather than skipped: every console page is
+ * behind `tenant && signedIn` in `app/layout.tsx`, and none of the files in
+ * the derived list is reachable signed out — `/login` and `not-found` render
+ * no table. Worse, each table below sits behind a `length === 0` branch that
+ * renders a CardEmpty instead, so even an authenticated page shows no table
+ * without seeded rows. Measuring one needs a session AND fixture data; a
+ * harness that supplies its own would be measuring a reproduction.
+ */
+const TABLES_NOT_MEASURED: Record<string, string> = {
+  "app/audit/page.tsx#0":
+    "NOT MEASURED (needs a session and seeded rows). Open question: two " +
+    "unbounded mono identifier columns and a badge; target is `faint`, which " +
+    "TableCell documents as context — but an audit row is who/what/to-what " +
+    "and dropping the target loses a third of the record.",
+  "app/inbox/page.tsx#0":
+    "NOT MEASURED (needs a session and seeded rows). Open question: the peer " +
+    "is `mono faint` beside a contact-name link whose href already encodes " +
+    "it, but it is the only identifier when a contact has no name.",
+  "app/devices/[deviceId]/page.tsx#1":
+    "NOT MEASURED (needs a session, a device and seeded modems). Open " +
+    "question: table 0 of this page drops a column, but here the widest " +
+    "value is the 15-character IMEI, which is the row identity; signal and " +
+    "quality are two readings of one thing and one could be secondary.",
+};
+
+test("the tables being scanned are derived from the tree, not typed out", () => {
+  // 🔴 Non-emptiness first: every loop below is a `for` over this list, and an
+  // empty list satisfies all of them. A derivation that silently returns
+  // nothing is the failure mode this whole change exists to remove.
+  const found = narrowScreenTables();
+  assert.ok(found.length > 0, "the table derivation found no files: everything below is scanning air");
+  for (const known of ["app/devices/page.tsx", "components/card-policies.tsx"]) {
+    assert.ok(
+      found.includes(known),
+      `${known} renders a table and the derivation did not find it, so nothing is being scanned`,
+    );
+  }
+
+  // A floor, not a jurisdiction: a page added tomorrow joins `found` without
+  // anyone editing this file. Pinned so that a table which stops being found
+  // fails loudly instead of quietly reducing the scan.
+  let tables = 0;
+  let columns = 0;
+  for (const relative of found) {
+    const parsed = tableColumns(readSource(relative));
+    assert.ok(parsed.length > 0, `${relative} is in the derived list and renders no <Table>`);
+    tables += parsed.length;
+    for (const table of parsed) columns += table.headers.length;
+  }
+  assert.equal(found.length, 13, `${found.length} files render a table, not 13`);
+  assert.equal(tables, 21, `${tables} tables found, not 21`);
+  assert.equal(columns, 95, `${columns} columns found, not 95`);
+});
 
 test("a column that drops off the phone drops off in its header and its body alike", () => {
   const mismatched: string[] = [];
+  const undropped: string[] = [];
   let checked = 0;
 
-  for (const relative of NARROW_SCREEN_TABLES) {
+  for (const relative of narrowScreenTables()) {
     const tables = tableColumns(readSource(relative));
     assert.ok(tables.length > 0, `${relative} renders no <Table>`);
     for (const [index, table] of tables.entries()) {
       const secondary = (column: Column) => /\bsecondary\b/.test(column.attributes);
       const headers = table.headers.map(secondary);
-      const cells = table.cells.map(secondary);
+      const cells = table.cells.filter(isColumn).map(secondary);
       if (headers.length !== cells.length || headers.some((on, at) => on !== cells[at])) {
         mismatched.push(`${relative} table ${index}: ${headers.join()} vs ${cells.join()}`);
       }
       // A table where nothing is secondary is a table that scrolls sideways on
       // a phone for every one of its columns, and would pass the line above
       // without the pattern having been applied at all.
-      assert.ok(
-        headers.some(Boolean),
-        `${relative} table ${index} drops no column on a phone`,
-      );
+      if (!headers.some(Boolean)) undropped.push(`${relative}#${index}`);
       checked += headers.length;
     }
   }
 
   assert.deepEqual(mismatched, [], "a column is secondary in one row and not the other");
-  // The two tables on the device page are nine and eight columns; the card
-  // policy table is five. A count here so that a table which stops being found
-  // fails rather than quietly reducing this test to nothing.
-  assert.equal(checked, 22, `${checked} columns found, not the 22 these three tables have`);
+
+  // Every table that drops nothing is in exactly one of the three maps, and
+  // the three mean different things: argued, defective, or unexamined. Both
+  // directions are checked, so no list can grow silently or go stale — an
+  // unlisted table fails, and a listed one that has since been fixed fails
+  // until its entry is deleted.
+  const accounted = {
+    ...TABLES_WITH_NOTHING_TO_DROP,
+    ...NARROW_SCREEN_DEFECTS,
+    ...TABLES_NOT_MEASURED,
+  };
+  const keys = [
+    ...Object.keys(TABLES_WITH_NOTHING_TO_DROP),
+    ...Object.keys(NARROW_SCREEN_DEFECTS),
+    ...Object.keys(TABLES_NOT_MEASURED),
+  ];
+  assert.equal(
+    keys.length,
+    Object.keys(accounted).length,
+    "a table is in two of the three maps at once: argued, defective and unexamined are different claims",
+  );
+  assert.deepEqual(
+    undropped.filter((key) => accounted[key] === undefined),
+    [],
+    "a table drops no column on a phone and is not accounted for in any of the three maps",
+  );
+  assert.deepEqual(
+    keys.filter((key) => !undropped.includes(key)),
+    [],
+    "a table listed as dropping nothing now drops something: delete its entry",
+  );
+  for (const [key, why] of Object.entries(accounted)) {
+    assert.ok(why.length > 20, `${key} is listed without a reason`);
+  }
+  // 🔴 The two weaker maps have to keep saying they are weak. Without this a
+  // later edit can quietly reword an unexamined table into a settled one,
+  // which is this board's most-repeated failure: an unverified inference
+  // written down as a fact.
+  for (const [key, why] of Object.entries(TABLES_NOT_MEASURED)) {
+    assert.match(why, /NOT MEASURED/, `${key} is parked as unexamined but no longer says so`);
+  }
+  for (const [key, why] of Object.entries(NARROW_SCREEN_DEFECTS)) {
+    assert.match(why, /DEFECT/, `${key} is recorded as a defect but no longer says so`);
+  }
+
+  assert.equal(checked, 95, `${checked} columns found, not the 95 these tables have`);
 });
 
 test("a column with a control in it never drops off the phone", () => {
@@ -6117,14 +6308,17 @@ test("a column with a control in it never drops off the phone", () => {
   // device where it is hardest to get it back.
   const controls = /<(Link|Button|Select|Checkbox|InlineField|RowActions|a|button|select|input)\b/;
   const hidden: string[] = [];
-  for (const relative of NARROW_SCREEN_TABLES) {
+  let inspected = 0;
+  for (const relative of narrowScreenTables()) {
     for (const table of tableColumns(readSource(relative))) {
       for (const cell of table.cells) {
+        inspected += 1;
         if (!/\bsecondary\b/.test(cell.attributes)) continue;
         if (controls.test(cell.contents)) hidden.push(`${relative}: ${cell.attributes}`);
       }
     }
   }
+  assert.ok(inspected > 0, "no cells were inspected at all: this test is scanning air");
   assert.deepEqual(hidden, [], "a control is being hidden on a phone, not a reading");
 });
 
