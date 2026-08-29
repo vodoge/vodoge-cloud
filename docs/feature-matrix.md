@@ -67,6 +67,13 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 > 改动了功能就要回来改这一列 —— 一张过时的对齐图比没有更糟，
 > 因为它会让人以为某件事已经做了。
 
+> ⚠️ **2026-08-29 只改了当天动过的行，没有重新逐行核一遍全表。**
+> 改过的是：设备管理里的模组身份与拓扑、系统信息与版本、按 ICCID 的卡策略、
+> AT 终端，以及新增的「我们独有的:能力台账」小节 —— 这几行的依据都是当天从
+> 生产库和容器制品里取的实测值。**其余行仍停留在 2026-08-25 那次核对**，
+> 而那之后 schema 从 43 走到了 47，所以它们可能已经偏了。
+> 下一次全表核对时，这段警告要一起删掉。
+
 ---
 
 ## 怎么读这张表
@@ -93,7 +100,7 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 | 新增设备 | 有 | 有 | **半** | 只能靠注册码自注册，不能手工建 —— 运行中的 mux 上 `/v1/devices` 的 `Allow` 只有 `GET, HEAD`，没有 POST；建设备的唯一入口是 `POST /v1/enrollment-codes` 换码、设备再拿 `POST /v1/enroll` 自注册 |
 | 发现未注册硬件 | 有 | 有 | **有** | 边缘第二路枚举 AT 控制口，QMI 够不到的棒子以「待纳管」上报并带 IMEI；真机 ECM 往返验过 |
 | 手动重扫描 | 有 | 有 | **有** | `refresh_modems`，生产 CommandResult 实测 `{"found": 3, "rescan": "requested", "control_ports": ["/dev/cdc-wdm0","/dev/cdc-wdm1","/dev/cdc-wdm2"]}`（3 条成功，最近 2026-08-23 12:27） |
-| 设备配置读取 | 有 | 有 | **无** | 边缘的运行配置无法从云端查看：生产命令枚举里没有对应 kind，控制台也没有入口 |
+| 设备配置读取 | 有 | 有 | **半** | 2026-08-29 起云端看得到物理拓扑与模组身份：生产 `app.modems` 的 `control_port` / `usb_device` / `firmware` / `msisdn` / `apn_contexts` 全有值，控制台设备页各有一列。**仍缺的是可写**：改运行模式、AT 端口这类没有对应命令 kind。判断是不该做 —— 发现每轮都重新校验拓扑，云端写进去的值要么被覆盖，要么把操作对准错误的棒子 |
 | 刷新设备缓存 | 有 | 有 | **有** | 同一条 `refresh_modems`（就是上一行那条生产回执），见下方注 |
 | 单设备实时流 | 有 | 有 | **半** | 有租户级 SSE —— 运行中的 mux 上 `GET /v1/events` 已注册、无会话回 401；无按设备订阅 |
 | 主机资源统计 | 无 | 有 | **有** | CPU 取两次 /proc/stat 之差，内存用 MemAvailable；设备页「主机状态」卡。生产 `app.devices` 实测 `cpu_percent=0.9`、`memory_used_bytes=662175744`、`memory_total_bytes=8326422528`，`host_reported_at` 与上报同分钟；bundle 里有 `device.hostCpu` / `device.hostMemory` / `devices.colHostCpu` |
@@ -105,11 +112,30 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 > 的事。再补一条只清缓存不重扫的命令，只会多出一条语义上等价、实现上什么
 > 都不做的命令。
 
+### 我们独有的:能力台账
+
+VoCat 没有对应物,所以不在上面的对照表里,但它现在决定这支设备群会不会执行一个操作。
+
+| 能力 | 状态 | 实测依据 |
+| --- | --- | --- |
+| 支持台账(型号 × 运营商) | **有** | 生产 `app.support_ledger` 4 行,控制台 `/support-ledger` 可读可写可发布。**没测过 = 不支持**:边缘拒绝执行没有实测记录的组合,并指名缺哪次测量 |
+| 台账发布到设备 | **有** | 生产 `app.commands` 里 `update_capability_matrix` **1 条 succeeded**(2026-08-29)。发布后 `868019060490134` 的 `capability_origin` 由 `fallback` 变 `rule` —— 内置 TOML 没有 EC200U-CN 这条,只有台账有 |
+| 四层裁决 | **半** | 天花板 → 台账 → 运营商 → 套餐,依次收窄、只能做减法。**但四列里只有 `sms_mo` 接进了实际裁决**,`data` / `voice` / `sms_mt` 定义了没有调用点。见 execution-plan 3.6 |
+
+台账实测四行(2026-08-29):
+
+| 型号 × 运营商 | 发 | 收 | 依据 |
+| --- | --- | --- | --- |
+| EC20 × CN-Mobile | ✓ | ✓ | CXLL → 10086,25 秒后收到流量回复 |
+| EC20 × CN-Telecom | ✗ | ✗ | 沿用内置矩阵,**未重测**,`tested_by` 里标注了 |
+| EC20 × Generic-International | probe | ✓ | 收:两张卡共 19 条真实入站。发:**测不出** —— 台面两张国际卡各自被套餐挡在不同层(Club 模组层拒、T-Mobile 网络层 `Message Blocking`,连美美互发也拦) |
+| EC200U-CN × CN-Telecom | ✓ | ✓ | HFYE → 10001,电信回了余额,回信经 AT 收件箱扫描落库并上云 |
+
 ## 射频与网络
 
 | 功能 | 旧 VoDoge | VoCat | 我们的云端 | 差在哪 |
 | --- | --- | --- | --- | --- |
-| AT 终端 | 有 | 有 | **有** | 已在真机验证往返：生产 CommandResult `{"ok": true, "port": "/dev/ttyUSB10", "command": "AT+QCSQ", "lines": ["+QCSQ: \"LTE\",48,-74,250,-7"], "terminator": "OK"}`；`run_at_command` 累计 61 条成功 |
+| AT 终端 | 有 | 有 | **有** | 已在真机验证往返：生产 CommandResult `{"ok": true, "port": "/dev/ttyUSB10", "command": "AT+QCSQ", "lines": ["+QCSQ: \"LTE\",48,-74,250,-7"], "terminator": "OK"}`；`run_at_command` 累计 61 条成功。2026-08-29 起**两个入口都设防**：改动射频/通话/短信/卡/持久配置的指令默认拒绝，要显式 `force`。读操作（`?` 与 `=?`）一律放行，链式指令逐段判定（`AT+CSQ;+CFUN=0` 是一条字符串）。真机验过 `AT+CNMI=2,2,0,0,0` 被拒而 `AT+CNMI?` 放行。VoCat 也有「强制模式」，形状相近 |
 | USSD 发起 / 继续 / 取消 | 有 | 有 | **半** | 控制台侧已补齐（T083）：部署后 `.next` 全树里 `stage:"start"` / `"continue"` / `"cancel"` **各 2 处命中**（server 与 client 两个 `devices/[deviceId]` chunk），T076 量到的 `continue` 零命中已消失；容器 `vodoge.artifact.sha256` = `0d6e5991…3a713c`。发出的形状是 `{modem_imei: <开启会话那条命令 payload 里的 IMEI>, code, stage:"continue"}` —— **回复按会话所属模组寻址，不按页面上的模组下拉框**（USSD 会话没有标识符，只能靠 AT 端口定位）。**仍然只算「半」，两个理由都不在控制台：**① **边缘会把 continue 要回复的那个会话先关掉** —— `edge-bin/src/main.rs:2155`（HEAD `c17bf57`）在**每一次** USSD 请求前无条件发 `AT+CUSD=2`（「start from a known state」），而同文件 `:1040` 的注释却写着「continue 就是同一条请求打在已开会话上」—— **代码与注释自相矛盾，且代码赢**。于是回复「2」会变成一条全新的 `AT+CUSD=1,"2",15`。**修它要动边缘，T083 明令不许，另开卡。**② **网络侧至今零应答** —— 生产唯一那一次仍是 `{"code": "*#100#", "stage": "network_timeout", "text": "", "expects_reply": false, "elapsed_ms": 30232}`。所以「多级菜单能走完」这件事**没有在真机上验过，也没法验** |
 | 模组重启 / 飞行模式 | 有 | 有 | **有** | 部署后的 bundle 里高风险按钮表含 `restart_modem` 与 `set_radio`（点了走 `device.confirmDisruptive` 二次确认），生产 `app.command_kind` 两个标签都在。**但生产 `app.commands` 里这两种各 0 条 —— 通路是部署好的，没在真机上按过** |
 | 运营商扫描与选网 | 有 | 有 | **有** | 自动与手动 PLMN 都有：bundle 里 `scan_operators` 在高风险按钮表，`select_operator` 有独立表单（`device.selectOperator` / `device.automatic`）。**生产这两种命令同样各 0 条，未在真机上跑过** |
@@ -167,8 +193,8 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 | ES9+ 与 SM-DP+ 认证 | 有 | 有 | **有** | 控制台按钮 `initiate_esim_authentication` 对**真实生产 SM-DP+** 跑 ES9+ `InitiateAuthentication`，拿回 `transactionId` 与签名响应并渲染。生产 18 条成功回执，两家都打通过：`wbg.prod.ondemandconnectivity.com`（Thales）与 `T-MOBILE.IDEMIA.IO`。回执里 `negotiated_tls=TLSv1_3`、`admin_protocol=gsma/rsp/v2.2.0`，`certificate_signed_by_ci` / `server_signature_valid` / `challenge_echoed` / `ci_key_accepted_by_chip` 四项全 true；信任锚 `gsma-rsp2-root-ci1.pem`、SKI `81370F5125D0B1D408D4C3B232E6D25E795BEBFB`（与两颗芯片 `euiccCiPKIdListForVerification` 一致），来自边缘机上的 `/etc/vodoge/rsp-trust` 目录而不是编进二进制，页面上显示它的指纹与到期日。地址取自卡上：ES10a `GetEuiccConfiguredAddresses` 在两颗芯片上都**没有**默认 SM-DP+（只有 GSMA 测试 SM-DS），所以回落到激活码或待投递通知自带的地址。对卡与账户零副作用 |
 | Profile 下载（SM-DP+） | 有 | 有 | **有** | **2026-08-24 10:19–10:20 在台面真卡上跑通了一次完整下载。** 生产回执实测：`installed=true`、`installation_iccid=8901240527197122156`、`smdp_address=T-MOBILE.IDEMIA.IO`、`profiles_added=1`、`refused_policy_rules=[]`、BPP 14278 字节切成 20 段共 44 个 block、`handleNotification` HTTP 204 且 `notification_removed_code=0`；`before.profiles` 只有 WEBBING，`after.profiles` 两条 —— **卡上确实多了一个 profile**。控制台入口也在部署后的 bundle 里：每根模组一个 `esim.dlStart` 按钮，配激活码与确认码输入框、`esim.dlWarn` 二次确认，点了直接 `POST /v1/commands {kind: download_esim_profile}`；生产 `app.audit_log` 那条 `download_esim_profile` 记着 actor 与真实 LPA 激活码。下行命令 `download_esim_profile` 在生产 `app.command_kind` 枚举里（迁移 0043 同步加的，现 26 个标签，与 `max(app.schema_migrations.version)=43` 对得上）。链路：解析激活码 → ES9+ `InitiateAuthentication` → ES10b `AuthenticateServer` → ES9+ `AuthenticateClient` → **读 `profileMetadata`(BF25) 里的 `profilePolicyRules`** → ES10b `PrepareDownload` → ES9+ `GetBoundProfilePackage` → 按 SGP.22 §5.7.5 把 BPP 切成段、每段一条 STORE DATA 链装进卡 → `handleNotification` 投递安装通知 → `RemoveNotificationFromList`。**两条硬规则写进代码而不是留给判断**：①带 **ppr1/ppr2** 的 profile 一律不装，用 `CancelSession(pprNotAllowed)` 退回给 SM-DP+（台上两颗 eUICC 没人能拔，装上就永久占坑）；②**只 install 不 enable** —— 全链路没有一处调 `EnableProfile`，这次回执里 `enabled` 就是显式的 false，控制台把它渲染成一条必须通过的检查 |
 | 重命名 / 删除 Profile | 有 | 有 | **无** | 边缘也还没有；部署后的 bundle 里 `esim.*` 同样没有 rename / delete 动作 |
-| 按 ICCID 的卡策略 | 有 | 有 | **半** | 云端那一半是全的：生产 `app.card_policies` 1 行、`app.audit_log` 有 `cards.policy_saved`，bundle 里 `cards.*` 一整套表格（ICCID / vertical / APN / cellular 开关）。**下发那一半从来没成功过** —— 生产 `app.commands` 里 `update_card_policy` 只有 2 条，**两条都是 `expired`**（2026-08-22 08:09 与 08:10，各自 30 分钟后过期），succeeded 0 条。所以「下发到全部设备」是设计意图，不是实测事实 |
-| PC/SC 读卡器 | 有 | 有 | **无** | 外接读卡器写卡：生产命令枚举里没有对应 kind，控制台也没有入口 |
+| 按 ICCID 的卡策略 | 有 | 有 | **有** | 2026-08-29 全链路打通。生产 `app.commands` 里 `update_card_policy` 现在有 **1 条 succeeded**（另有 1 failed、3 expired，都在处理分支上线之前）。生产 `app.card_policies` 3 行，除 ICCID / vertical / APN / cellular 外还带四列**套餐能力声明**（`sms_send` / `sms_receive` / `data` / `voice`），控制台是三态下拉：未填写 / 包含 / 不含。三态不能压成勾选框 —— 「没人填过」和「填了不含」是两条不同的记录，只有后者改变行为。声明**严格只能做减法**：它能扣留实测支持的操作，永远不能授予没测过的能力，否则就是拿一份网页上的资费去替硬件声称能力。这一层是唯一能分开同网同模组两张卡的地方，实测过：Club 与 Webbing 同为香港 CSL、同插一根 EC20，Club 在模组层被 `QMI error 54` 拒、Webbing 被接受 |
+| PC/SC 读卡器 | 有 | 有 | **无** | 外接读卡器写卡：生产命令枚举里没有对应 kind，控制台也没有入口。台上没人能插读卡器，`port.rs` 的注释说明了为什么不写这段代码 |
 
 ## VoWiFi 与语音
 
@@ -233,7 +259,7 @@ grep -rEn 'mux\.Handle(Func)?\("' apps/gateway/ | grep -v _test | wc -l   # 68
 | 审计日志 | 有 | 有 | **有** | 生产 `app.audit_log` 325 行、29 种 action（登录、各类命令下发、设置变更、删除都在里面）；`GET /v1/audit` 在运行中的 mux 上，控制台有 audit 页 |
 | 登录限流 | 无 | 有 | **有** | `/metrics` 上有 `vodoge_requests_rate_limited_total`（当前 0，没撞过限）；生产 `app.audit_log` 里 `auth.login` 32 条与 `auth.login.failed` 11 条分开记 |
 | 访问策略 / 多角色 | 有 | 有 | **有** | `app.users.role` = admin / readonly，生产两种角色各有一个真账号；只读会话被网关在整张路由表外侧一处拒绝，30 条写路由逐条验过，只有本人的登出与改密除外。运行中的 mux 上写路由共 33 条（30 拒 + 3 豁免），抽查的 `/v1/modems`、`/v1/audit`、`/v1/sessions`、`/v1/journal`、`/v1/events`、`/v1/openapi.json`、`/v1/proxy/instances/export` 无会话时全部 401「sign in required」。**只读会话被拒那一步要有登录态才看得到，2026-08-25 这一轮没验**（那一轮不铸会话） |
-| 系统信息与版本 | 有 | 有 | **半** | 有设备版本（生产 `app.devices.edge_version = 0.1.0`、`matrix_version = 2026-08-20`），无边缘主机信息 —— 生产 DeviceState 的 `host` 段实测只有 `public_ip` / `cpu_percent` / `memory_used_bytes` / `memory_total_bytes` 四个字段，没有主机名、内核、发行版、agent 构建号 |
+| 系统信息与版本 | 有 | 有 | **有** | 2026-08-29 补齐。生产 `app.devices` 实测：`hostname = vodoge`、`cpu_model = 12th Gen Intel(R) Core(TM) i5-12400F`、`kernel = 6.8.0-138-generic`、`disk_used/total_bytes`、`net_rx/tx_bytes_per_sec`，加上原有的 `public_ip` / `cpu_percent` / 内存。磁盘取的是 agent 数据库所在的文件系统（撑爆它才会让 outbox 提交失败），吞吐是两次轮询之间的速率、排除 `wwan` 与回环 |
 | 检查更新 / 应用更新 | 有 | 有 | **半** | 有 `self_update` 命令（生产 `app.command_kind` 枚举里有这个标签），无制品发布与检查；而且**部署后的控制台 bundle 里 `self_update` 零命中**（没有入口），生产 `app.commands` 里也 0 条 |
 | 指标端点 | 无 | 有 | **有** | 生产 `GET /metrics` 免鉴权 200，实测 13 组指标：HTTP 请求与耗时、ingress 接收与丢弃、命令入队、契约违规、限流、设备会话、通知三件套、Telegram 两件套 |
 | 中英双语 | 有 | 有 | **有** | 有测试保证两个语言包键一致 —— 而且在部署后的制品上直接验得了：容器里 `/app/messages/en.json` 与 `zh.json` 各 **491** 个扁平化键，两个方向的差集都是空 |

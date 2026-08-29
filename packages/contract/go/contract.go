@@ -175,6 +175,13 @@ type HostState struct {
 	CpuPercent       *float64 `json:"cpu_percent,omitempty"`
 	MemoryUsedBytes  *int64   `json:"memory_used_bytes,omitempty"`
 	MemoryTotalBytes *int64   `json:"memory_total_bytes,omitempty"`
+	DiskUsedBytes    *int64   `json:"disk_used_bytes,omitempty"`
+	DiskTotalBytes   *int64   `json:"disk_total_bytes,omitempty"`
+	NetRxBytesPerSec *int64   `json:"net_rx_bytes_per_sec,omitempty"`
+	NetTxBytesPerSec *int64   `json:"net_tx_bytes_per_sec,omitempty"`
+	CpuModel         *string  `json:"cpu_model,omitempty"`
+	Kernel           *string  `json:"kernel,omitempty"`
+	Hostname         *string  `json:"hostname,omitempty"`
 }
 
 type ModemState struct {
@@ -192,7 +199,21 @@ type ModemState struct {
 	Imsi         *string           `json:"imsi,omitempty"`
 	HomePlmn     *string           `json:"home_plmn,omitempty"`
 	ServingPlmn  *string           `json:"serving_plmn,omitempty"`
+	Firmware     *string           `json:"firmware,omitempty"`
+	Msisdn       *string           `json:"msisdn,omitempty"`
+	ControlPort  *string           `json:"control_port,omitempty"`
+	UsbDevice    *string           `json:"usb_device,omitempty"`
+	// Packet data profiles the module holds. nil means unread; an empty slice
+	// means it answered and held none.
+	ApnContexts  []ApnContext      `json:"apn_contexts,omitempty"`
 	Capability   CapabilitySummary `json:"capability"`
+}
+
+// ApnContext is one packet data profile as the module reports it.
+type ApnContext struct {
+	Cid     int    `json:"cid"`
+	PdpType string `json:"pdp_type,omitempty"`
+	Apn     string `json:"apn,omitempty"`
 }
 
 type CapabilitySummary struct {
@@ -251,6 +272,10 @@ type RunAtCommandCommand struct {
 	ModemImei string `json:"modem_imei"`
 	Command   string `json:"command"`
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+	// Force sends a command the agent classifies as disruptive anyway. Omitted
+	// when false so an unchanged payload stays byte-identical to what an older
+	// console sent, which is what keeps command deduplication stable.
+	Force bool `json:"force,omitempty"`
 }
 
 type SendUssdCommand struct {
@@ -401,6 +426,18 @@ type CardPolicy struct {
 	CellularEnabled bool    `json:"cellular_enabled"`
 	Vertical        string  `json:"vertical"`
 	Apn             *string `json:"apn,omitempty"`
+	// Omitted entirely when nothing is declared, so a card with no
+	// declaration produces the same bytes it did before this field existed.
+	Capability *SubscriptionCapability `json:"capability,omitempty"`
+}
+
+// SubscriptionCapability is strictly subtractive: false withholds, true
+// asserts nothing, nil is undeclared.
+type SubscriptionCapability struct {
+	SmsSend    *bool `json:"sms_send,omitempty"`
+	SmsReceive *bool `json:"sms_receive,omitempty"`
+	Data       *bool `json:"data,omitempty"`
+	Voice      *bool `json:"voice,omitempty"`
 }
 
 type UpdateCapabilityMatrixCommand struct {

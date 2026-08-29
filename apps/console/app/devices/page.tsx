@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Badge, StateBadge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import { Field, Input, Select } from "@/components/ui/form";
 import {
   Table,
   TableBody,
@@ -80,7 +82,23 @@ import { CARD_POLICY_CONFIRMATIONS, PAGE, TABLE, type CardPolicyGuard } from "@/
  * read from a cookie in an effect — this console has shipped that bug twice and
  * it renders the server's HTML in the default language every time.
  */
-export default async function DevicesPage() {
+/**
+ * Search and ordering live in the URL rather than in component state.
+ *
+ * This page is a server component that renders three tables from one load, and
+ * a filter box would have made it a client one — pulling the whole thing, and
+ * the fetches it does, across the boundary to hide rows that are already on
+ * screen. In the URL the work stays on the server, a filtered view is a link
+ * somebody can send, and the page keeps working with no JavaScript at all.
+ */
+export default async function DevicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string }>;
+}) {
+  const query = await searchParams;
+  const needle = (query.q ?? "").trim().toLowerCase();
+  const order = query.sort === "signal" || query.sort === "seen" ? query.sort : "imei";
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -215,6 +233,21 @@ export default async function DevicesPage() {
         </Card>
 
         <Card title={t("devices.modems", locale)} note={t("devices.modemsNote", locale)} bodyless>
+          {/* A plain GET form: the filter is the URL, so this works with no
+              JavaScript and a filtered view is a link. */}
+          <form className={PAGE.section} method="get">
+            <Field label={t("modems.search", locale)} inline>
+              <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
+            </Field>
+            <Field label={t("modems.sort", locale)} inline>
+              <Select compact name="sort" defaultValue={order}>
+                <option value="imei">{t("modems.sortImei", locale)}</option>
+                <option value="signal">{t("modems.sortSignal", locale)}</option>
+                <option value="seen">{t("modems.sortSeen", locale)}</option>
+              </Select>
+            </Field>
+            <Button type="submit">{t("modems.apply", locale)}</Button>
+          </form>
           {modems.length === 0 ? (
             <CardEmpty
               title={t("empty.modems.title", locale)}
@@ -241,7 +274,7 @@ export default async function DevicesPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {modems.map((modem) => (
+                {orderModems(matchingModems(modems, needle), order).map((modem) => (
                   <TableRow key={modem.id}>
                     <TableCell mono>
                       <span className={TABLE.cellInline}>
@@ -434,4 +467,49 @@ function HostMemory({ used, total }: { used: number | null; total: number | null
     return <span className={TABLE.cellFaint}>—</span>;
   }
   return <span>{Math.round((used / total) * 100)}%</span>;
+}
+
+/**
+ * The modules whose identity contains `needle`.
+ *
+ * Matches across IMEI, ICCID, family and both networks, because an operator
+ * looking for a stick has whichever of those they happen to be holding — a
+ * label off the hardware, a number off a bill, or an operator name from a
+ * screenshot. An empty needle matches everything rather than nothing: a blank
+ * search box is not a filter.
+ */
+function matchingModems(modems: ModemRow[], needle: string): ModemRow[] {
+  if (needle === "") return modems;
+  return modems.filter((modem) =>
+    [modem.imei, modem.iccid, modem.family, modem.homePlmn, modem.servingPlmn, modem.msisdn]
+      .some((field) => (field ?? "").toLowerCase().includes(needle)),
+  );
+}
+
+/**
+ * Ordering, with a total order in every case.
+ *
+ * Each comparison falls through to the IMEI, so two modules with the same
+ * signal or no reading at all still come out in a stable order. Without that
+ * the list reshuffles between polls and a row moves under the cursor.
+ *
+ * A missing reading sorts last rather than as zero: a module that could not be
+ * measured is not a module with the worst signal in the fleet.
+ */
+function orderModems(modems: ModemRow[], order: string): ModemRow[] {
+  const sorted = modems.slice();
+  sorted.sort((left, right) => {
+    if (order === "signal") {
+      const a = left.signalDbm ?? Number.NEGATIVE_INFINITY;
+      const b = right.signalDbm ?? Number.NEGATIVE_INFINITY;
+      if (a !== b) return b - a;
+    }
+    if (order === "seen") {
+      const a = left.lastSeen ?? 0;
+      const b = right.lastSeen ?? 0;
+      if (a !== b) return b - a;
+    }
+    return left.imei.localeCompare(right.imei);
+  });
+  return sorted;
 }

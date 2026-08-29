@@ -33,6 +33,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ledger"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
@@ -96,6 +97,7 @@ func main() {
 		defer proc.notify.Close()
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.cards = cards.SQL{DB: sqlStore.DB}
+		proc.ledger = ledger.SQL{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -701,6 +703,10 @@ type process struct {
 	proxies proxy.Store
 	inbox   messaging.Store
 	cards   cards.Store
+	// Defaulted to a working empty store rather than left nil: every route
+	// that reads it would otherwise panic on a build with no database, which
+	// is the shape the tests run in.
+	ledger  ledger.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -733,6 +739,10 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		events:  bus,
 		catalog: catalog.Empty{},
 		matrix:  &matrix.Memory{},
+		// Same reasoning as `schedules` below: the page renders against an
+		// empty ledger, and an endpoint that only exists in production is one
+		// nobody tests.
+		ledger:  ledger.Empty{},
 		queue:   &commands.Memory{},
 		audit:   &audit.Memory{},
 		rules:   &rules.Memory{},
@@ -831,6 +841,7 @@ func (process *process) handler() http.Handler {
 	process.registerProxyRoutes(mux)
 	process.registerMessagingRoutes(mux)
 	process.registerCardRoutes(mux)
+	process.registerLedgerRoutes(mux)
 	process.registerDeviceRoutes(mux)
 	mux.HandleFunc("GET /v1/audit", process.listAudit)
 	process.registerScheduleRoutes(mux)

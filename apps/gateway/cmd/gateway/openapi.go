@@ -83,6 +83,7 @@ const (
 	tagRules      = "rules"
 	tagEnrollment = "enrollment"
 	tagCards      = "cards"
+	tagLedger     = "support-ledger"
 	tagProxy      = "proxy"
 	tagSchedules  = "schedules"
 )
@@ -131,6 +132,7 @@ func apiDocument() openapi.Document {
 			{Name: tagRules, Description: "Automation rules evaluated against uplink."},
 			{Name: tagEnrollment, Description: "One-time codes that let a new device obtain a certificate."},
 			{Name: tagCards, Description: "Per-ICCID policy pushed to the fleet."},
+			{Name: tagLedger, Description: "What has been measured on which module and network. A pairing absent from the ledger is refused as untested."},
 			{Name: tagProxy, Description: "Proxy upstreams, listener instances, country rules and traffic."},
 			{Name: tagSchedules, Description: "Recurring tasks the gateway runs on the fleet."},
 		},
@@ -811,6 +813,54 @@ func apiOperations() []openapi.Operation {
 		},
 
 		// ── cards ─────────────────────────────────────────────────────────
+		{
+			Method: "GET", Path: "/v1/support-ledger", Tag: tagLedger,
+			Summary:  "Every measured (modem family, carrier) pairing. A pairing absent here is refused by the edge as untested.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				jsonOK("The ledger.", object(
+					field("entries", true, arrayOf("One measured pairing.")),
+				)),
+				plain(500, "The ledger could not be read."),
+			},
+		},
+		{
+			Method: "PUT", Path: "/v1/support-ledger/{family}/{carrier}", Tag: tagLedger,
+			Summary:  "Record what a pairing was measured to do. Recording does not change the fleet; publish does.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				jsonOK("The stored measurement.", object(
+					field("modem_family", true, str("The module family measured.")),
+					field("carrier", true, str("The network it was measured on.")),
+					field("tested_by", true, str("Who took the measurement.")),
+				)),
+				plain(400, "The measurement is not valid."),
+				plain(500, "The measurement could not be saved."),
+			},
+		},
+		{
+			Method: "DELETE", Path: "/v1/support-ledger/{family}/{carrier}", Tag: tagLedger,
+			Summary:  "Withdraw a measurement, taking the pairing back to untested.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				noContent("The measurement was withdrawn."),
+				plain(500, "The measurement could not be removed."),
+			},
+		},
+		{
+			Method: "POST", Path: "/v1/support-ledger/publish", Tag: tagLedger,
+			Summary:  "Render the ledger into a capability matrix and hand it to every device.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				jsonOK("What was published.", object(
+					field("version", true, str("The version devices were given.")),
+					field("rules", true, str("How many pairings it carries.")),
+					field("devices", true, str("How many devices it was queued for.")),
+				)),
+				plain(400, "The ledger is empty, so nothing would be supported."),
+				plain(500, "The matrix could not be rendered or stored."),
+			},
+		},
 		{
 			Method: "GET", Path: "/v1/cards/policies", Tag: tagCards,
 			Summary:  "Every per-card policy, with the version the fleet was last given.",

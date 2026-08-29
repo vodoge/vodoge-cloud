@@ -63,6 +63,16 @@ test("parseDevice ignores malformed rows", () => {
     cpuPercent: null,
     memoryUsedBytes: null,
     memoryTotalBytes: null,
+    // Disk, throughput and the machine's identity are absent the same way.
+    // Zero throughput is a real reading an idle box produces, so it has to be
+    // distinguishable from an agent that never measured the interfaces.
+    diskUsedBytes: null,
+    diskTotalBytes: null,
+    netRxBytesPerSec: null,
+    netTxBytesPerSec: null,
+    cpuModel: null,
+    kernel: null,
+    hostname: null,
     hostReportedAt: null,
   });
 
@@ -94,6 +104,13 @@ test("parseDevice ignores malformed rows", () => {
       cpuPercent: null,
       memoryUsedBytes: null,
       memoryTotalBytes: null,
+      diskUsedBytes: null,
+      diskTotalBytes: null,
+      netRxBytesPerSec: null,
+      netTxBytesPerSec: null,
+      cpuModel: null,
+      kernel: null,
+      hostname: null,
       hostReportedAt: null,
     },
   );

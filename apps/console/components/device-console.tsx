@@ -14,7 +14,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Field, FormError, FormHint, InlineForm, Input, Select } from "@/components/ui/form";
+import {
+  Field,
+  FormError,
+  FormHint,
+  InlineField,
+  InlineForm,
+  Input,
+  Select,
+} from "@/components/ui/form";
 import { Output } from "@/components/ui/output";
 import {
   latestUssdExchange,
@@ -96,6 +104,8 @@ export type DeviceLabelKey =
   | "atCommand"
   | "atNote"
   | "atGuarded"
+  | "atForce"
+  | "atForceHint"
   | "ussdCode"
   | "ussdNote"
   | "ussdSession"
@@ -643,6 +653,12 @@ function AtConsole({
   onRun: Request;
 }) {
   const [command, setCommand] = useState("AT+CSQ");
+  // The agent refuses commands that reach radio, call, message, card or
+  // persistent-configuration state. Its list is wider than the guards below,
+  // which name only the few worth explaining in advance, so this is what an
+  // operator uses when the refusal names something the box did not warn about.
+  // Reset after every send: a switch left on is a guard turned off.
+  const [force, setForce] = useState(false);
   const tripped = atCommandGuard(command);
   return (
     <CardPanel title={labels.atCommand} note={labels.atNote}>
@@ -650,7 +666,8 @@ function AtConsole({
         <InlineForm
           onSubmit={(event) => {
             event.preventDefault();
-            onRun("run_at_command", { command });
+            onRun("run_at_command", { command, force: force || Boolean(tripped) });
+            setForce(false);
           }}
         >
           <Field label={labels.atCommand} inline>
@@ -661,9 +678,15 @@ function AtConsole({
               autoComplete="off"
             />
           </Field>
+          <InlineField
+            label={labels.atForce}
+            checked={force}
+            onChange={(event) => setForce(event.target.checked)}
+            title={labels.atForceHint}
+          />
           <Button
             type="submit"
-            variant={tripped ? "risk" : "primary"}
+            variant={tripped || force ? "risk" : "primary"}
             disabled={busy || command.trim().length < 2}
           >
             {labels.run}

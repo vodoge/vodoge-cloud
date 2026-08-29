@@ -47,6 +47,11 @@ type Request struct {
 	// RunAtCommand
 	Command   string `json:"command"`
 	TimeoutMs int64  `json:"timeout_ms"`
+	// Force sends a command the edge classifies as disruptive anyway. The
+	// gateway does not classify: the edge holds the list because it is the
+	// side that knows what the command reaches, and duplicating it here would
+	// give two answers to maintain and one of them would drift.
+	Force bool `json:"force"`
 
 	// SendUssd
 	Code  string `json:"code"`
@@ -161,6 +166,13 @@ var catalogue = map[string]Spec{
 				return nil, ErrInvalid{"command must start with AT"}
 			}
 			payload := map[string]any{"kind": "RunAtCommand", "modem_imei": request.ModemIMEI, "command": command}
+			// Only carried when true. An absent field and a false one mean the
+			// same thing to the edge, and omitting it keeps an ordinary
+			// command's payload byte-identical to what it was before the flag
+			// existed -- which is what the idempotency key is derived from.
+			if request.Force {
+				payload["force"] = true
+			}
 			if request.TimeoutMs != 0 {
 				if request.TimeoutMs < 100 || request.TimeoutMs > 300000 {
 					return nil, ErrInvalid{"timeout_ms must be between 100 and 300000"}
