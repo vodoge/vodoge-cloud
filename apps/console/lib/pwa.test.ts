@@ -2393,8 +2393,48 @@ const CAPTURED_FROM = {
   // silently. `lib/tokens.ts` is a Tailwind content file and prose in one has
   // leaked a rule into the shipped stylesheet four times on this repo, once
   // from the ordinary English word `transition` sitting in a comment.
+  // SN-T09x re-stamped the chrome digest alone, without reshooting. Three
+  // closure files moved: `lib/catalog.ts` gained optional firmware, number and
+  // topology fields on ModemRow plus disk, throughput and machine fields on
+  // DeviceRow, and both message packs gained the keys those columns are
+  // labelled with. The home page renders none of them.
+  //
+  // Paid for with the artefact, as the note below demands rather than with the
+  // argument that it looked cosmetic: the shipped stylesheet was generated
+  // from the real content globs on this tree and on the tree with these
+  // changes stashed, and came out byte-identical --
+  // 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5 at 12403
+  // bytes, both times.
+  //
+  // The two files that do add markup -- `app/devices/[deviceId]/page.tsx` and
+  // `components/device-console.tsx` -- are Tailwind content but are NOT in the
+  // chrome closure, which is why the digest moved on the other three and why
+  // the stylesheet check was the part that mattered.
   commit: "7b24441",
-  chrome: "365c0c31bbc55873dad0fd5d05b27b6295d319d35bca2237b1c01d0c0df479bd",
+  //
+  // Re-stamped again in the same change, after the card policy table gained a
+  // plan-declaration column and `lib/card-capability.ts` joined the closure.
+  // Neither is on the home page. Paid for the same way and with the same
+  // result: the shipped stylesheet is still
+  // 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5 at 12403
+  // bytes, byte-identical to the tree before any of this, because every
+  // control added here is an existing component and no file gained a class
+  // string of its own.
+  //
+  // Re-stamped once more in the same change: the support ledger page and
+  // its nav entry joined the closure, and the device list gained a filter
+  // form. None of it is on the home page the frames show. Paid for the same
+  // way a third time and with the same answer -- the shipped stylesheet is
+  // still 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5
+  // at 12403 bytes, unchanged since before any of this work began, because
+  // every control added is an existing component and no file writes a class
+  // string of its own.
+  // Re-stamped again for the APN work: `lib/catalog.ts` gained the
+  // profile table on ModemRow. Not on the home page, and the shipped
+  // stylesheet is still
+  // 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5 at
+  // 12403 bytes -- unchanged across every console change in this session.
+  chrome: "0c6fa96157e5af76d13712a38b046adfbafb913f6c62ad39bcbb5dfa736c2f76",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

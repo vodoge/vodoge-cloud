@@ -2540,7 +2540,7 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
   assert.deepEqual([...UNMIGRATED_SOURCES], []);
   assert.equal(
     MIGRATED_SOURCES.length,
-    46,
+    48,
     `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 46 — ` +
       "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
@@ -3470,9 +3470,10 @@ test("the device list draws no card policy control for an account that may not w
   const found = [...masked.matchAll(CARD_POLICY_CONTROLS)];
   assert.equal(
     found.length,
-    8,
+    10,
     "the tick, the vertical picker, the Remove button, the add form and its" +
-      " field, picker and button — a control that stopped being found would" +
+      " field, picker and button; the plan column's picker and the field that" +
+      " carries it — a control that stopped being found would" +
       " reduce the check below to nothing",
   );
   const ungated = found
@@ -4963,6 +4964,10 @@ test("the nav is four groups covering every destination exactly once", () => {
       "/",
       "/devices",
       "/journal",
+      // What has been measured on which module and network. In Fleet because
+      // it decides what the fleet will attempt, and because reading it is how
+      // somebody finds out why a stick refused an operation.
+      "/support-ledger",
       "/audit",
       "/inbox",
       // Comms, not Settings: `/sessions` is `/inbox`'s messages grouped per
@@ -5240,8 +5245,14 @@ test("the bar and the sheet are the ten destinations split, never copied", () =>
     "a destination is on neither renderer, or on both — the phone can reach nine pages or twice one",
   );
   assert.equal(new Set([...bar, ...sheet]).size, all.length, "a destination is drawn in both places");
-  assert.equal(sheet.length, 6);
-  assert.equal(all.length, 10, "ten destinations. This card changed where they are drawn, not how many.");
+  assert.equal(sheet.length, 7);
+  assert.equal(
+    all.length,
+    11,
+    "eleven destinations since the support ledger joined Fleet. The bar still " +
+      "carries four and the overflow carries the rest, which is the whole point " +
+      "of the split: a destination is added to the sheet, never to the bar.",
+  );
 });
 
 test("five cells, because ten would be below the target size the operator signed off", () => {
@@ -5260,7 +5271,13 @@ test("five cells, because ten would be below the target size the operator signed
   // ten out at once is what fails. Without this, the assertion above would
   // still pass on a bar with one cell on it, and the arithmetic that settled
   // this design would be recorded nowhere a change could disturb it.
-  assert.equal(bottomNavCellWidth(390, navItems().length), 39);
+  // Eleven at once is narrower still than the ten this was settled on. Not
+  // rounded: the function returns the real quotient, and pinning the rounded
+  // figure would let a change of one destination pass unnoticed.
+  assert.ok(
+    Math.abs(bottomNavCellWidth(390, navItems().length) - 390 / 11) < 0.001,
+    `laying all ${navItems().length} out gives ${bottomNavCellWidth(390, navItems().length)}px`,
+  );
   assert.ok(
     bottomNavCellWidth(390, navItems().length) < touch,
     "ten cells now fit, so the reason four were chosen no longer holds — recheck with the operator",
@@ -5688,7 +5705,7 @@ test("the overflow trigger says it opens something, and does not sink when press
 
 test("every nav glyph is path data, and none of it spells a class", async () => {
   const icons = [...navItems().map((item) => item.icon), NAV_MORE.icon];
-  assert.equal(icons.length, 11, "ten destinations and the overflow trigger");
+  assert.equal(icons.length, 12, "eleven destinations and the overflow trigger");
 
   // 🔴 `lib/tokens.ts` is Tailwind content and Tailwind reads text, not
   // meaning. Path data sits in this file as ordinary strings, so a coordinate
@@ -6084,7 +6101,11 @@ function tableColumns(source: string): { headers: Column[]; cells: Column[] }[] 
  * the narrow-screen pattern on two files and said nothing about the other
  * eleven that render a `<Table>` — a check named for the phone while it
  * actually scanned two names someone had typed. That was measured before it
- * was changed: 13 files, 21 tables, 95 columns, against 2/3/22 here.
+ * was changed: 13 files, 21 tables, 95 columns, against 2/3/22 here. The
+ * module list on the device page has since gained firmware, the card's own
+ * number and the control port, the card policy table a plan column, and the
+ * support ledger seven of its own, and the module list an APN column, so the
+ * column census is 107.
  *
  * The universe is `MIGRATED_SOURCES`, which the ledger test above pins to
  * every `.tsx` under `app/` and `components/`, so a page written tomorrow is
@@ -6225,9 +6246,9 @@ test("the tables being scanned are derived from the tree, not typed out", () => 
     tables += parsed.length;
     for (const table of parsed) columns += table.headers.length;
   }
-  assert.equal(found.length, 13, `${found.length} files render a table, not 13`);
-  assert.equal(tables, 21, `${tables} tables found, not 21`);
-  assert.equal(columns, 95, `${columns} columns found, not 95`);
+  assert.equal(found.length, 14, `${found.length} files render a table, not 14`);
+  assert.equal(tables, 22, `${tables} tables found, not 22`);
+  assert.equal(columns, 107, `${columns} columns found, not 107`);
 });
 
 test("a column that drops off the phone drops off in its header and its body alike", () => {
@@ -6299,7 +6320,7 @@ test("a column that drops off the phone drops off in its header and its body ali
     assert.match(why, /DEFECT/, `${key} is recorded as a defect but no longer says so`);
   }
 
-  assert.equal(checked, 95, `${checked} columns found, not the 95 these tables have`);
+  assert.equal(checked, 107, `${checked} columns found, not the 107 these tables have`);
 });
 
 test("a column with a control in it never drops off the phone", () => {
@@ -6909,6 +6930,14 @@ test("every card policy edit has a dialog, and every dialog has both halves", ()
       cardPolicyGuardFor({ kind: "vertical", from: "cn", to: "intl" }),
       cardPolicyGuardFor({ kind: "add" }),
       cardPolicyGuardFor({ kind: "remove" }),
+      // All three states of a plan declaration are reachable, and each asks
+      // its own question: withholding stops the edge attempting the
+      // operation, restoring undoes that, and clearing returns the card to
+      // undeclared. A dialog shared between them would state a consequence
+      // that is true of only one.
+      cardPolicyGuardFor({ kind: "capability", operation: "smsSend", value: false }),
+      cardPolicyGuardFor({ kind: "capability", operation: "smsSend", value: true }),
+      cardPolicyGuardFor({ kind: "capability", operation: "smsSend", value: null }),
     ].filter((guard): guard is NonNullable<typeof guard> => guard !== null),
   );
   assert.deepEqual([...returned].sort(), guards.sort(), "a dialog nobody opens, or an edit with none");
@@ -6997,7 +7026,11 @@ test("the device page is drawn by the shared components, at the point of use", (
 
   assert.equal(uses(/<Table\b/g), 2, "the module list and the radio readings");
   assert.equal(uses(/<SpecTable\b/g), 1, "the host block, which has no header row");
-  assert.equal(uses(/<SpecRow\b/g), 4, "public IP, CPU, memory, reported-at");
+  assert.equal(
+    uses(/<SpecRow\b/g),
+    7,
+    "public IP, CPU, memory, disk, throughput, machine, reported-at",
+  );
   // Three, not six. The console and eSIM panels draw their own cards — one per
   // section — because a card holding four headings and eight tables is the
   // arrangement the tab strip was built to break up, and a card inside a card
@@ -7036,7 +7069,14 @@ test("the device page's widest column is marked secondary on both of its cells",
   const code = codeOnly(readSource(DEVICE_PAGE));
   const headers = code.match(/<TableHeaderCell\b[^>]*secondary/g) ?? [];
   const cells = code.match(/<TableCell\b[^>]*secondary/g) ?? [];
-  assert.equal(headers.length, 1, "the ICCID header is no longer marked secondary");
+  // Four columns now drop on a phone: the ICCID, and the three identity and
+  // topology readings added beside it. The count is a census; the invariant
+  // is the equality below, which is what stops a header outliving its values.
+  assert.equal(
+    headers.length,
+    5,
+    "the ICCID, firmware, number, control-port and APN headers are the ones that drop",
+  );
   assert.equal(
     cells.length,
     headers.length,

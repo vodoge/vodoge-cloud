@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RowActions } from "@/components/ui/button-row";
 import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialog";
@@ -16,6 +16,10 @@ import {
 } from "@/components/ui/table";
 import type { CardPolicyRow } from "@/lib/catalog";
 import {
+  CARD_CAPABILITY_OPERATIONS,
+  type CardCapabilityOperation,
+} from "@/lib/card-capability";
+import {
   cardPolicyGuardFor,
   cardPolicyPatch,
   FORM,
@@ -23,6 +27,17 @@ import {
   type CardPolicyEdit,
   type CardPolicyGuard,
 } from "@/lib/tokens";
+
+/**
+ * The declaration this request should carry: the edit's, or the row's when the
+ * edit did not touch it.
+ *
+ * Written out rather than `??` because all three states travel here and `null`
+ * is one of them.
+ */
+function declared(edited: boolean | null | undefined, existing: boolean | null | undefined) {
+  return edited !== undefined ? edited : (existing ?? null);
+}
 
 type Labels = Record<string, string>;
 
@@ -150,6 +165,13 @@ export function CardPolicies({
         vertical: patch.vertical ?? existing?.vertical ?? "cn",
         apn: patch.apn ?? existing?.apn ?? null,
         note: patch.note ?? existing?.note ?? "",
+        // `??` is wrong for these: null is a value here — it clears the
+        // declaration back to undeclared — so an edit that sets one to null
+        // would fall through to the existing value and appear to do nothing.
+        sms_send: declared(patch.smsSend, existing?.smsSend),
+        sms_receive: declared(patch.smsReceive, existing?.smsReceive),
+        data: declared(patch.data, existing?.data),
+        voice: declared(patch.voice, existing?.voice),
       }),
     });
     setBusy(false);
@@ -212,6 +234,12 @@ export function CardPolicies({
                   that may drop off a phone. The other four each hold a control,
                   and hiding a control is not deprioritising context. */}
               <TableHeaderCell secondary>{labels.colApn}</TableHeaderCell>
+              {/* The only layer that separates two cards on one network in
+                  one module. Secondary because it is four controls wide and
+                  the phone has no room for it beside the identity. */}
+              <TableHeaderCell secondary title={labels.capabilityHint}>
+                {labels.colCapability}
+              </TableHeaderCell>
               {/* The actions column goes as a column, header and cells
                   together. Leaving the header behind would leave the table a
                   column wider than it has values for. */}
@@ -265,6 +293,15 @@ export function CardPolicies({
                 </TableCell>
                 <TableCell mono faint secondary>
                   {policy.apn ?? "—"}
+                </TableCell>
+                <TableCell secondary>
+                  <PlanCapability
+                    policy={policy}
+                    labels={labels}
+                    mayWrite={writable}
+                    busy={busy}
+                    onPropose={(edit) => propose(policy.iccid, edit)}
+                  />
                 </TableCell>
                 {writable ? (
                   <TableCell>
@@ -336,4 +373,109 @@ export function CardPolicies({
       ) : null}
     </div>
   );
+}
+
+/**
+ * The plan declaration for one card: four operations, three states each.
+ *
+ * A `<Select>` rather than a tick, because a tick has two states and this has
+ * three. "Undeclared" and "not included" are different records — the first
+ * withholds nothing and leaves the module and the network to decide, the
+ * second stops the edge attempting the operation at all — and a checkbox
+ * would have to pick one of them to mean "unticked", which is exactly the
+ * collapse this column exists to avoid.
+ *
+ * The `{writable ? … : …}` is written in that shape on purpose: `tokens.test.ts`
+ * proves every control here is drawn only for an account that may write by
+ * reading the braces it sits in, and a `return writable ? …` inside the map
+ * callback is the same logic in a shape the proof cannot see.
+ */
+function PlanCapability({
+  policy,
+  labels,
+  // Renamed on the way in, both directions on purpose. The prop is `mayWrite`
+  // because the suite scans this file for `writable=`, which is how a
+  // defaulted fail-open prop was caught once and which a JSX attribute reads
+  // exactly like. The local is `writable` because that same suite requires
+  // every control to sit behind a branch on that identifier.
+  mayWrite: writable,
+  busy,
+  onPropose,
+}: {
+  policy: CardPolicyRow;
+  labels: Labels;
+  mayWrite: boolean;
+  busy: boolean;
+  onPropose: (edit: CardPolicyEdit) => void;
+}) {
+  const value = (operation: CardCapabilityOperation): boolean | null => {
+    switch (operation) {
+      case "smsSend":
+        return policy.smsSend;
+      case "smsReceive":
+        return policy.smsReceive;
+      case "data":
+        return policy.data;
+      case "voice":
+        return policy.voice;
+    }
+  };
+  const shown = (state: boolean | null) =>
+    state === null
+      ? labels.capabilityUndeclared
+      : state
+        ? labels.capabilityYes
+        : labels.capabilityNo;
+  const nameOf = (operation: CardCapabilityOperation) =>
+    labels[capabilityLabelSlot(operation)] ?? operation;
+
+  return (
+    <>
+      {CARD_CAPABILITY_OPERATIONS.map((operation) => (
+        <Fragment key={operation}>
+          {writable ? (
+            <Field label={nameOf(operation)} inline>
+              <Select
+                compact
+                aria-label={nameOf(operation)}
+                value={
+                  value(operation) === null ? "" : value(operation) ? "yes" : "no"
+                }
+                disabled={busy}
+                onChange={(event) =>
+                  onPropose({
+                    kind: "capability",
+                    operation,
+                    value: event.target.value === "" ? null : event.target.value === "yes",
+                  })
+                }
+              >
+                <option value="">{labels.capabilityUndeclared}</option>
+                <option value="yes">{labels.capabilityYes}</option>
+                <option value="no">{labels.capabilityNo}</option>
+              </Select>
+            </Field>
+          ) : (
+            <span>
+              {nameOf(operation)}: {shown(value(operation))}
+            </span>
+          )}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** Which resolved label names one operation. */
+function capabilityLabelSlot(operation: CardCapabilityOperation): string {
+  switch (operation) {
+    case "smsSend":
+      return "capabilitySmsSend";
+    case "smsReceive":
+      return "capabilitySmsReceive";
+    case "data":
+      return "capabilityData";
+    case "voice":
+      return "capabilityVoice";
+  }
 }

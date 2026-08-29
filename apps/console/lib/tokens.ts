@@ -2174,6 +2174,22 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         bottomSlot: 4,
       },
       {
+        // What has been measured on which module and network. It sits with
+        // the fleet rather than with settings because it decides what the
+        // fleet will attempt, and reading it is how somebody finds out why a
+        // stick refused.
+        href: "/support-ledger",
+        key: "nav.ledger",
+        shortKey: "nav.ledgerShort",
+        icon: "M4 6H20M4 12H20M4 18H13",
+        // Explicitly null, not omitted. `bottomNavItems` filters on
+        // `!== null`, so an omitted key is `undefined`, passes the filter, and
+        // lands the destination on the phone bar with a slot that sorts as
+        // NaN. The type says `number | null` for this reason; leaving it out
+        // is the one way to get a fifth cell by accident.
+        bottomSlot: null,
+      },
+      {
         href: "/audit",
         key: "nav.audit",
         shortKey: "nav.auditShort",
@@ -2643,6 +2659,11 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "cards.confirmVertical",
   "cards.confirmAdd",
   "cards.confirmRemove",
+  // A plan declaration is the same kind of write: it reaches every device in
+  // the tenant, and withholding one stops the edge attempting the operation.
+  "cards.confirmCapabilityOff",
+  "cards.confirmCapabilityOn",
+  "cards.confirmCapabilityClear",
   "proxy.confirmRemoveUpstream",
   "proxy.confirmRemoveInstance",
   "proxy.confirmRemoveRule",
@@ -2760,8 +2781,17 @@ export const CONFIRM_LABEL_KEYS = [
 export type CardPolicyEdit =
   | { readonly kind: "cellular"; readonly enabled: boolean }
   | { readonly kind: "vertical"; readonly from: string; readonly to: string }
+  // What the plan on this card is sold as doing. `null` clears the
+  // declaration back to undeclared, which withholds nothing.
+  | {
+      readonly kind: "capability";
+      readonly operation: import("./card-capability.ts").CardCapabilityOperation;
+      readonly value: boolean | null;
+    }
   | { readonly kind: "add" }
   | { readonly kind: "remove" };
+
+export type { CardCapabilityOperation } from "./card-capability.ts";
 
 /** Which of the five dialogs an edit goes through. */
 export type CardPolicyGuard = keyof typeof CARD_POLICY_CONFIRMATIONS;
@@ -2780,6 +2810,21 @@ export const CARD_POLICY_CONFIRMATIONS = {
   vertical: { title: "cards.confirmVerticalTitle", consequence: "cards.confirmVertical" },
   add: { title: "cards.confirmAddTitle", consequence: "cards.confirmAdd" },
   remove: { title: "cards.confirmRemoveTitle", consequence: "cards.confirmRemove" },
+  // Withholding stops the edge attempting the operation at all. Restoring is
+  // asked for the same reason cellular is asked in both directions: a card
+  // somebody marked as not sending was marked that way on purpose.
+  capabilityOff: {
+    title: "cards.confirmCapabilityOffTitle",
+    consequence: "cards.confirmCapabilityOff",
+  },
+  capabilityOn: {
+    title: "cards.confirmCapabilityOnTitle",
+    consequence: "cards.confirmCapabilityOn",
+  },
+  capabilityClear: {
+    title: "cards.confirmCapabilityClearTitle",
+    consequence: "cards.confirmCapabilityClear",
+  },
 } as const;
 
 /**
@@ -2801,6 +2846,10 @@ export function cardPolicyGuardFor(edit: CardPolicyEdit): CardPolicyGuard | null
       return edit.enabled ? "cellularOn" : "cellularOff";
     case "vertical":
       return edit.to === edit.from ? null : "vertical";
+    case "capability":
+      if (edit.value === false) return "capabilityOff";
+      if (edit.value === true) return "capabilityOn";
+      return "capabilityClear";
     case "add":
       return "add";
     case "remove":
@@ -2818,12 +2867,21 @@ export function cardPolicyGuardFor(edit: CardPolicyEdit): CardPolicyGuard | null
 export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }>): {
   cellularEnabled?: boolean;
   vertical?: string;
+  // The four plan declarations, named as the row names them so the caller can
+  // spread this straight into the body it already builds. `null` is a value
+  // here and not an absence: it clears a declaration back to undeclared.
+  smsSend?: boolean | null;
+  smsReceive?: boolean | null;
+  data?: boolean | null;
+  voice?: boolean | null;
 } {
   switch (edit.kind) {
     case "cellular":
       return { cellularEnabled: edit.enabled };
     case "vertical":
       return { vertical: edit.to };
+    case "capability":
+      return { [edit.operation]: edit.value };
     case "add":
       // What the "add policy" form has always sent for a card that has none.
       return { cellularEnabled: true, vertical: "cn" };
@@ -3407,10 +3465,12 @@ export const MIGRATED_SOURCES = [
   "app/proxy/page.tsx",
   "app/rules/page.tsx",
   "app/schedule/page.tsx",
+  "app/support-ledger/page.tsx",
   "app/sessions/page.tsx",
   "app/settings/page.tsx",
   "app/unknown-tenant/page.tsx",
   "components/card-policies.tsx",
+  "components/support-ledger.tsx",
   "components/connection-status.tsx",
   "components/conversation.tsx",
   "components/device-admin.tsx",

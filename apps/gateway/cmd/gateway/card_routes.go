@@ -166,12 +166,26 @@ func (process *process) pushCardPolicies(request *http.Request, tenantID string)
 		Policies:      make([]contract.CardPolicy, 0, len(policies)),
 	}
 	for _, policy := range policies {
-		command.Policies = append(command.Policies, contract.CardPolicy{
+		entry := contract.CardPolicy{
 			Iccid:           policy.ICCID,
 			CellularEnabled: policy.CellularEnabled,
 			Vertical:        policy.Vertical,
 			Apn:             policy.APN,
-		})
+		}
+		// Only carried when something was actually declared. A card nobody
+		// has filled a form in for keeps the payload it had before this
+		// field existed, which is what stops every policy push from looking
+		// like a change to the edge.
+		if policy.SmsSend != nil || policy.SmsReceive != nil ||
+			policy.Data != nil || policy.Voice != nil {
+			entry.Capability = &contract.SubscriptionCapability{
+				SmsSend:    policy.SmsSend,
+				SmsReceive: policy.SmsReceive,
+				Data:       policy.Data,
+				Voice:      policy.Voice,
+			}
+		}
+		command.Policies = append(command.Policies, entry)
 	}
 	// Marshalled here rather than through mustJSON, which takes a map: the whole
 	// point of this change is that the wire shape is the generated struct.

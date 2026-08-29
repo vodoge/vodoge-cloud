@@ -35,7 +35,19 @@ type Device struct {
 	CPUPercent       *float64 `json:"cpu_percent,omitempty"`
 	MemoryUsedBytes  *int64   `json:"memory_used_bytes,omitempty"`
 	MemoryTotalBytes *int64   `json:"memory_total_bytes,omitempty"`
-	HostReportedAt   *int64   `json:"host_reported_at,omitempty"`
+	// The filesystem holding the agent's databases, not every mount: that is
+	// the one whose exhaustion stops the outbox committing. Throughput is a
+	// rate over the poll interval rather than a since-boot counter, and it
+	// excludes the modules' own wwan interfaces, so it measures the box's
+	// link to the world rather than its traffic to hardware inside itself.
+	DiskUsedBytes    *int64  `json:"disk_used_bytes,omitempty"`
+	DiskTotalBytes   *int64  `json:"disk_total_bytes,omitempty"`
+	NetRxBytesPerSec *int64  `json:"net_rx_bytes_per_sec,omitempty"`
+	NetTxBytesPerSec *int64  `json:"net_tx_bytes_per_sec,omitempty"`
+	CPUModel         *string `json:"cpu_model,omitempty"`
+	Kernel           *string `json:"kernel,omitempty"`
+	Hostname         *string `json:"hostname,omitempty"`
+	HostReportedAt   *int64  `json:"host_reported_at,omitempty"`
 }
 
 // Message is one SMS row in the tenant inbox.
@@ -109,6 +121,21 @@ type Modem struct {
 	SmsMo       *string `json:"sms_mo"`
 	SmsMt       *string `json:"sms_mt"`
 	LastSeen    *int64  `json:"last_seen"`
+	// Identity the edge reads on every probe and used to discard. Firmware
+	// answers "which build is on that stick" without a diagnostic round trip;
+	// the number is often absent because plenty of operators never write one
+	// to the card, so nil means the card did not say.
+	Firmware *string `json:"firmware"`
+	Msisdn   *string `json:"msisdn"`
+	// Where the module physically is on the edge machine. The cloud cannot see
+	// that host's /dev or sysfs, and it is the first thing asked for when a
+	// module stops answering.
+	ControlPort *string `json:"control_port"`
+	UsbDevice   *string `json:"usb_device"`
+	// The module's own packet data profile table, as reported. Raw JSON
+	// because nothing here queries inside it and re-modelling it would give
+	// the console a second shape to keep in step with the edge's.
+	ApnContexts json.RawMessage `json:"apn_contexts"`
 }
 
 // CommandRow is one issued command and, once it lands, what came back.
@@ -625,7 +652,12 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       serving_plmn,
 			       capability ->> 'sms_mo',
 			       capability ->> 'sms_mt',
-			       last_seen_at
+			       last_seen_at,
+			       firmware,
+			       msisdn,
+			       control_port,
+			       usb_device,
+			       apn_contexts
 			  FROM app.modems
 			 ORDER BY last_seen_at DESC NULLS LAST, imei`)
 		if err != nil {
@@ -636,6 +668,8 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			var item Modem
 			var iccid, state, registration, homePlmn, servingPlmn, smsMo, smsMt sql.NullString
 			var discovery sql.NullString
+			var firmware, msisdn, controlPort, usbDevice sql.NullString
+			var apnContexts []byte
 			var manageable sql.NullBool
 			var rsrp, rsrq, sinr sql.NullInt64
 			var signal sql.NullInt64
@@ -645,6 +679,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 				&iccid, &state, &registration, &signal,
 				&rsrp, &rsrq, &sinr, &discovery, &manageable,
 				&homePlmn, &servingPlmn, &smsMo, &smsMt, &lastSeen,
+				&firmware, &msisdn, &controlPort, &usbDevice, &apnContexts,
 			); err != nil {
 				return err
 			}
@@ -663,6 +698,13 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			item.ServingPlmn = nullableString(servingPlmn)
 			item.SmsMo = nullableString(smsMo)
 			item.SmsMt = nullableString(smsMt)
+			item.Firmware = nullableString(firmware)
+			item.Msisdn = nullableString(msisdn)
+			item.ControlPort = nullableString(controlPort)
+			item.UsbDevice = nullableString(usbDevice)
+			if len(apnContexts) > 0 {
+				item.ApnContexts = json.RawMessage(apnContexts)
+			}
 			if signal.Valid {
 				value := signal.Int64
 				item.SignalDbm = &value
@@ -723,6 +765,9 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			       last_seen_at,
 			       edge_version, matrix_version, queue_records, queue_bytes, resumed_at,
 			       public_ip, cpu_percent, memory_used_bytes, memory_total_bytes,
+			       disk_used_bytes, disk_total_bytes,
+			       net_rx_bytes_per_sec, net_tx_bytes_per_sec,
+			       cpu_model, kernel, hostname,
 			       host_reported_at
 			  FROM app.devices
 			 ORDER BY name`)
@@ -738,10 +783,14 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			var publicIP sql.NullString
 			var cpuPercent sql.NullFloat64
 			var memoryUsed, memoryTotal sql.NullInt64
+			var diskUsed, diskTotal, netRx, netTx sql.NullInt64
+			var cpuModel, kernel, hostname sql.NullString
 			var hostReported sql.NullTime
 			if err := rows.Scan(&item.ID, &item.Name, &item.State, &lastSeen,
 				&edgeVersion, &matrixVersion, &queueRecords, &queueBytes, &resumed,
-				&publicIP, &cpuPercent, &memoryUsed, &memoryTotal, &hostReported); err != nil {
+				&publicIP, &cpuPercent, &memoryUsed, &memoryTotal,
+				&diskUsed, &diskTotal, &netRx, &netTx,
+				&cpuModel, &kernel, &hostname, &hostReported); err != nil {
 				return err
 			}
 			if lastSeen.Valid {
@@ -754,6 +803,13 @@ func (store SQL) ListDevices(ctx context.Context, tenantID string) ([]Device, er
 			item.CPUPercent = nullableFloat(cpuPercent)
 			item.MemoryUsedBytes = nullableInt(memoryUsed)
 			item.MemoryTotalBytes = nullableInt(memoryTotal)
+			item.DiskUsedBytes = nullableInt(diskUsed)
+			item.DiskTotalBytes = nullableInt(diskTotal)
+			item.NetRxBytesPerSec = nullableInt(netRx)
+			item.NetTxBytesPerSec = nullableInt(netTx)
+			item.CPUModel = nullableString(cpuModel)
+			item.Kernel = nullableString(kernel)
+			item.Hostname = nullableString(hostname)
 			if hostReported.Valid {
 				ms := hostReported.Time.UnixMilli()
 				item.HostReportedAt = &ms

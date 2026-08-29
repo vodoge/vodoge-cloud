@@ -29,6 +29,7 @@ import {
 import { Tab, TabList, TabPanel } from "@/components/ui/tabs";
 import {
   fetchDevices,
+  type ApnContextRow,
   fetchEsimProfiles,
   fetchModems,
   type DeviceRow,
@@ -241,6 +242,21 @@ function OverviewPanel({
                     the one that goes on a phone. */}
                 <TableHeaderCell secondary>{t("modems.colIccid", locale)}</TableHeaderCell>
                 <TableHeaderCell>{t("modems.colNetwork", locale)}</TableHeaderCell>
+                {/* Read by the edge on every identity probe and, until now,
+                    discarded with the family it was used to detect. Answering
+                    "which build is on that stick" needed a diagnostic command
+                    and somebody to read the reply. */}
+                <TableHeaderCell secondary>{t("modems.colFirmware", locale)}</TableHeaderCell>
+                {/* Often blank for a real reason: plenty of operators never
+                    write a number to the card. */}
+                <TableHeaderCell secondary>{t("modems.colMsisdn", locale)}</TableHeaderCell>
+                {/* Physical position on the edge machine. The cloud cannot see
+                    that host's /dev, and this is the first thing asked for
+                    when a module stops answering. */}
+                <TableHeaderCell secondary>{t("modems.colPort", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary title={t("modems.apnHint", locale)}>
+                  {t("modems.colApn", locale)}
+                </TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -264,6 +280,22 @@ function OverviewPanel({
                   </TableCell>
                   <TableCell>
                     <Network home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
+                  </TableCell>
+                  <TableCell mono faint secondary>
+                    {modem.firmware ?? "—"}
+                  </TableCell>
+                  <TableCell mono faint secondary>
+                    {modem.msisdn ?? "—"}
+                  </TableCell>
+                  <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
+                    {modem.controlPort ?? "—"}
+                  </TableCell>
+                  {/* The module's own profile table. Which context carries
+                      data is a row on the module rather than a property of the
+                      card, so this is the first thing to read when a stick is
+                      registered and still carrying nothing. */}
+                  <TableCell mono faint secondary>
+                    <ApnContexts contexts={modem.apnContexts} locale={locale} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -381,6 +413,25 @@ function DiagnosticsPanel({
               </SpecRow>
               <SpecRow term={t("device.hostMemory", locale)} mono>
                 <HostMemory used={device.memoryUsedBytes} total={device.memoryTotalBytes} />
+              </SpecRow>
+              {/* The filesystem the agent's databases live on. Not every
+                  mount: that one is what stops the outbox committing when it
+                  fills, and the others would only dilute the reading. */}
+              <SpecRow term={t("device.hostDisk", locale)} mono>
+                <HostMemory used={device.diskUsedBytes} total={device.diskTotalBytes} />
+              </SpecRow>
+              <SpecRow term={t("device.hostNetwork", locale)} mono>
+                <HostThroughput rx={device.netRxBytesPerSec} tx={device.netTxBytesPerSec} />
+              </SpecRow>
+              {/* Hardware identity. Static for the life of the machine, so it
+                  is shown last: it answers "which box is this" rather than
+                  "how is it doing". */}
+              <SpecRow term={t("device.hostMachine", locale)} mono>
+                <span className={TABLE.cellFaint}>
+                  {[device.hostname, device.cpuModel, device.kernel]
+                    .filter((part) => part)
+                    .join(" · ") || "—"}
+                </span>
               </SpecRow>
               <SpecRow term={t("device.hostReportedAt", locale)} mono>
                 <span className={TABLE.cellFaint}>
@@ -523,6 +574,25 @@ function HostMemory({ used, total }: { used: number | null; total: number | null
   );
 }
 
+/**
+ * Received and transmitted rate, already averaged over the poll interval by
+ * the agent.
+ *
+ * Zero is a reading and prints as one. A box with nothing to say is exactly
+ * what an idle edge machine looks like, and blanking it would make a working
+ * link indistinguishable from an agent too old to measure the interfaces.
+ */
+function HostThroughput({ rx, tx }: { rx: number | null; tx: number | null }) {
+  if (rx === null || tx === null) {
+    return <span className={TABLE.cellFaint}>—</span>;
+  }
+  return (
+    <span>
+      ↓ {formatBytes(rx)}/s<span className={TABLE.cellFaint}> · </span>↑ {formatBytes(tx)}/s
+    </span>
+  );
+}
+
 /** Binary units, matching what `free -h` on the box itself reports. */
 function formatBytes(bytes: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -568,6 +638,8 @@ const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
   atCommand: "device.atCommand",
   atNote: "device.atNote",
   atGuarded: "device.atGuarded",
+  atForce: "device.atForce",
+  atForceHint: "device.atForceHint",
   ussdNote: "device.ussdNote",
   ussdCode: "device.ussdCode",
   ussdSession: "device.ussdSession",
@@ -628,4 +700,39 @@ function deviceLabels(locale: Locale): Record<DeviceLabelKey, string> {
   return Object.fromEntries(
     names.map((key) => [key, t(DEVICE_LABEL_KEYS[key], locale)]),
   ) as Record<DeviceLabelKey, string>;
+}
+
+/**
+ * The packet data profiles one module is carrying.
+ *
+ * Three states, and they are not interchangeable: `null` means the agent has
+ * not read the table, an empty list means the module answered and holds none,
+ * and a list is the table itself. The middle one is the interesting answer —
+ * a module registered on a network with no context to carry data on — and
+ * rendering it the same as "unread" would hide exactly the fault somebody
+ * opened this page to find.
+ */
+function ApnContexts({
+  contexts,
+  locale,
+}: {
+  contexts: ApnContextRow[] | null;
+  locale: Locale;
+}) {
+  if (contexts === null) {
+    return <span className={TABLE.cellFaint}>—</span>;
+  }
+  if (contexts.length === 0) {
+    return <span className={TABLE.cellFaint}>{t("modems.apnNone", locale)}</span>;
+  }
+  return (
+    <>
+      {contexts.map((context) => (
+        <span key={context.cid} className={TABLE.cellInline}>
+          {context.cid}: {context.apn || t("modems.apnUnnamed", locale)}
+          {context.pdpType ? ` (${context.pdpType})` : ""}
+        </span>
+      ))}
+    </>
+  );
 }

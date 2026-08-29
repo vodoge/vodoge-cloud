@@ -129,6 +129,30 @@ const (
 	MaxCardPolicyDeliveries = 3
 )
 
+// MatrixKind is app.command_kind's spelling for a capability matrix push.
+const MatrixKind = "update_capability_matrix"
+
+// MatrixTTL is how long one matrix push stays deliverable.
+//
+// Longer than a card policy's because the two fail differently. A card policy
+// that lapses leaves a device on its previous rules, which are rules somebody
+// chose; a matrix that lapses leaves a device routing by a ledger the console
+// has stopped agreeing with, and the fleet is small enough that a device
+// offline for an hour is worth waiting for rather than re-publishing to.
+const MatrixTTL = 2 * time.Hour
+
+// MatrixKey is the idempotency key for one matrix push.
+//
+// Same shape and the same reason as CardPolicyKey: derived from the device,
+// the version and a fingerprint of the payload, and from nothing else. A key
+// carrying a clock reading can never collide, which makes the deduplication in
+// app.enqueue_command unreachable -- so publishing the same ledger twice would
+// queue two rows and deliver it twice.
+func MatrixKey(deviceID, version string, payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return MatrixKind + ":" + deviceID + ":" + version + ":" + hex.EncodeToString(sum[:8])
+}
+
 // CardPolicyKey is the idempotency key for one card policy intent.
 //
 // Derived from the device, the set's version, and a fingerprint of the payload,

@@ -23,6 +23,17 @@ export type DeviceRow = {
   cpuPercent: number | null;
   memoryUsedBytes: number | null;
   memoryTotalBytes: number | null;
+  /** The filesystem holding the agent's databases — the one whose exhaustion
+   *  stops the outbox committing — rather than every mount. */
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  /** A rate over the poll interval, excluding the modules' own wwan
+   *  interfaces, so it measures the box's link to the world. */
+  netRxBytesPerSec: number | null;
+  netTxBytesPerSec: number | null;
+  cpuModel: string | null;
+  kernel: string | null;
+  hostname: string | null;
   hostReportedAt: number | null;
 };
 
@@ -65,7 +76,46 @@ export type ModemRow = {
   smsMo: string | null;
   smsMt: string | null;
   lastSeen: number | null;
+  /** Read on every identity probe; null only when the probe could not. */
+  firmware: string | null;
+  /** The card's own number. Null means the card did not carry one. */
+  msisdn: string | null;
+  /** Where the module is on the edge machine, which the cloud cannot see. */
+  controlPort: string | null;
+  usbDevice: string | null;
+  /**
+   * The module's own packet data profile table.
+   *
+   * `null` means the agent has not read it. An empty array means the module
+   * answered and holds none — a different fact, and the one that explains a
+   * stick with no data connection.
+   */
+  apnContexts: ApnContextRow[] | null;
 };
+
+/** One packet data profile as the module reports it. */
+export type ApnContextRow = {
+  cid: number;
+  pdpType: string;
+  apn: string;
+};
+
+/**
+ * Reads the profile table, dropping rows with no usable identifier.
+ *
+ * The cid is the handle everything else addresses, so a row without one cannot
+ * be acted on and is not worth showing.
+ */
+function asApnContexts(value: unknown): ApnContextRow[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const cid = asNumber(row.cid);
+    if (cid === null) return [];
+    return [{ cid, pdpType: asString(row.pdp_type) ?? "", apn: asString(row.apn) ?? "" }];
+  });
+}
 
 export async function fetchModems(
   host: string,
@@ -101,7 +151,57 @@ export function parseModem(value: unknown): ModemRow | null {
     smsMo: asString(row.sms_mo),
     smsMt: asString(row.sms_mt),
     lastSeen: asNumber(row.last_seen),
+    firmware: asString(row.firmware),
+    msisdn: asString(row.msisdn),
+    controlPort: asString(row.control_port),
+    usbDevice: asString(row.usb_device),
+    apnContexts: asApnContexts(row.apn_contexts),
   };
+}
+
+/**
+ * One measured (module family, carrier) pairing.
+ *
+ * A pairing absent from this list is refused by the edge as untested, so the
+ * absence of a row is itself the record. `testedBy` and `testedAt` are part of
+ * that: a row is a claim somebody made on a particular day, not a setting.
+ */
+export type LedgerRow = {
+  modemFamily: string;
+  carrier: string;
+  smsMo: string | null;
+  smsMt: string | null;
+  data: string | null;
+  voice: string | null;
+  bearer: string;
+  reason: string | null;
+  note: string;
+  testedAt: number;
+  testedBy: string;
+};
+
+export async function fetchLedger(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<LedgerRow[]> {
+  const body = await getCatalog(host, "/v1/support-ledger", token, fetchImpl);
+  return arrayOf(body.entries).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
+      modemFamily: asString(row.modem_family) ?? "",
+      carrier: asString(row.carrier) ?? "",
+      smsMo: asString(row.sms_mo),
+      smsMt: asString(row.sms_mt),
+      data: asString(row.data),
+      voice: asString(row.voice),
+      bearer: asString(row.bearer) ?? "cellular",
+      reason: asString(row.reason),
+      note: asString(row.note) ?? "",
+      testedAt: asNumber(row.tested_at) ?? 0,
+      testedBy: asString(row.tested_by) ?? "",
+    };
+  });
 }
 
 export type SettingsBySection = Record<string, Record<string, unknown>>;
@@ -406,7 +506,27 @@ export type CardPolicyRow = {
   apn: string | null;
   note: string;
   updatedAt: number;
+  /**
+   * What the operator says this plan is sold as doing.
+   *
+   * Three states, so `null` is not folded into `false`: undeclared withholds
+   * nothing, while `false` withholds the operation on the edge. Declaring
+   * `true` asserts nothing on its own — a subscription cannot grant a
+   * capability the measured (modem, carrier) pair was never shown to have.
+   *
+   * This is the only layer that separates two cards on one network in one
+   * module. It is a billing fact, so it arrives by being typed in.
+   */
+  smsSend: boolean | null;
+  smsReceive: boolean | null;
+  data: boolean | null;
+  voice: boolean | null;
 };
+
+/** A declared boolean, or null for undeclared. Anything else is undeclared. */
+function asTriState(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
 
 export async function fetchCardPolicies(
   host: string,
@@ -423,6 +543,10 @@ export async function fetchCardPolicies(
       apn: asString(row.apn),
       note: asString(row.note) ?? "",
       updatedAt: asNumber(row.updated_at) ?? 0,
+      smsSend: asTriState(row.sms_send),
+      smsReceive: asTriState(row.sms_receive),
+      data: asTriState(row.data),
+      voice: asTriState(row.voice),
     };
   });
 }
@@ -848,6 +972,13 @@ export function parseDevice(value: unknown): DeviceRow | null {
     cpuPercent: asNumber(record.cpu_percent),
     memoryUsedBytes: asNumber(record.memory_used_bytes),
     memoryTotalBytes: asNumber(record.memory_total_bytes),
+    diskUsedBytes: asNumber(record.disk_used_bytes),
+    diskTotalBytes: asNumber(record.disk_total_bytes),
+    netRxBytesPerSec: asNumber(record.net_rx_bytes_per_sec),
+    netTxBytesPerSec: asNumber(record.net_tx_bytes_per_sec),
+    cpuModel: asString(record.cpu_model),
+    kernel: asString(record.kernel),
+    hostname: asString(record.hostname),
     hostReportedAt: asNumber(record.host_reported_at),
   };
 }

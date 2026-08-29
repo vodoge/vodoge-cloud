@@ -21,6 +21,15 @@ import (
 type Policy struct {
 	ICCID           string  `json:"iccid"`
 	CellularEnabled bool    `json:"cellular_enabled"`
+	// What the operator says this plan is sold as doing. Strictly
+	// subtractive on the edge: false withholds an operation the measured
+	// (modem, carrier) pair allowed, true asserts nothing, nil is
+	// undeclared. Pointers because those are three distinct states and a
+	// bare bool would collapse the first two.
+	SmsSend    *bool `json:"sms_send"`
+	SmsReceive *bool `json:"sms_receive"`
+	Data       *bool `json:"data"`
+	Voice      *bool `json:"voice"`
 	Vertical        string  `json:"vertical"`
 	APN             *string `json:"apn"`
 	Note            string  `json:"note,omitempty"`
@@ -84,7 +93,8 @@ func (store SQL) List(ctx context.Context, tenantID string) ([]Policy, error) {
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT iccid, cellular_enabled, vertical, apn, coalesce(note, ''),
-			       extract(epoch from updated_at) * 1000
+			       extract(epoch from updated_at) * 1000,
+			       sms_send, sms_receive, data, voice
 			  FROM app.card_policies
 			 ORDER BY iccid`)
 		if err != nil {
@@ -96,7 +106,8 @@ func (store SQL) List(ctx context.Context, tenantID string) ([]Policy, error) {
 			var apn sql.NullString
 			var updated float64
 			if err := rows.Scan(&policy.ICCID, &policy.CellularEnabled, &policy.Vertical,
-				&apn, &policy.Note, &updated); err != nil {
+				&apn, &policy.Note, &updated,
+				&policy.SmsSend, &policy.SmsReceive, &policy.Data, &policy.Voice); err != nil {
 				return err
 			}
 			if apn.Valid {
@@ -122,7 +133,8 @@ func (store SQL) Get(ctx context.Context, tenantID, iccid string) (Policy, bool,
 		var updated float64
 		err := tx.QueryRowContext(ctx, `
 			SELECT iccid, cellular_enabled, vertical, apn, coalesce(note, ''),
-			       extract(epoch from updated_at) * 1000
+			       extract(epoch from updated_at) * 1000,
+			       sms_send, sms_receive, data, voice
 			  FROM app.card_policies WHERE iccid = $1`, iccid,
 		).Scan(&policy.ICCID, &policy.CellularEnabled, &policy.Vertical,
 			&apn, &policy.Note, &updated)
@@ -147,15 +159,26 @@ func (store SQL) Save(ctx context.Context, tenantID string, policy Policy) error
 	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO app.card_policies
-			    (tenant_id, iccid, cellular_enabled, vertical, apn, note)
-			VALUES (app.current_tenant_id(), $1, $2, $3, $4, nullif($5, ''))
+			    (tenant_id, iccid, cellular_enabled, vertical, apn, note,
+			     sms_send, sms_receive, data, voice)
+			VALUES (app.current_tenant_id(), $1, $2, $3, $4, nullif($5, ''),
+			        $6, $7, $8, $9)
 			ON CONFLICT (tenant_id, iccid) DO UPDATE
 			   SET cellular_enabled = EXCLUDED.cellular_enabled,
 			       vertical = EXCLUDED.vertical,
 			       apn = EXCLUDED.apn,
 			       note = EXCLUDED.note,
+			       -- Replaced rather than merged: the form sends every field
+			       -- it holds, so clearing a declaration has to be able to
+			       -- reach NULL. A COALESCE here would make "undeclare this"
+			       -- unexpressible.
+			       sms_send = EXCLUDED.sms_send,
+			       sms_receive = EXCLUDED.sms_receive,
+			       data = EXCLUDED.data,
+			       voice = EXCLUDED.voice,
 			       updated_at = now()`,
-			policy.ICCID, policy.CellularEnabled, policy.Vertical, policy.APN, policy.Note)
+			policy.ICCID, policy.CellularEnabled, policy.Vertical, policy.APN, policy.Note,
+			policy.SmsSend, policy.SmsReceive, policy.Data, policy.Voice)
 		return err
 	})
 }
