@@ -7,6 +7,7 @@ import {
 } from "@/components/device-console";
 import { EsimPanel } from "@/components/esim-panel";
 import { Badge, StateBadge } from "@/components/ui/badge";
+import { Output } from "@/components/ui/output";
 import {
   Card as CardShell,
   CardContent,
@@ -31,13 +32,20 @@ import {
   fetchDevices,
   type ApnContextRow,
   fetchEsimProfiles,
+  fetchCandidates,
+  fetchDeviceUptime,
   fetchModems,
+  fetchProxyInstances,
   type DeviceRow,
   type EsimProfileRow,
   type ModemRow,
+  type CandidateRow,
+  type ProxyInstanceRow,
+  type UptimeHourRow,
+  uptimeRatio,
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
-import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
+import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { CARD, DEVICE_TABS, PAGE, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
@@ -106,12 +114,27 @@ export default async function DevicePage({
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
   let esim: EsimProfileRow[] = [];
+  // Which proxy listeners are bound to this device's modules. Fetched here
+  // rather than left on /proxy because a module's listener is a property of
+  // the module: "which stick is this proxy going out of" is the question the
+  // proxy page answers, and "what is bound to this stick" is this one.
+  let proxies: ProxyInstanceRow[] = [];
+  // A week of hourly presence. Separate from the fleet read because it is the
+  // one question the fleet view could never answer: whether this device has
+  // been reachable, rather than whether it is reachable now.
+  let uptime: UptimeHourRow[] = [];
+  // Endpoints the agents have seen and not written to. Fleet-wide from the
+  // gateway and narrowed here: the console shows a device its own.
+  let candidates: CandidateRow[] = [];
   let loadError = false;
   try {
-    [devices, modems, esim] = await Promise.all([
+    [devices, modems, esim, proxies, uptime, candidates] = await Promise.all([
       fetchDevices(host, token),
       fetchModems(host, token),
       fetchEsimProfiles(host, token, deviceId),
+      fetchProxyInstances(host, token),
+      fetchDeviceUptime(host, token, deviceId),
+      fetchCandidates(host, token),
     ]);
   } catch {
     loadError = true;
@@ -123,7 +146,15 @@ export default async function DevicePage({
   function panelFor(tab: (typeof DEVICE_TABS)[number]["id"]) {
     switch (tab) {
       case "overview":
-        return <OverviewPanel device={device} modems={own} locale={locale} />;
+        return (
+          <OverviewPanel
+            device={device}
+            modems={own}
+            proxies={proxies.filter((row) => row.deviceId === deviceId)}
+            uptime={uptime}
+            locale={locale}
+          />
+        );
       case "diagnostics":
         return (
           <DiagnosticsPanel
@@ -134,7 +165,15 @@ export default async function DevicePage({
           />
         );
       case "console":
-        return <ConsolePanel deviceId={deviceId} device={device} modems={own} locale={locale} />;
+        return (
+          <ConsolePanel
+            deviceId={deviceId}
+            device={device}
+            modems={own}
+            candidates={candidates.filter((row) => row.deviceId === deviceId)}
+            locale={locale}
+          />
+        );
       case "esim":
         // The locale itself, not a nine-string subset of the catalogue. The
         // subset was the bug: the panel drew about a hundred strings and this
@@ -220,14 +259,21 @@ export default async function DevicePage({
 function OverviewPanel({
   device,
   modems,
+  proxies,
+  uptime,
   locale,
 }: {
   device: DeviceRow | undefined;
   modems: ModemRow[];
+  /** Already narrowed to this device by the caller. */
+  proxies: ProxyInstanceRow[];
+  uptime: UptimeHourRow[];
   locale: Locale;
 }) {
   return (
     <>
+      <UptimeCard rows={uptime} locale={locale} />
+
       <Card title={t("devices.modems", locale)} note={t("devices.modemsNote", locale)} bodyless>
         {modems.length === 0 ? (
           <CardEmpty title={t("device.noModems", locale)} />
@@ -257,6 +303,11 @@ function OverviewPanel({
                 <TableHeaderCell secondary title={t("modems.apnHint", locale)}>
                   {t("modems.colApn", locale)}
                 </TableHeaderCell>
+                {/* The matrix key this module resolves to, which is what a
+                    ledger rule is written against and cannot be read off an
+                    operator name. */}
+                <TableHeaderCell secondary>{t("modems.colCapability", locale)}</TableHeaderCell>
+                <TableHeaderCell secondary>{t("modems.colProxy", locale)}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -296,6 +347,20 @@ function OverviewPanel({
                       registered and still carrying nothing. */}
                   <TableCell mono faint secondary>
                     <ApnContexts contexts={modem.apnContexts} locale={locale} />
+                  </TableCell>
+                  <TableCell mono faint secondary>
+                    <MatrixKey
+                      family={modem.family}
+                      carrier={modem.carrierProfile}
+                      origin={modem.capabilityOrigin}
+                      locale={locale}
+                    />
+                  </TableCell>
+                  <TableCell mono faint secondary>
+                    <ProxyBindings
+                      instances={proxies.filter((row) => row.modemImei === modem.imei)}
+                      locale={locale}
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -337,11 +402,14 @@ function ConsolePanel({
   deviceId,
   device,
   modems,
+  candidates,
   locale,
 }: {
   deviceId: string;
   device: DeviceRow | undefined;
   modems: ModemRow[];
+  /** Already narrowed to this device by the caller. */
+  candidates: CandidateRow[];
   locale: Locale;
 }) {
   return (
@@ -349,6 +417,7 @@ function ConsolePanel({
       <DeviceConsole
         deviceId={deviceId}
         modems={modems}
+        candidates={candidates}
         labels={deviceLabels(locale)}
         locale={locale}
       />
@@ -496,6 +565,131 @@ function DiagnosticsPanel({
   );
 }
 
+
+
+/**
+ * Whether this device has been reachable, hour by hour.
+ *
+ * Drawn with block characters rather than sized elements on purpose. A bar
+ * chart here would need a height per bar, and the only ways to vary one are a
+ * class per step -- which puts presentation in a Tailwind content file for a
+ * value that is data -- or an inline style, which every guard in
+ * `lib/tokens.test.ts` is blind to. Eight block glyphs in the mono face say
+ * the same thing and are readable in a terminal-shaped console.
+ *
+ * 🔴 An hour with no row is drawn as a gap, never as zero. The two look the
+ * same on a chart and are opposite facts: one is a device that was down, the
+ * other is an hour before this device existed, or one the gateway never
+ * flushed. Reporting the second as downtime would make every newly enrolled
+ * device look broken on its first day.
+ */
+function UptimeCard({ rows, locale }: { rows: UptimeHourRow[]; locale: Locale }) {
+  const ratio = uptimeRatio(rows);
+  return (
+    <Card title={t("device.uptime", locale)} note={t("device.uptimeNote", locale)} bodyless>
+      {ratio === null ? (
+        <CardEmpty title={t("device.uptimeNone", locale)} />
+      ) : (
+        <div className={PAGE.section}>
+          <p className={PAGE.sectionTitle}>
+            {(ratio * 100).toFixed(1)}% · {rows.length} {t("device.uptimeHours", locale)}
+          </p>
+          <Output>{uptimeSparkline(rows)}</Output>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Eight steps of block, oldest hour on the left. */
+const UPTIME_BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
+
+function uptimeSparkline(rows: UptimeHourRow[]): string {
+  // The API returns newest first; a reader scans a timeline left to right.
+  return [...rows]
+    .reverse()
+    .map((row) => {
+      const share = Math.max(0, Math.min(1, row.minutesOnline / 60));
+      // An hour with any minutes at all gets at least the lowest block: a
+      // device seen once in an hour is not the same as one never seen, and
+      // rounding it to nothing would hide the difference.
+      if (share === 0) return UPTIME_BLOCKS[0];
+      const step = Math.ceil(share * (UPTIME_BLOCKS.length - 1));
+      return UPTIME_BLOCKS[step];
+    })
+    .join("");
+}
+
+/**
+ * The (family, carrier) pair the capability matrix was asked about.
+ *
+ * Shown because it is not derivable from anything else on the row: the carrier
+ * half comes from the *home* network rather than the serving one, and it is a
+ * profile name rather than an operator name -- 中国广电 and 中国铁通 both
+ * resolve to CN-Mobile because they ride that network. Somebody writing a
+ * ledger entry needs the key, not the brand.
+ */
+function MatrixKey({
+  family,
+  carrier,
+  origin,
+  locale,
+}: {
+  family: string;
+  carrier: string | null;
+  origin: string | null;
+  locale: Locale;
+}) {
+  if (!carrier) return <span className={TABLE.cellFaint}>—</span>;
+  return (
+    <span className={TABLE.cellInline}>
+      <span>
+        {family} · {carrier}
+      </span>
+      {origin === "fallback" ? (
+        <Badge tone="warn" title={t("modems.uncharacterisedHint", locale)}>
+          {t("modems.uncharacterised", locale)}
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * The proxy listeners going out of this module.
+ *
+ * A listener names the module it egresses through, so the binding exists in
+ * the data and had nowhere to be read: /proxy answers "which stick is this
+ * proxy using", and until this column nothing answered the reverse.
+ */
+function ProxyBindings({
+  instances,
+  locale,
+}: {
+  instances: ProxyInstanceRow[];
+  locale: Locale;
+}) {
+  if (instances.length === 0) {
+    return <span className={TABLE.cellFaint}>{t("modems.proxyNone", locale)}</span>;
+  }
+  return (
+    <>
+      {instances.map((instance) => (
+        <span key={instance.id} className={TABLE.cellInline}>
+          <span>
+            {instance.name} · {instance.protocol}:{instance.listenPort}
+          </span>
+          {/* A listener that exists and is not running is the case this column
+              is for: the binding looks present everywhere else. */}
+          {instance.enabled ? null : (
+            <Badge tone="warn">{t("modems.proxyDisabled", locale)}</Badge>
+          )}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Network({
   home,
   serving,
@@ -508,16 +702,24 @@ function Network({
   if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
   const identity = home ?? serving!;
   const territory = territoryName(identity);
+  // Decorative: the territory name beside it already says the same thing, and
+  // a screen reader spelling out "regional indicator symbol letter U" helps
+  // nobody.
+  const flag = territoryFlag(identity);
   const roaming = home !== null && serving !== null && isRoaming(home, serving);
   return (
     <span className={TABLE.cellInline}>
       <span>
+        {flag ? <span aria-hidden="true">{flag} </span> : null}
         {operatorName(identity)}
         {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
       </span>
       {roaming ? (
         <Badge tone="warn">
-          {t("modems.roaming", locale)} → {operatorName(serving)}
+          {t("modems.roaming", locale)} → {territoryFlag(serving) ? (
+            <span aria-hidden="true">{territoryFlag(serving)} </span>
+          ) : null}
+          {operatorName(serving)}
         </Badge>
       ) : null}
     </span>
@@ -669,6 +871,28 @@ const DEVICE_LABEL_KEYS: Record<DeviceLabelKey, string> = {
   logNote: "device.logNote",
   usbnetMode: "device.usbnetMode",
   usbnetWarning: "device.usbnetWarning",
+  apnContext: "device.apnContext",
+  apn: "device.apn",
+  apnPdpType: "device.apnPdpType",
+  apnUsername: "device.apnUsername",
+  apnAuth: "device.apnAuth",
+  apnPassword: "device.apnPassword",
+  apnPasswordKeep: "device.apnPasswordKeep",
+  apnClearPassword: "device.apnClearPassword",
+  apnKeep: "device.apnKeep",
+  apnHint: "device.apnHint",
+  agentLog: "device.agentLog",
+  agentLogNote: "device.agentLogNote",
+  agentLogFilter: "device.agentLogFilter",
+  agentLogFilterHint: "device.agentLogFilterHint",
+  agentLogRead: "device.agentLogRead",
+  agentLogNone: "device.agentLogNone",
+  agentLogEmpty: "device.agentLogEmpty",
+  candidates: "device.candidates",
+  candidatesNote: "device.candidatesNote",
+  candidatesNone: "device.candidatesNone",
+  candidatesHint: "device.candidatesHint",
+  candidateClaim: "device.candidateClaim",
   modem_report: "cmd.modem_report",
   list_esim_profiles: "cmd.list_esim_profiles",
   restart_modem: "cmd.restart_modem",
@@ -731,8 +955,36 @@ function ApnContexts({
         <span key={context.cid} className={TABLE.cellInline}>
           {context.cid}: {context.apn || t("modems.apnUnnamed", locale)}
           {context.pdpType ? ` (${context.pdpType})` : ""}
+          {context.username ? (
+            <span className={TABLE.cellFaint}> · {context.username}</span>
+          ) : null}
+          {/* `none` is the common case and saying it on every row is noise;
+              an unread method is not, because it is the one state where the
+              console does not know whether a password is wanted. */}
+          {context.auth && context.auth !== "none" ? (
+            <span className={TABLE.cellFaint}> · {AUTH_NAMES[context.auth] ?? context.auth}</span>
+          ) : null}
+          {context.auth === null ? (
+            <span className={TABLE.cellFaint}> · {t("modems.apnAuthUnread", locale)}</span>
+          ) : null}
+          {context.hasPassword ? (
+            <span className={TABLE.cellFaint}> · {t("modems.apnPasswordSet", locale)}</span>
+          ) : null}
+          {context.source === "configured" ? (
+            <Badge tone="info">{t("modems.apnConfigured", locale)}</Badge>
+          ) : null}
         </span>
       ))}
     </>
   );
 }
+
+/**
+ * Protocol names, not translated: PAP and CHAP are what the module answers
+ * and what an operator types into any other tool.
+ */
+const AUTH_NAMES: Record<string, string> = {
+  pap: "PAP",
+  chap: "CHAP",
+  pap_or_chap: "PAP/CHAP",
+};

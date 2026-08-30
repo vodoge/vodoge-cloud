@@ -200,6 +200,15 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		sequence := int64(0)
 		request.SequenceNumber = &sequence
 		request.ActivationCode = "LPA:1$smdp.example.com$QQ111-22222-33333-44444"
+		// One is a real context and the other a real APN: configure_apn
+		// addresses a row on the module, and a zero cid is not one.
+		cid := 1
+		request.CID = &cid
+		request.APN = "cmnet"
+		request.CandidateKey = "usb-1-3:1.2"
+		request.ProfileICCID = "89852351225042214201"
+		nickname := "bench"
+		request.Nickname = &nickname
 
 		_, payload, err := BuildPayload(request)
 		if err != nil {
@@ -250,10 +259,14 @@ func TestOnlyStateChangingActionsAreMutating(t *testing.T) {
 	// belongs on the other list, but the function it calls needs no activation
 	// code and leaves nothing behind at either end: a challenge out, a signed
 	// answer back, and no profile and no notification move.
+	//
+	// read_logs returns the agent's own recent output. It touches no module at
+	// all, and putting a confirmation in front of reading a log is how an
+	// operator stops reading logs.
 	readOnly := map[string]bool{
 		"modem_report": true, "list_esim_profiles": true, "refresh_modems": true,
 		"read_esim_info": true, "retrieve_esim_notification": true,
-		"initiate_esim_authentication": true,
+		"initiate_esim_authentication": true, "read_logs": true,
 	}
 	// rotate_ip drops the data session, so it belongs with the disruptive
 	// actions even though it reads as a small thing.
@@ -532,5 +545,127 @@ func TestAnAbsentConfirmationCodeIsOmitted(t *testing.T) {
 	}
 	if decoded["confirmation_code"] != "13572468" {
 		t.Fatalf("confirmation_code = %v", decoded["confirmation_code"])
+	}
+}
+
+// A context identifier is the whole address of the thing being rewritten, so
+// an absent one must not arrive as 0 and be rejected for its value: the two
+// faults read the same in a log and mean different things to whoever sent it.
+func TestConfigureApnNeedsAContextItCanAddress(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI, APN: "cmnet",
+	}); err == nil {
+		t.Fatal("an omitted cid was accepted")
+	}
+	for _, cid := range []int{0, 16, 255} {
+		if _, _, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+			APN: "cmnet", CID: &cid,
+		}); err == nil {
+			t.Fatalf("cid %d is outside what the contract allows and was accepted", cid)
+		}
+	}
+}
+
+// Every method the contract offers has to survive validation, and one it does
+// not must not. `pap_or_chap` is the one only AT+QICSGP can express -- the
+// +CGAUTH on the module that has it stops at 2 -- so it is the one most likely
+// to be left out of an allowed set written from the standard.
+func TestConfigureApnAcceptsEveryAuthenticationTheContractOffers(t *testing.T) {
+	t.Parallel()
+
+	cid := 1
+	for _, auth := range []string{"none", "pap", "chap", "pap_or_chap"} {
+		_, payload, err := BuildPayload(Request{
+			DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+			APN: "cmnet", CID: &cid, Auth: auth,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", auth, err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded["auth"] != auth {
+			t.Fatalf("auth = %v, want %s", decoded["auth"], auth)
+		}
+	}
+	if _, _, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+		APN: "cmnet", CID: &cid, Auth: "eap",
+	}); err == nil {
+		t.Fatal("an invented authentication method was accepted")
+	}
+}
+
+// Clearing a username is how a context stops authenticating, so naming one
+// half of the pair has to send both -- a payload carrying a new username and
+// keeping the old password is a context nobody asked for.
+func TestConfigureApnSendsBothHalvesOfACredential(t *testing.T) {
+	t.Parallel()
+
+	cid := 2
+	user := "user"
+	_, payload, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+		APN: "cmnet", CID: &cid, Username: &user,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["username"] != "user" {
+		t.Fatalf("username = %v", decoded["username"])
+	}
+	// 🔴 The password must NOT ride along: the edge reads an absent one as
+	// "keep what the module has", and sending "" here would clear a password
+	// on every username edit.
+	if _, present := decoded["password"]; present {
+		t.Fatal("changing a username sent a password the caller never named")
+	}
+
+	// An explicit empty string is how a credential is cleared, and it has to
+	// survive as one rather than being dropped for being empty.
+	blank := ""
+	_, cleared, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+		APN: "cmnet", CID: &cid, Password: &blank,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clearing map[string]any
+	if err := json.Unmarshal(cleared, &clearing); err != nil {
+		t.Fatal(err)
+	}
+	password, present := clearing["password"]
+	if !present || password != "" {
+		t.Fatalf("password = %v (present %v), want an explicit empty string", password, present)
+	}
+
+	// And a request naming neither carries neither, so an edit that only
+	// changes the APN does not blank credentials the context already had.
+	_, bare, err := BuildPayload(Request{
+		DeviceID: "d", Kind: "configure_apn", ModemIMEI: benchIMEI,
+		APN: "cmnet", CID: &cid,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plain map[string]any
+	if err := json.Unmarshal(bare, &plain); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := plain["username"]; present {
+		t.Fatal("a request naming no credential still sent one")
+	}
+	if _, present := plain["password"]; present {
+		t.Fatal("a request naming no credential still sent one")
 	}
 }

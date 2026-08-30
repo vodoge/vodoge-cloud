@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
-| 我们的云端 | `apps/gateway`（schema 43） | 68 条注册（去重后 66 条模式，其中 33 条是写） |
+| 我们的云端 | `apps/gateway`（schema 51） | 见下方命令自行统计 |
 
 云端路由数可以自己数：
 
@@ -354,3 +354,33 @@ Saily 是 eSIM 供应商，它的美国 profile 要先通过 **SM-DP+ 下载**�
 
 现在 867018069514820 上有两个 profile；`862547055142811` 仍然只有一个，
 `867018069509705` 一个都没有（它不是 eUICC）。
+
+
+## 2026-08-30 这一轮补齐的
+
+**只有本节列出的行被重新核对过**，上面的大表是更早那次统计的结果，未逐条复验。
+
+| 能力 | 之前 | 现在 |
+| --- | --- | --- |
+| APN 账号 / 认证 / 有无密码 | 契约里只有 cid/类型/APN | 上行带全，控制台可编辑（`configure_apn`） |
+| APN 来源 | 无 | `source=configured` 标出本 agent 写过的上下文 |
+| 边缘日志 | 只有局域网面板 | `read_logs` 命令 + 设备页卡片，带子串过滤 |
+| 矩阵键与来源 | 面板有，云端无 | `carrier_profile` / `origin` 上行并展示，`fallback` 打“未表征”牌 |
+| 短信能力 | 列表只显示接收 | 收发两向并列 |
+| 发现候选 | 只有面板能看和认领 | 上行 + 云端投影 + 控制台批准（`claim_modem_candidate`） |
+| 在线率历史 | 无 | Redis 位图逐分钟累加，整点落 `app.device_uptime` |
+| 设备配额 | 无 | `tenant_settings.devices.device_quota`，自注册超限返回 402 |
+| eSIM 改名 / 禁用 / 删除 | 只能“切到某张” | 三条命令齐备 |
+| 国旗 | 无 | 归属国 + 驻留国两面旗 |
+| 飞行模式 | **本来就有**（叫“关闭/开启射频”） | 未改动 |
+
+### 没有硬件验证的部分
+
+**eSIM 的改名 / 禁用 / 删除三条命令从未在真卡上执行过。** 单测覆盖了 ES10c 的
+APDU 构造(`BF29` SetNickname、`BF33` DeleteProfile，后者的 ICCID 直接放在体内、
+不像 enable/disable 那样包 `a0`)和拒绝码解析，但整条链路没有对着 eUICC 跑过。
+删除不可逆——卡上不留副本，付费 profile 通常要运营商重出激活码——所以台面上
+Club / Webbing / T-Mobile 三张真卡都没有用来验证。
+
+**候选批准命令也没有真实的待批准对象。** 台面四个串口/QMI 口全部已探测完毕，
+没有 `found` 状态的候选；伪造一个状态回退到 `found` 是往库里塞假数据，没有做。

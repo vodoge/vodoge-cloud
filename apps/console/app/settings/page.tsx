@@ -18,6 +18,7 @@ import {
   CARD,
   NOTIFICATION_FIELDS,
   PAGE,
+  DEVICE_FIELDS,
   SECURITY_FIELDS,
   SMS_FIELDS,
   displaySettingValue,
@@ -75,7 +76,7 @@ export default async function SettingsPage() {
   function section(
     fields: readonly SettingsField[],
     values: Record<string, unknown>,
-    name: "notifications" | "sms" | "security",
+    name: "notifications" | "sms" | "security" | "devices",
     title: string,
   ) {
     return writable ? (
@@ -134,6 +135,10 @@ export default async function SettingsPage() {
 
         <Card title={t("settings.sms", locale)} note={t("settings.smsNote", locale)}>
           {section(SMS_FIELDS, settings.sms ?? {}, "sms", t("settings.sms", locale))}
+        </Card>
+
+        <Card title={t("settings.devices", locale)} note={t("settings.devicesNote", locale)}>
+          {section(DEVICE_FIELDS, settings.devices ?? {}, "devices", t("settings.devices", locale))}
         </Card>
 
         <Card title={t("settings.security", locale)} note={t("settings.securityNote", locale)}>
@@ -285,7 +290,7 @@ function rows(
  * fallback is for the next one rather than for these.
  */
 function fieldLabels(locale: Locale): Record<string, string> {
-  const fields = [...NOTIFICATION_FIELDS, ...SMS_FIELDS, ...SECURITY_FIELDS];
+  const fields = [...NOTIFICATION_FIELDS, ...SMS_FIELDS, ...SECURITY_FIELDS, ...DEVICE_FIELDS];
   const labels: Record<string, string> = {
     save: t("settings.save", locale),
     saved: t("settings.saved", locale),

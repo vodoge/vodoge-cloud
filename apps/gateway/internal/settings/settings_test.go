@@ -315,3 +315,53 @@ func TestSavingBotOperatorsKeepsTheStoredToken(t *testing.T) {
 		t.Fatal("the bot was not recorded as enabled")
 	}
 }
+
+// Absent is unlimited, and that has to keep being true: every tenant is
+// unlimited until somebody decides otherwise, so a missing key must not read
+// as a limit of any size.
+func TestAnAbsentDeviceQuotaIsUnlimited(t *testing.T) {
+	document, err := Validate(SectionDevices, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := document["device_quota"]; present {
+		t.Fatalf("an absent quota was given a value: %v", document)
+	}
+	// Explicit null means the same thing and must not survive as one.
+	document, err = Validate(SectionDevices, map[string]any{"device_quota": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := document["device_quota"]; present {
+		t.Fatalf("a null quota was stored: %v", document)
+	}
+}
+
+// 🔴 Zero is refused rather than stored. "No devices allowed" would stop
+// enrolment entirely, and it is far more likely to be somebody clearing a box
+// than somebody meaning it -- the way to mean unlimited is to remove the key.
+func TestADeviceQuotaOfZeroIsRefused(t *testing.T) {
+	if _, err := Validate(SectionDevices, map[string]any{"device_quota": float64(0)}); err == nil {
+		t.Fatal("a quota of zero was accepted")
+	}
+	if _, err := Validate(SectionDevices, map[string]any{"device_quota": float64(-4)}); err == nil {
+		t.Fatal("a negative quota was accepted")
+	}
+}
+
+// A string here would compare as unlimited at the enrolment check, so it is
+// refused where somebody can still see the error.
+func TestADeviceQuotaMustBeAWholeNumber(t *testing.T) {
+	for _, bad := range []any{"5", float64(2.5), true} {
+		if _, err := Validate(SectionDevices, map[string]any{"device_quota": bad}); err == nil {
+			t.Fatalf("%v was accepted as a quota", bad)
+		}
+	}
+	document, err := Validate(SectionDevices, map[string]any{"device_quota": float64(25)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document["device_quota"] != float64(25) {
+		t.Fatalf("quota = %v", document["device_quota"])
+	}
+}

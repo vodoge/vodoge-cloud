@@ -64,6 +64,49 @@ type Request struct {
 	Mode string `json:"mode"`
 	PLMN string `json:"plmn"`
 
+	// RenameEsimProfile, DisableEsimProfile, DeleteEsimProfile
+	//
+	// Separate from TargetICCID above: that one names the profile to switch
+	// TO, and these name the profile to act ON. One field meaning both is how
+	// a rename ends up applied to whatever was enabled last.
+	ProfileICCID string `json:"iccid"`
+	// A pointer so that clearing a name is something the caller said rather
+	// than something a forgotten field did.
+	Nickname *string `json:"nickname"`
+
+	// ClaimModemCandidate
+	CandidateKey string `json:"candidate_key"`
+
+	// ReadLogs
+	//
+	// LogAfter is a pointer so that resuming from the very first line -- a
+	// cursor of 0, which the edge reads as "everything you still hold" -- is
+	// distinguishable from not asking to resume at all. They happen to mean
+	// the same thing today, and a field that quietly relies on that is one
+	// refactor away from meaning something else.
+	LogAfter    *uint64 `json:"log_after"`
+	LogLimit    *int    `json:"log_limit"`
+	LogContains string  `json:"log_contains"`
+
+	// ConfigureApn
+	//
+	// CID is a pointer for the same reason Enabled is: context 0 is not a
+	// context anybody writes, but a missing field arriving as 0 and being
+	// rejected for its value would report the wrong fault.
+	CID     *int   `json:"cid"`
+	PDPType string `json:"pdp_type"`
+	APN     string `json:"apn"`
+	// Pointers because absent and empty mean different things all the way
+	// down: AT+QICSGP rewrites every field, so the edge reads an omitted
+	// credential as "keep what the context has" and an explicit "" as "clear
+	// it". A plain string could not tell an operator clearing a username from
+	// one who never touched the box.
+	Username *string `json:"username"`
+	// 🔴 Write-only. It is carried to the edge and stripped from every read of
+	// the command row -- see the payload column in catalog.ListCommands.
+	Password *string `json:"password"`
+	Auth     string  `json:"auth"`
+
 	// SetUsbnetMode
 	//
 	// Not folded into Mode above. Both are "a mode", but the value sets are
@@ -218,6 +261,51 @@ var catalogue = map[string]Spec{
 			}, nil
 		},
 	},
+	"configure_apn": {
+		Kind: "configure_apn", ContractKind: "ConfigureApn", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			if request.CID == nil {
+				return nil, ErrInvalid{"cid is required"}
+			}
+			// The contract's own bound. Writing outside it is not a context
+			// the module will act on, and finding that out at the edge costs a
+			// round trip to learn what is knowable here.
+			if *request.CID < 1 || *request.CID > 15 {
+				return nil, ErrInvalid{"cid must be between 1 and 15"}
+			}
+			payload := map[string]any{
+				"kind": "ConfigureApn", "modem_imei": request.ModemIMEI,
+				"cid": *request.CID, "apn": request.APN,
+			}
+			if request.PDPType != "" {
+				switch request.PDPType {
+				case "IP", "IPV6", "IPV4V6":
+					payload["pdp_type"] = request.PDPType
+				default:
+					return nil, ErrInvalid{"pdp_type must be IP, IPV6 or IPV4V6"}
+				}
+			}
+			if request.Auth != "" {
+				switch request.Auth {
+				case "none", "pap", "chap", "pap_or_chap":
+					payload["auth"] = request.Auth
+				default:
+					return nil, ErrInvalid{"auth must be none, pap, chap or pap_or_chap"}
+				}
+			}
+			// Each half travels on its own. Sending the pair together
+			// whenever either was named would make "change the username"
+			// silently clear the password, and the edge cannot tell that
+			// apart from an operator who meant it.
+			if request.Username != nil {
+				payload["username"] = *request.Username
+			}
+			if request.Password != nil {
+				payload["password"] = *request.Password
+			}
+			return payload, nil
+		},
+	},
 	"scan_operators": {
 		Kind: "scan_operators", ContractKind: "ScanOperators", NeedsModem: true, Mutating: true,
 		Build: func(request Request) (map[string]any, error) {
@@ -298,6 +386,108 @@ var catalogue = map[string]Spec{
 		Kind: "refresh_modems", ContractKind: "RefreshModems",
 		Build: func(Request) (map[string]any, error) {
 			return map[string]any{"kind": "RefreshModems"}, nil
+		},
+	},
+	"rename_esim_profile": {
+		Kind: "rename_esim_profile", ContractKind: "RenameEsimProfile",
+		NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			if !iccidPattern.MatchString(request.ProfileICCID) {
+				return nil, ErrInvalid{"iccid must be 19 or 20 digits"}
+			}
+			if request.Nickname == nil {
+				return nil, ErrInvalid{"nickname is required; send an empty string to clear it"}
+			}
+			// SGP.22's own limit, in bytes rather than characters: the field
+			// is a UTF8String and the card counts octets, so a name of
+			// twenty-two Chinese characters is over it.
+			if len(*request.Nickname) > 64 {
+				return nil, ErrInvalid{"nickname must be 64 bytes or fewer"}
+			}
+			return map[string]any{
+				"kind": "RenameEsimProfile", "modem_imei": request.ModemIMEI,
+				"iccid": request.ProfileICCID, "nickname": *request.Nickname,
+			}, nil
+		},
+	},
+	"disable_esim_profile": {
+		Kind: "disable_esim_profile", ContractKind: "DisableEsimProfile",
+		NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			if !iccidPattern.MatchString(request.ProfileICCID) {
+				return nil, ErrInvalid{"iccid must be 19 or 20 digits"}
+			}
+			return map[string]any{
+				"kind": "DisableEsimProfile", "modem_imei": request.ModemIMEI,
+				"iccid": request.ProfileICCID,
+			}, nil
+		},
+	},
+	"delete_esim_profile": {
+		// Irreversible in a way nothing else in this catalogue is: the card
+		// keeps no copy, and a profile that was paid for generally cannot be
+		// re-downloaded without the operator issuing a fresh activation code.
+		// The console guards it; this only refuses what is malformed.
+		Kind: "delete_esim_profile", ContractKind: "DeleteEsimProfile",
+		NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			if !iccidPattern.MatchString(request.ProfileICCID) {
+				return nil, ErrInvalid{"iccid must be 19 or 20 digits"}
+			}
+			return map[string]any{
+				"kind": "DeleteEsimProfile", "modem_imei": request.ModemIMEI,
+				"iccid": request.ProfileICCID,
+			}, nil
+		},
+	},
+	"claim_modem_candidate": {
+		// No modem: the whole point is an endpoint that has no IMEI yet.
+		// Mutating: approving one lets the agent write AT to a port it has so
+		// far only looked at, and that is the line this command crosses.
+		Kind: "claim_modem_candidate", ContractKind: "ClaimModemCandidate", Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			key := strings.TrimSpace(request.CandidateKey)
+			if key == "" {
+				return nil, ErrInvalid{"candidate_key is required"}
+			}
+			if len(key) > 128 {
+				return nil, ErrInvalid{"candidate_key must be 128 characters or fewer"}
+			}
+			// Only a key travels. A port or an IMEI here would let the cloud
+			// describe hardware nobody has looked at, and the agent would have
+			// to either trust it or check it -- the first is wrong and the
+			// second makes the field pointless.
+			return map[string]any{"kind": "ClaimModemCandidate", "candidate_key": key}, nil
+		},
+	},
+	"read_logs": {
+		// No modem and not mutating: these are the agent's own lines, not any
+		// one module's, and reading them changes nothing. It is here because
+		// the alternative to reading them from the cloud is an SSH session on
+		// the edge machine, which is the access a cloud operator does not have.
+		Kind: "read_logs", ContractKind: "ReadLogs",
+		Build: func(request Request) (map[string]any, error) {
+			payload := map[string]any{"kind": "ReadLogs"}
+			if request.LogAfter != nil {
+				payload["after"] = *request.LogAfter
+			}
+			if request.LogLimit != nil {
+				// The edge ring holds 500. Asking for more is not an error
+				// worth a round trip to discover, but it is worth refusing
+				// here rather than silently sending a number the contract
+				// rejects on arrival.
+				if *request.LogLimit < 1 || *request.LogLimit > 500 {
+					return nil, ErrInvalid{"log_limit must be between 1 and 500"}
+				}
+				payload["limit"] = *request.LogLimit
+			}
+			if request.LogContains != "" {
+				if len(request.LogContains) > 64 {
+					return nil, ErrInvalid{"log_contains must be 64 characters or fewer"}
+				}
+				payload["contains"] = request.LogContains
+			}
+			return payload, nil
 		},
 	},
 	"list_esim_profiles": {

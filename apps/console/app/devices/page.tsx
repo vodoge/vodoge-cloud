@@ -21,7 +21,7 @@ import {
   type DeviceRow,
   type ModemRow,
 } from "@/lib/catalog";
-import { isRoaming, operatorName, territoryName } from "@/lib/plmn";
+import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
@@ -309,13 +309,28 @@ export default async function DevicesPage({
                       <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
                     </TableCell>
                     <TableCell secondary>
-                      {/* The bearer the edge resolved. A blank here means the
-                          matrix has no answer for this combination, which is
-                          different from "cannot send" — and a transport is a
-                          category rather than a state, so it takes no dot. */}
-                      <Badge tone="neutral" dot={false}>
-                        {modem.smsMt ?? "—"}
-                      </Badge>
+                      {/* Both directions. Receiving was shown alone here for a
+                          while, which made a card that can take a message and
+                          not send one look fully capable — and that pair is
+                          exactly what the Club profile on this bench is.
+                          A transport is a category rather than a state, so it
+                          takes no dot. */}
+                      <span className={TABLE.cellInline}>
+                        <Badge tone="neutral" dot={false}>
+                          ↓ {modem.smsMt ?? "—"}
+                        </Badge>
+                        <Badge tone="neutral" dot={false}>
+                          ↑ {modem.smsMo ?? "—"}
+                        </Badge>
+                        {/* Not a rule but a fallback: nobody has characterised
+                            this (family, carrier) pair at all, which is the one
+                            state a new ledger entry would fix. */}
+                        {modem.capabilityOrigin === "fallback" ? (
+                          <Badge tone="warn" title={t("modems.uncharacterisedHint", locale)}>
+                            {t("modems.uncharacterised", locale)}
+                          </Badge>
+                        ) : null}
+                      </span>
                     </TableCell>
                     <TableCell mono faint secondary>
                       {modem.lastSeen
@@ -407,16 +422,24 @@ function ModemNetwork({
   if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
   const identity = home ?? serving!;
   const territory = territoryName(identity);
+  // Decorative: the territory name beside it already says the same thing, and
+  // a screen reader spelling out "regional indicator symbol letter U" helps
+  // nobody.
+  const flag = territoryFlag(identity);
   const roaming = home !== null && serving !== null && isRoaming(home, serving);
   return (
     <span className={TABLE.cellInline}>
       <span>
+        {flag ? <span aria-hidden="true">{flag} </span> : null}
         {operatorName(identity)}
         {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
       </span>
       {roaming ? (
         <Badge tone="warn">
-          {t("modems.roaming", locale)} → {operatorName(serving)}
+          {t("modems.roaming", locale)} → {territoryFlag(serving) ? (
+            <span aria-hidden="true">{territoryFlag(serving)} </span>
+          ) : null}
+          {operatorName(serving)}
         </Badge>
       ) : null}
     </span>

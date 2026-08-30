@@ -1,25 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  ESIM_CHIP_COMMANDS,
+  USSD_SESSION_TTL_MS,
+  UnauthorizedError,
   auditScreen,
-  loadAudit,
-  parseAuditEvent,
+  esimProfileDisplayName,
+  esimProfileRowsFromReads,
+  esimReadFailures,
   fetchContacts,
   fetchDevices,
-  fetchRules,
   fetchMessages,
+  fetchRules,
   fetchSchedules,
   fetchSessions,
   fetchThread,
   fetchThreads,
-  esimProfileDisplayName,
-  esimProfileRowsFromReads,
-  esimReadFailures,
-  ESIM_CHIP_COMMANDS,
   latestEsimProfileListings,
+  latestUssdExchange,
+  loadAudit,
   mergeCommandBatches,
   mergeEsimProfiles,
-  type EsimCommandRow,
+  parseAuditEvent,
   parseDevice,
   parseEsimAuthentication,
   parseEsimDownload,
@@ -28,16 +30,15 @@ import {
   parseRetrievedNotification,
   parseSchedule,
   parseUssdResult,
-  latestUssdExchange,
+  type EsimCommandRow,
+  type UssdCommandRow,
+  uptimeRatio,
   ussdCancelRequest,
   ussdContinueRequest,
   ussdSessionAgeMs,
   ussdSessionState,
   ussdStageLabelKey,
   ussdStartRequest,
-  UnauthorizedError,
-  USSD_SESSION_TTL_MS,
-  type UssdCommandRow,
 } from "./catalog.ts";
 
 test("parseDevice ignores malformed rows", () => {
@@ -1694,4 +1695,26 @@ test("a menu answered in time produces a continue on the session's own modem", (
     ussdSessionState(exchange, ussdSessionAgeMs(exchange, now - 4_000, late)),
     "expired",
   );
+});
+
+// 🔴 The denominator is the hours that have rows, never the hours in the
+// window. A device enrolled yesterday has no rows for last week, and counting
+// those absent hours as downtime would report every new device as broken.
+test("uptimeRatio divides by the hours that were reported", () => {
+  assert.equal(uptimeRatio([{ hour: 1, minutesOnline: 60 }]), 1);
+  assert.equal(uptimeRatio([{ hour: 1, minutesOnline: 30 }]), 0.5);
+  assert.equal(
+    uptimeRatio([
+      { hour: 1, minutesOnline: 60 },
+      { hour: 2, minutesOnline: 30 },
+    ]),
+    0.75,
+  );
+});
+
+// Nothing reported is not zero uptime: a device that has never been heard from
+// and a device that was down all week are different, and only one of them is a
+// fault. Null is what lets the console say "no history" rather than "0%".
+test("uptimeRatio has no answer when nothing was reported", () => {
+  assert.equal(uptimeRatio([]), null);
 });

@@ -75,6 +75,18 @@ export type ModemRow = {
   servingPlmn: string | null;
   smsMo: string | null;
   smsMt: string | null;
+  /**
+   * The carrier half of the capability-matrix key, and whether the matrix had
+   * a rule for this (family, carrier) pair at all.
+   *
+   * `capabilityOrigin` is "rule" or "fallback". A fallback is a pair nobody
+   * has ever considered, which is a different fact from a rule that says
+   * `probe` -- that one is a decision somebody took. Only the fallback is
+   * worth interrupting an operator about, and only the fallback is what a new
+   * ledger entry would fix.
+   */
+  carrierProfile: string | null;
+  capabilityOrigin: string | null;
   lastSeen: number | null;
   /** Read on every identity probe; null only when the probe could not. */
   firmware: string | null;
@@ -98,6 +110,16 @@ export type ApnContextRow = {
   cid: number;
   pdpType: string;
   apn: string;
+  username: string;
+  /**
+   * `none`, `pap`, `chap` or `pap_or_chap`. Null means the edge could not read
+   * the method, which is not the same as a context that needs no password --
+   * rendering the two the same way would claim a measurement nobody took.
+   */
+  auth: string | null;
+  hasPassword: boolean;
+  /** `configured` when the agent wrote this context, null for the module's own. */
+  source: string | null;
 };
 
 /**
@@ -113,7 +135,20 @@ function asApnContexts(value: unknown): ApnContextRow[] | null {
     const row = entry as Record<string, unknown>;
     const cid = asNumber(row.cid);
     if (cid === null) return [];
-    return [{ cid, pdpType: asString(row.pdp_type) ?? "", apn: asString(row.apn) ?? "" }];
+    return [
+      {
+        cid,
+        pdpType: asString(row.pdp_type) ?? "",
+        apn: asString(row.apn) ?? "",
+        username: asString(row.username) ?? "",
+        auth: asString(row.auth),
+        // Absent reads as false rather than null: the question "is a password
+        // set" has an answer for every context, and an edge that did not say
+        // has not found one.
+        hasPassword: row.has_password === true,
+        source: asString(row.source),
+      },
+    ];
   });
 }
 
@@ -150,6 +185,8 @@ export function parseModem(value: unknown): ModemRow | null {
     servingPlmn: asString(row.serving_plmn),
     smsMo: asString(row.sms_mo),
     smsMt: asString(row.sms_mt),
+    carrierProfile: asString(row.carrier_profile),
+    capabilityOrigin: asString(row.capability_origin),
     lastSeen: asNumber(row.last_seen),
     firmware: asString(row.firmware),
     msisdn: asString(row.msisdn),
@@ -2148,4 +2185,103 @@ export function ussdCancelRequest(
     return null;
   }
   return { modem_imei: modemImei, code: "", stage: "cancel" };
+}
+
+/**
+ * One hour of a device's presence.
+ *
+ * `minutesOnline` is out of sixty. The denominator is not carried because an
+ * hour is an hour, and an hour the device was not heard from has no row at
+ * all -- absent rather than zero, so a ratio is drawn over the hours that
+ * exist rather than over every hour since the beginning of time.
+ */
+export type UptimeHourRow = {
+  hour: number;
+  minutesOnline: number;
+};
+
+export async function fetchDeviceUptime(
+  host: string,
+  token: string | undefined,
+  deviceId: string,
+  hours = 24 * 7,
+  fetchImpl: typeof fetch = fetch,
+): Promise<UptimeHourRow[]> {
+  const body = await getCatalog(
+    host,
+    `/v1/devices/${encodeURIComponent(deviceId)}/uptime?hours=${hours}`,
+    token,
+    fetchImpl,
+  );
+  return arrayOf(body.uptime).flatMap((value) => {
+    const row = value as Record<string, unknown>;
+    const hour = asNumber(row.hour);
+    const minutes = asNumber(row.minutes_online);
+    if (hour === null || minutes === null) return [];
+    return [{ hour, minutesOnline: minutes }];
+  });
+}
+
+/**
+ * The share of the reported hours a device was reachable, 0..1, or null when
+ * there is nothing to divide.
+ *
+ * 🔴 The denominator is the hours that HAVE rows, not the hours in the window.
+ * A device enrolled yesterday has no rows for last week, and counting those as
+ * downtime would report every new device as broken.
+ */
+export function uptimeRatio(rows: UptimeHourRow[]): number | null {
+  if (rows.length === 0) return null;
+  const minutes = rows.reduce((total, row) => total + row.minutesOnline, 0);
+  return minutes / (rows.length * 60);
+}
+
+/**
+ * One endpoint an agent has seen and has not written to.
+ *
+ * Not a modem: it has no IMEI until somebody approves a probe, which is why it
+ * is a separate list from the fleet rather than a row in it. `state` is
+ * "found" for one nobody has approved, "claimed" once somebody has, and the
+ * rest describe what a probe found.
+ */
+export type CandidateRow = {
+  deviceId: string;
+  candidateKey: string;
+  usbDevice: string | null;
+  transport: string;
+  controlPort: string;
+  vendorId: string | null;
+  productId: string | null;
+  state: string;
+  imei: string | null;
+  detail: string;
+  lastSeen: number | null;
+};
+
+export async function fetchCandidates(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CandidateRow[]> {
+  const body = await getCatalog(host, "/v1/candidates", token, fetchImpl);
+  return arrayOf(body.candidates).flatMap((value) => {
+    const row = value as Record<string, unknown>;
+    const key = asString(row.candidate_key);
+    if (!key) return [];
+    return [
+      {
+        deviceId: asString(row.device_id) ?? "",
+        candidateKey: key,
+        usbDevice: asString(row.usb_device),
+        transport: asString(row.transport) ?? "at",
+        controlPort: asString(row.control_port) ?? "",
+        vendorId: asString(row.vendor_id),
+        productId: asString(row.product_id),
+        state: asString(row.state) ?? "found",
+        imei: asString(row.imei),
+        detail: asString(row.detail) ?? "",
+        lastSeen: asNumber(row.last_seen),
+      },
+    ];
+  });
 }

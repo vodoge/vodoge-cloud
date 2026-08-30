@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -409,5 +410,33 @@ func TestMapConsumeError(t *testing.T) {
 	}
 	if !errors.Is(mapConsumeError(errors.New("ERROR: tenant context does not match enrollment tenant (SQLSTATE 42501)")), ErrWrongTenant) {
 		t.Fatal("wrong tenant")
+	}
+}
+
+// A tenant at its limit is not a tenant with a bad code, and the difference
+// matters to whoever is standing next to the machine: one is fixed by raising
+// a number in the console, the other by issuing a new code. 403 would send
+// them looking for the wrong thing.
+func TestAQuotaRefusalIsNotAnAuthorisationFailure(t *testing.T) {
+	err := fmt.Errorf("%w: 5 of 5 devices enrolled", ErrQuotaExceeded)
+	if status := enrollStatus(err); status != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402", status)
+	}
+	if status := enrollStatus(ErrNotFound); status == enrollStatus(err) {
+		t.Fatal("a quota refusal is indistinguishable from an unusable code")
+	}
+}
+
+// 🔴 The counts stay out of the response. The device asking is on somebody
+// else's network, and how many devices a tenant holds is not something an
+// enrolment endpoint should tell an unauthenticated caller.
+func TestAQuotaRefusalDoesNotCountTheFleetOutLoud(t *testing.T) {
+	err := fmt.Errorf("%w: 5 of 5 devices enrolled", ErrQuotaExceeded)
+	message := enrollMessage(err)
+	if strings.Contains(message, "5") {
+		t.Fatalf("the response counted the fleet out loud: %q", message)
+	}
+	if message != ErrQuotaExceeded.Error() {
+		t.Fatalf("message = %q", message)
 	}
 }

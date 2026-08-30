@@ -37,6 +37,12 @@ var (
 	ErrNotFound = errors.New("enrollment code not found")
 	// ErrWrongTenant indicates the code belongs to a different tenant.
 	ErrWrongTenant = errors.New("enrollment code does not belong to this tenant")
+	// ErrQuotaExceeded indicates the tenant already holds as many devices as
+	// it is allowed. Distinct from every error above because it is the only
+	// one the operator fixes by raising a limit rather than by re-issuing a
+	// code -- and because the code is deliberately left unconsumed, so the
+	// same one works once the limit moves.
+	ErrQuotaExceeded = errors.New("device quota exceeded")
 	// ErrInvalidCSR indicates the PEM is not a usable certificate request.
 	ErrInvalidCSR = errors.New("invalid certificate request")
 	// ErrMissingCA indicates the signing authority is not configured.
@@ -182,6 +188,12 @@ func enrollStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrExpired), errors.Is(err, ErrInvalidCSR):
 		return http.StatusBadRequest
+	// 402 rather than 403: the request is authorised and well formed, and the
+	// only thing wrong with it is a limit somebody set. 403 would tell an
+	// installer on site that their code is not valid for this tenant, which is
+	// the one thing it definitely is.
+	case errors.Is(err, ErrQuotaExceeded):
+		return http.StatusPaymentRequired
 	case errors.Is(err, ErrMissingCA):
 		return http.StatusServiceUnavailable
 	default:
@@ -203,6 +215,11 @@ func enrollMessage(err error) string {
 		return ErrInactiveTenant.Error()
 	case errors.Is(err, ErrMissingCA):
 		return ErrMissingCA.Error()
+	// The counts stay out of the response. The device asking is on somebody
+	// else's network; how many devices this tenant has is not its business,
+	// and the gateway log carries the numbers for whoever can act on them.
+	case errors.Is(err, ErrQuotaExceeded):
+		return ErrQuotaExceeded.Error()
 	default:
 		return "enrollment failed"
 	}

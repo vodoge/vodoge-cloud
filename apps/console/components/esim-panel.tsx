@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ButtonRow, RowActions } from "@/components/ui/button-row";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Field, FormError, FormHint, Input, Select } from "@/components/ui/form";
+import { Field, FormError, FormHint, InlineForm, Input, Select } from "@/components/ui/form";
 import {
   SpecRow,
   SpecTable,
@@ -94,6 +94,7 @@ type Pending = {
  * - **Four cards, one per section.** The panel used to be one card holding
  *   four `<h4>`s and eight tables.
  */
+
 export function EsimPanel({
   deviceId,
   profiles,
@@ -134,6 +135,13 @@ export function EsimPanel({
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [imei, setImei] = useState(modems[0]?.imei ?? "");
   const [pending, setPending] = useState<Pending | null>(null);
+  // Renaming lives here rather than in a component of its own because the
+  // panel's write gate is checked by position: `lib/tokens.test.ts` asks that
+  // every control sit inside `{writable ? … }` in this file, and a control in
+  // another function is one it cannot see the gate for. Hooks cannot go inside
+  // a conditional, so the state is up here and only the markup is gated.
+  const [renameIccid, setRenameIccid] = useState("");
+  const [renameNickname, setRenameNickname] = useState("");
   // "unknown" until the gateway has been asked, and every control on this
   // tab is drawn for "write" only. Closed by default on purpose: this panel
   // renders on the server before it can ask anything, and a Switch button
@@ -476,6 +484,59 @@ export function EsimPanel({
                                   {t("esim.switch", locale)}
                                 </Button>
                               ) : null}
+                              {/* Taking a profile out of service without
+                                  putting another in. `switch_esim_profile`
+                                  can only move the card from one profile to
+                                  another, so until this there was no way to
+                                  leave a module with nothing enabled -- which
+                                  is what a card requires before a delete. */}
+                              {profile.state === "enabled" && profile.modemImei ? (
+                                <Button
+                                  variant="risk"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    request(
+                                      "disable_esim_profile",
+                                      {
+                                        modem_imei: profile.modemImei,
+                                        iccid: profile.iccid,
+                                      },
+                                      `${t("esim.disable", locale)} — ${profile.iccid}`,
+                                      t("esim.disable", locale),
+                                    )
+                                  }
+                                >
+                                  {t("esim.disable", locale)}
+                                </Button>
+                              ) : null}
+                              {/* 🔴 Offered only for a disabled profile, and
+                                  not because the console is being careful: an
+                                  eUICC refuses to delete the profile it is
+                                  running on, so a button here would produce a
+                                  refusal with a confusing reason. The card is
+                                  the guard; this is the honest rendering of
+                                  what it will accept. */}
+                              {profile.state === "disabled" && profile.modemImei ? (
+                                <Button
+                                  variant="risk"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    request(
+                                      "delete_esim_profile",
+                                      {
+                                        modem_imei: profile.modemImei,
+                                        iccid: profile.iccid,
+                                      },
+                                      `${t("esim.delete", locale)} — ${profile.iccid}`,
+                                      t("esim.delete", locale),
+                                    )
+                                  }
+                                >
+                                  {t("esim.delete", locale)}
+                                </Button>
+                              ) : null}
                             </RowActions>
                           </TableCell>
                         ) : null}
@@ -486,6 +547,60 @@ export function EsimPanel({
               </div>
             ))
           )}
+          {writable ? (
+            <InlineForm
+              onSubmit={(event) => {
+                event.preventDefault();
+                const chosen = profiles.find(
+                  (profile) => profile.iccid === renameIccid && profile.modemImei,
+                );
+                if (!chosen?.modemImei) return;
+                request(
+                  "rename_esim_profile",
+                  {
+                    modem_imei: chosen.modemImei,
+                    iccid: chosen.iccid,
+                    nickname: renameNickname,
+                  },
+                  `${t("esim.rename", locale)} — ${chosen.iccid}`,
+                  t("esim.rename", locale),
+                );
+              }}
+            >
+              {/* A form rather than a per-row button: renaming needs a value
+                  typed, and the only way to do that in a row would be an
+                  input in every row of every card. The name lives on the
+                  card, so it is what any other tool reading the same chip
+                  will show. */}
+              <Field label={t("esim.renameTitle", locale)} inline>
+                <Select
+                  value={renameIccid}
+                  onChange={(event) => setRenameIccid(event.target.value)}
+                >
+                  <option value="">—</option>
+                  {profiles
+                    .filter((profile) => profile.modemImei)
+                    .map((profile) => (
+                      <option key={profile.iccid} value={profile.iccid}>
+                        {profile.nickname ? `${profile.nickname} · ` : ""}
+                        {profile.iccid}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <Field label={t("esim.renameNickname", locale)} inline>
+                <Input
+                  value={renameNickname}
+                  maxLength={64}
+                  onChange={(event) => setRenameNickname(event.target.value)}
+                />
+              </Field>
+              <Button type="submit" variant="ghost" disabled={busy || renameIccid === ""}>
+                {t("esim.rename", locale)}
+              </Button>
+              <FormHint>{t("esim.renameHint", locale)}</FormHint>
+            </InlineForm>
+          ) : null}
         </div>
       </Card>
 

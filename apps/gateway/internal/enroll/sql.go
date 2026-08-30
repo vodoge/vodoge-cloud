@@ -3,6 +3,7 @@ package enroll
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,14 @@ func (issuer *SQLIssuer) Issue(ctx context.Context, tenantID, code, hint string,
 
 	var issued CertificateRecord
 	err := tenant.Transact(ctx, issuer.DB, tenantID, func(tx *sql.Tx) error {
+		// Before the code is consumed, not after: a refusal must leave the
+		// code usable. `consume_enrollment_code` always creates a new device
+		// -- a fresh uuid and an INSERT, see migration 0006 -- so a count
+		// against the quota is exactly the question of whether this
+		// enrolment fits.
+		if err := checkDeviceQuota(ctx, tx); err != nil {
+			return err
+		}
 		consumed, err := consumeCode(ctx, tx, tenantID, code, hint)
 		if err != nil {
 			return err
@@ -95,4 +104,38 @@ func mapConsumeError(err error) error {
 	default:
 		return err
 	}
+}
+
+// checkDeviceQuota refuses an enrolment that would take a tenant past its limit.
+//
+// Both reads run under the caller's tenant context, so `app.devices` is already
+// this tenant's devices and the tenant row is this tenant's row. A NULL quota
+// is unlimited and is what every tenant is until somebody decides otherwise --
+// see migration 0049, which deliberately gives the column no default.
+func checkDeviceQuota(ctx context.Context, tx *sql.Tx) error {
+	var quota sql.NullInt64
+	var enrolled int64
+	// The quota lives in the tenant's settings document rather than in a
+	// column of its own, because that is where every other piece of
+	// console-editable tenant configuration lives -- one home for it, and one
+	// form that edits it. The subquery counts under the caller's tenant
+	// context, so `app.devices` is already this tenant's devices.
+	err := tx.QueryRowContext(ctx, `
+		SELECT (SELECT (value ->> 'device_quota')::bigint
+		          FROM app.tenant_settings
+		         WHERE section = 'devices'),
+		       (SELECT count(*) FROM app.devices)`).Scan(&quota, &enrolled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("device quota: %w", err)
+	}
+	if !quota.Valid {
+		return nil
+	}
+	if enrolled >= quota.Int64 {
+		return fmt.Errorf("%w: %d of %d devices enrolled", ErrQuotaExceeded, enrolled, quota.Int64)
+	}
+	return nil
 }

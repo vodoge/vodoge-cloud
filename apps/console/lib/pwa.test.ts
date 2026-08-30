@@ -2434,7 +2434,56 @@ const CAPTURED_FROM = {
   // stylesheet is still
   // 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5 at
   // 12403 bytes -- unchanged across every console change in this session.
-  chrome: "0c6fa96157e5af76d13712a38b046adfbafb913f6c62ad39bcbb5dfa736c2f76",
+  //
+  // Re-stamped for the country flags and the APN credential columns:
+  // `lib/plmn.ts` gained a flag table and four territories, `lib/catalog.ts`
+  // gained the credential fields, and the device page renders them. Paid for
+  // with a real build, twice: once with the change and once with
+  // `apps/console` stashed. Both produced
+  // .next/static/css/6395ac6053b94fdd.css at 16934 bytes hashing to
+  // c6c804b7619aa61cbe939f2d1861574b0025fe6476414cd6a1ff1ad2af95fe80 --
+  // byte-identical, so nothing this change added reached the stylesheet.
+  //
+  // 🔴 Note for whoever re-stamps next: the
+  // 4d601b64641b0511b86ac01dbf366accd2aca18336fc9dbf94ed8e48c63bade5 at 12403
+  // bytes recited by the notes above no longer describes this tree, and had
+  // already stopped describing it before this change -- the stashed baseline
+  // built to 16934 bytes with none of this work applied. Compare against a
+  // baseline you build yourself rather than against that number.
+  //
+  // Re-stamped once more in the same change: the APN editor joined
+  // `components/device-console.tsx`, with its consequence sentence, its label
+  // keys and `lib/tokens.ts` gaining the guard row. Third real build of the
+  // day, and the answer has not moved -- still 16934 bytes hashing to
+  // c6c804b7619aa61cbe939f2d1861574b0025fe6476414cd6a1ff1ad2af95fe80. Every
+  // control in the new form is an existing component, so no file gained a
+  // class string of its own.
+  //
+  // Re-stamped for the cloud-visibility work: the agent log card, the matrix
+  // key and proxy columns, the uptime card, and `lib/catalog.ts` gaining the
+  // rows behind them. Fourth real build, same answer -- 16934 bytes hashing to
+  // c6c804b7619aa61cbe939f2d1861574b0025fe6476414cd6a1ff1ad2af95fe80. The
+  // uptime sparkline is drawn with block characters precisely so that a chart
+  // needing a height per bar could not put a class per step in a content file.
+  //
+  // 🔴 Re-stamped with the stylesheet CHANGED, which no re-stamp above this
+  // one did. Say so plainly rather than repeating the byte-identical line:
+  //
+  //   before  6395ac6053b94fdd.css, 16934 bytes
+  //   after   9eb9f0c4694166eb.css, 15907 bytes
+  //
+  // `app/layout.tsx` moved from `next/font/google` to `next/font/local`
+  // because the google loader downloads each face during `next build` with no
+  // timeout outside dev, and one stalled socket hung this build for ever --
+  // see the note on `monoFace`. What moved in the CSS is the `@font-face`
+  // `src`, now `/_next/static/media/…` under this origin, and the loss of the
+  // latin-ext `@font-face` that `subsets: ["latin"]` never downloaded anyway.
+  //
+  // The frames were NOT recaptured, and that is a claim about rendering
+  // rather than about bytes: the family, both weights, `display: swap` and
+  // the whole fallback chain are unchanged, so the same glyphs are drawn from
+  // the same faces. Only the URL the browser fetches them from moved.
+  chrome: "7a099f794ee3486ab057620bb90b9a2dfd818dcb8a6cbad89924579271361ec1",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

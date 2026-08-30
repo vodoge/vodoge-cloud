@@ -438,6 +438,40 @@ func apiOperations() []openapi.Operation {
 			},
 		},
 		{
+			Method: "GET", Path: "/v1/candidates", Tag: tagFleet,
+			Summary: "Endpoints the agents have seen and not written to.",
+			Description: "Modem-shaped serial endpoints an agent found and has not been told " +
+				"to probe. Approving one with the claim_modem_candidate command is what turns " +
+				"it into a module; nothing here is a device, and none of it can be invented " +
+				"by the console.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				jsonOK("The candidates.", wrap("candidates", "One observed endpoint.")),
+				plain(500, "The catalog could not be read."),
+			},
+		},
+		{
+			Method: "GET", Path: "/v1/devices/{id}/uptime", Tag: tagFleet,
+			Summary: "How much of each recent hour a device was reachable.",
+			Description: "One row per hour, newest first, holding the minutes in which at " +
+				"least one frame arrived. An hour with no row is an hour nothing was heard " +
+				"from, which is absent rather than zero: the ratio a console draws counts " +
+				"only the hours that have rows.",
+			Security: []string{schemeSession},
+			Query: []openapi.Parameter{
+				{
+					Name:        "hours",
+					Description: "How many hours back, 1 to 720. Defaults to a week.",
+					Schema:      openapi.Schema{Type: "integer"},
+				},
+			},
+			Responses: []openapi.Response{
+				jsonOK("The hourly buckets.", wrap("uptime", "One hour of presence.")),
+				plain(400, "The hours parameter is out of range."),
+				plain(500, "The catalog could not be read."),
+			},
+		},
+		{
 			Method: "GET", Path: "/v1/sessions", Tag: tagFleet,
 			Summary:  "Which devices are connected right now, and since when.",
 			Security: []string{schemeSession},

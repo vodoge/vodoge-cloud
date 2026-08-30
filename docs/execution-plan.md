@@ -141,6 +141,33 @@ ssh -p 2222 root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep
 
 `grep -v "poll /dev"` 很有用 —— 三根棒子每 8 秒各刷一行，不滤掉看不见别的。
 
+> 🔴 **给上行的 APN blob 加字段后，必须清一次边缘缓存。**
+> `fill_apn_contexts` 只在换卡时重读模组（键是 ICCID），所以老设备会一直复用
+> 旧格式的 blob，新字段永远读不到。2026-08-30 加账号/认证时踩到：部署完看不到
+> 任何新字段，查了半天。清法（**边缘机**，`sqlite3` 没装，用 python）：
+>
+> ```
+> python3 -c "import sqlite3;c=sqlite3.connect('/var/lib/vodoge-edge/inbox.db',timeout=15);print(c.execute(\"UPDATE local_modems SET apn_contexts=NULL WHERE apn_contexts NOT LIKE '%username%'\").rowcount);c.commit()"
+> ```
+>
+> 注意 QMI 模组的 blob **本来就不落库**（`probe_one` 以 `apn_contexts: None`
+> 写入，由 `fill_apn_contexts` 填进内存快照后直接上行），所以库里是 NULL 属于
+> 设计如此，不是故障——我为此查错了方向一次。
+
+> 🔴 **`AT+QICSGP=` 是整行覆写。**
+> 只想改 APN 而不带账号密码，会把模组上已有的凭据清空。边缘的
+> `configure_apn` 因此先读一次再写，把没指定的字段原样送回；契约里
+> `username`/`password` 缺省即“保持不变”，显式空串才是“清除”。
+
+> 🔴 **控制台构建不再联网，别改回 `next/font/google`。**
+> 那个 loader 在 `next build` 时下载字体，而 `fetch-resource.js` 里
+> `const timeout = isDev ? 3000 : undefined`——**生产构建没有超时**，一个卡住的
+> socket 会让构建永远停在 “Creating an optimized production build”，0% CPU、
+> 无输出，它自己的 `Retrying 1/3` 也不会触发（要等 socket 报错）。
+> 2026-08-30 实测：同一个 URL curl 走同一代理 0.9 秒 200，loader 取到第四个文件
+> 无限挂起。之前一直没暴露是因为字体缓存在 `node_modules/.cache`，重装依赖后才
+> 现形。现在字体是 `app/fonts/*.woff2` + `next/font/local`，构建全程离线。
+
 > 🔴 **传完二进制必须比 sha256，不能只看 scp 的退出码和文件大小。**
 > 2026-08-29 网关部署时 scp 报成功、云端文件**大小与本机完全一致**
 > （13721762 字节），内容却不同 —— 静默损坏。症状极具误导性：进程能 exec、
@@ -152,7 +179,7 @@ ssh -p 2222 root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep
 
 ### 2.4 数据库迁移
 
-**当前 schema 版本：47**。迁移文件在 `packages/db/migrations/`，
+**当前 schema 版本：51**。迁移文件在 `packages/db/migrations/`，
 命名 `NNNN_name.sql`，四位数字连号。
 
 应用一条新迁移（从**工作站**发起）：

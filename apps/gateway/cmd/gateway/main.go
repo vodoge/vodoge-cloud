@@ -33,7 +33,6 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/audit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/auth"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/cards"
-	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ledger"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/catalog"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/directory"
@@ -42,6 +41,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/events"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/identity"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ingress"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ledger"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/matrix"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
@@ -55,6 +55,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/settings"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/telegram"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/transport"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/uptime"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wakeup"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/wss"
 )
@@ -80,7 +81,14 @@ func main() {
 		os.Exit(1)
 	}
 	wakeups := connectWakeup(os.Getenv("REDIS_URL"), os.Getenv("VODOGE_GATEWAY_NODE_ID"), logger)
+	// Its own Redis handle rather than the wakeup one: see internal/uptime.
+	// A gateway without Redis serves and records no uptime, which is the same
+	// stance the routing hints take.
+	uptimeRecorder := connectUptime(os.Getenv("REDIS_URL"), logger)
 	proc := newProcess(os.Getenv("VODOGE_GATEWAY_REGION"), journal, tenants, wakeups, enrollment)
+	if uptimeRecorder != nil {
+		proc.session.Uptime = uptimeRecorder
+	}
 	if sqlStore, ok := journal.(*ingress.SQLStore); ok && sqlStore.DB != nil {
 		proc.catalog = catalog.SQL{DB: sqlStore.DB}
 		proc.matrix = matrix.SQL{DB: sqlStore.DB}
@@ -256,6 +264,36 @@ func main() {
 			}
 		}
 	}()
+	// Closed hours out of Redis and into PostgreSQL.
+	//
+	// Every few minutes rather than on the hour: a sweep of an hour with
+	// nothing in it is one SMEMBERS against an absent key, and running often
+	// means a gateway restarted at five past the hour still collects the hour
+	// that just closed instead of waiting for the next one. The lookback picks
+	// up hours a gateway was down for, up to what Redis still holds.
+	if uptimeRecorder != nil {
+		if sqlStore, ok := journal.(*ingress.SQLStore); ok && sqlStore.DB != nil {
+			uptimeStore := uptime.Store{DB: sqlStore.DB}
+			go func() {
+				ticker := time.NewTicker(uptimeFlushTick)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-schedulerCtx.Done():
+						return
+					case <-ticker.C:
+						written, err := uptime.Flush(
+							schedulerCtx, uptimeRecorder, uptimeStore, time.Now(), uptimeLookback)
+						if err != nil {
+							logger.Warn("uptime flush", "error", err, "written", written)
+						} else if written > 0 {
+							logger.Info("uptime flushed", "buckets", written)
+						}
+					}
+				}
+			}()
+		}
+	}
 
 	select {
 	case signal := <-shutdownSignals:
@@ -572,6 +610,18 @@ func (process *process) mirrorScheduledCommand(
 // picks up whatever came due while the process was gone.
 const scheduleTick = 15 * time.Second
 
+// uptimeFlushTick is how often closed hours are swept out of Redis.
+//
+// Not hourly: an hourly timer that fires while the process is restarting skips
+// the hour entirely, and sweeping an hour that holds nothing costs one lookup.
+const uptimeFlushTick = 5 * time.Minute
+
+// uptimeLookback is how many closed hours each sweep considers. Three covers a
+// gateway that was down for a couple of hours and is bounded by the three-hour
+// TTL the recorder puts on its keys -- looking further back could only find
+// hours Redis has already expired.
+const uptimeLookback = 3
+
 // absentDevices remembers devices whose session ended and watches for their
 // return.
 //
@@ -706,7 +756,7 @@ type process struct {
 	// Defaulted to a working empty store rather than left nil: every route
 	// that reads it would otherwise panic on a build with no database, which
 	// is the shape the tests run in.
-	ledger  ledger.Store
+	ledger ledger.Store
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore
@@ -742,10 +792,10 @@ func newProcess(region string, store ingress.Store, tenants *directory.Resolver,
 		// Same reasoning as `schedules` below: the page renders against an
 		// empty ledger, and an endpoint that only exists in production is one
 		// nobody tests.
-		ledger:  ledger.Empty{},
-		queue:   &commands.Memory{},
-		audit:   &audit.Memory{},
-		rules:   &rules.Memory{},
+		ledger: ledger.Empty{},
+		queue:  &commands.Memory{},
+		audit:  &audit.Memory{},
+		rules:  &rules.Memory{},
 		// A gateway with no database still answers /v1/schedules with an empty
 		// list rather than 503: the console renders the page either way, and an
 		// endpoint that exists only in production is one nobody tests.
@@ -817,6 +867,8 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/events", process.sse)
 	mux.HandleFunc("GET /v1/devices", process.devices)
 	mux.HandleFunc("GET /v1/modems", process.modems)
+	mux.HandleFunc("GET /v1/devices/{id}/uptime", process.deviceUptime)
+	mux.HandleFunc("GET /v1/candidates", process.candidates)
 	mux.HandleFunc("GET /v1/messages", process.messages)
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
@@ -1137,6 +1189,56 @@ func (process *process) modems(writer http.ResponseWriter, request *http.Request
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"modems": list})
+}
+
+// candidates lists endpoints the agents have seen and not written to.
+//
+// Fleet-wide rather than per device: "something has been plugged in
+// somewhere" is the question an operator has, and they do not know which
+// device to look at until it is answered.
+func (process *process) candidates(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	list, err := process.catalog.ListCandidates(request.Context(), entry.TenantID)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"candidates": list})
+}
+
+// deviceUptime answers "has this device been reachable", which the fleet view
+// could not: it knew whether a device is connected now and nothing about the
+// week behind it.
+func (process *process) deviceUptime(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	deviceID := request.PathValue("id")
+	if deviceID == "" {
+		http.Error(writer, "device id is required", http.StatusBadRequest)
+		return
+	}
+	hours := 24 * 7
+	if raw := request.URL.Query().Get("hours"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 24*30 {
+			http.Error(writer, "hours must be between 1 and 720", http.StatusBadRequest)
+			return
+		}
+		hours = parsed
+	}
+	list, err := process.catalog.ListUptime(request.Context(), entry.TenantID, deviceID, hours)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"uptime": list})
 }
 
 func (process *process) devices(writer http.ResponseWriter, request *http.Request) {
@@ -1952,6 +2054,31 @@ func pingStore(store ingress.Store) error {
 		return nil
 	}
 	return pinger.Ping()
+}
+
+// connectUptime builds the minute recorder, or nil when there is no Redis.
+//
+// Nil rather than a no-op type because the field it fills is an interface: a
+// typed nil in an interface is not nil, and the check at the call site is what
+// keeps a gateway without Redis from calling through one.
+func connectUptime(url string, logger *slog.Logger) *uptime.Recorder {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if strings.TrimSpace(url) == "" {
+		return nil
+	}
+	recorder, client, err := uptime.Dial(url)
+	if err != nil {
+		logger.Error("gateway uptime redis", "error", err)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		logger.Warn("gateway uptime redis ping failed; history resumes when redis does", "error", err)
+	}
+	return recorder
 }
 
 func connectWakeup(url, nodeID string, logger *slog.Logger) wakeup.Publisher {

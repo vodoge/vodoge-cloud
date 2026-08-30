@@ -4,6 +4,7 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -91,13 +92,47 @@ func Validate(section string, document map[string]any) (map[string]any, error) {
 	case SectionSecurity:
 		return validateSecurity(document)
 	case SectionDevices:
-		// No constrained fields yet. The section exists so a deployment can
-		// hold device defaults without another migration.
-		return document, nil
+		return validateDevices(document)
 	default:
 		return nil, ErrInvalid{fmt.Sprintf(
 			"unknown section %q, expected one of %s", section, strings.Join(Sections(), ", "))}
 	}
+}
+
+// validateDevices checks the one constrained field this section has.
+//
+// `device_quota` is the most devices a tenant may enrol. Enrolment is
+// self-service by design -- a device presents a certificate and registers
+// itself -- so nothing else bounds how many one tenant can bring, and one
+// tenant filling the fleet is a failure the others experience.
+//
+// Absent is unlimited, and that is not the same as zero. Every tenant is
+// unlimited until somebody decides otherwise, so the absence of the key has to
+// keep meaning that; a zero would stop enrolment entirely, which is why it is
+// refused rather than accepted as "none allowed".
+func validateDevices(document map[string]any) (map[string]any, error) {
+	raw, present := document["device_quota"]
+	if !present || raw == nil {
+		delete(document, "device_quota")
+		return document, nil
+	}
+	// JSON numbers arrive as float64. Anything else is a caller sending a
+	// string, which would silently compare as unlimited later.
+	value, ok := raw.(float64)
+	if !ok {
+		return nil, ErrInvalid{"device_quota must be a number, or absent for unlimited"}
+	}
+	if value != math.Trunc(value) {
+		return nil, ErrInvalid{"device_quota must be a whole number"}
+	}
+	if value < 1 {
+		return nil, ErrInvalid{"device_quota must be at least 1; remove it for unlimited"}
+	}
+	if value > 100000 {
+		return nil, ErrInvalid{"device_quota must be 100000 or fewer"}
+	}
+	document["device_quota"] = value
+	return document, nil
 }
 
 func validateNotifications(document map[string]any) (map[string]any, error) {

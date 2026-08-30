@@ -522,6 +522,7 @@ const NOT_A_RECIPE = new Set([
   "NOTIFICATION_FIELDS",
   "SMS_FIELDS",
   "SECURITY_FIELDS",
+  "DEVICE_FIELDS",
   // IMEIs and message keys, not classes. See the note above it in tokens.ts:
   // it is in that file because the card that wrote it could edit one file
   // under lib/, and it should move out the moment a card owns another.
@@ -3786,11 +3787,13 @@ test("the eSIM tab draws no write control for an account that may not write", ()
   const drawn = [...masked.matchAll(ESIM_PANEL_CONTROLS)];
   assert.equal(
     drawn.length,
-    16,
+    23,
     "the module picker and its field; Refresh, Read the chip, Authenticate," +
-      " Switch, Retrieve and Download and install; the two download boxes, their" +
-      " fields and the row they sit in; the two row-action wrappers; the dialog" +
-      " — a control that stopped being found would reduce the check below to nothing",
+      " Switch, Disable, Delete, Retrieve and Download and install; the two" +
+      " download boxes, their fields and the row they sit in; the rename form," +
+      " its two fields and their two inputs and its button; the two row-action" +
+      " wrappers; the dialog — a control that stopped being found would reduce" +
+      " the check below to nothing",
   );
   const ungated = drawn
     .filter((match) => !drawnOnlyWhen(masked, match.index, "writable"))
@@ -3803,7 +3806,9 @@ test("the eSIM tab draws no write control for an account that may not write", ()
   const handlers = ESIM_PANEL_HANDLERS.flatMap((attribute) =>
     attributeSites(source, attribute).map((site) => ({ attribute, at: site.at })),
   );
-  assert.equal(handlers.length, 11, `${handlers.length} handlers, not the 11 this file has`);
+  // Fifteen: the eleven that were here plus Disable, Delete, and the rename
+  // form's submit and its two inputs.
+  assert.equal(handlers.length, 15, `${handlers.length} handlers, not the 15 this file has`);
   assert.deepEqual(
     handlers
       .filter((site) => !drawnOnlyWhen(masked, site.at, "writable"))
@@ -6248,7 +6253,7 @@ test("the tables being scanned are derived from the tree, not typed out", () => 
   }
   assert.equal(found.length, 14, `${found.length} files render a table, not 14`);
   assert.equal(tables, 22, `${tables} tables found, not 22`);
-  assert.equal(columns, 107, `${columns} columns found, not 107`);
+  assert.equal(columns, 109, `${columns} columns found, not 109`);
 });
 
 test("a column that drops off the phone drops off in its header and its body alike", () => {
@@ -6320,7 +6325,7 @@ test("a column that drops off the phone drops off in its header and its body ali
     assert.match(why, /DEFECT/, `${key} is recorded as a defect but no longer says so`);
   }
 
-  assert.equal(checked, 107, `${checked} columns found, not the 107 these tables have`);
+  assert.equal(checked, 109, `${checked} columns found, not the 109 these tables have`);
 });
 
 test("a column with a control in it never drops off the phone", () => {
@@ -6861,20 +6866,26 @@ test("the four hand-written pills on the device list are the shared badge", () =
   const rendered = [...code.matchAll(/<Badge\b[^>]*/g)]
     .filter((match) => match.index !== roleBadgeAt)
     .map((match) => match[0]);
-  assert.equal(rendered.length, 4, "four hand-written pills, four shared badges");
+  // Six now. The bearer cell gained the sending direction beside the receiving
+  // one -- showing only receiving made a card that can take a message and not
+  // send one look fully capable, which is exactly what the Club profile is --
+  // and the uncharacterised pill marks a (family, carrier) pair the ledger has
+  // no rule for at all.
+  assert.equal(rendered.length, 6, "the four hand-written pills plus MO and uncharacterised");
 
   const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);
   assert.deepEqual(
     tones,
-    ["warn", "warn", "neutral", "warn"],
-    "backlog, not-manageable, bearer, roaming — the tones the old classes had",
+    ["warn", "warn", "neutral", "neutral", "warn", "warn"],
+    "backlog, not-manageable, MT, MO, uncharacterised, roaming — source order, " +
+      "and roaming is last because Network is declared below the page",
   );
   // A count and a category are not states, so they take no status dot; the two
   // that qualify a module's condition keep theirs.
   assert.equal(
     rendered.filter((tag) => /dot=\{false\}/.test(tag)).length,
-    2,
-    "the backlog count and the bearer are not states",
+    3,
+    "the backlog count and both bearer directions are not states",
   );
   assert.equal(
     (code.match(/<StateBadge\b/g) ?? []).length,
@@ -7035,9 +7046,9 @@ test("the device page is drawn by the shared components, at the point of use", (
   // section — because a card holding four headings and eight tables is the
   // arrangement the tab strip was built to break up, and a card inside a card
   // is how a heading stops meaning anything.
-  assert.equal(uses(/<Card\b/g), 3, "modules, host vitals, radio readings");
+  assert.equal(uses(/<Card\b/g), 4, "uptime, modules, host vitals, radio readings");
   assert.equal(uses(/<CardShell\b/g), 1, "the danger-zone card, composed so its header can be red");
-  assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
+  assert.equal(uses(/<CardEmpty\b/g), 4, "each empty case still says what would be here");
 
   // Preflight is off, so a bare `<table>` is not merely a second
   // implementation: the legacy stylesheet paints it, which is the mechanism by
@@ -7049,7 +7060,15 @@ test("the device page is drawn by the shared components, at the point of use", (
   // roaming module. Both were `class="badge badge-warn"` with the gap supplied
   // by `style={{ marginLeft: … }}` — an inline style is the one thing none of
   // these guards can read.
-  assert.equal(uses(/<Badge\b/g), 2, "the unmanaged pill and the roaming pill");
+  //
+  // The third is the APN context's "configured by us", added with the
+  // credential columns: it marks a context this agent wrote rather than one
+  // the module came with, and it is a component from the start.
+  assert.equal(
+    uses(/<Badge\b/g),
+    5,
+    "unmanaged, roaming, configured-APN, uncharacterised-pair and disabled-proxy",
+  );
   assert.equal(uses(/<StateBadge\b/g), 1, "the device's own state, in the heading");
   const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));
   assert.deepEqual(handWritten, [], "a badge is still being drawn from the old stylesheet");
@@ -7069,13 +7088,15 @@ test("the device page's widest column is marked secondary on both of its cells",
   const code = codeOnly(readSource(DEVICE_PAGE));
   const headers = code.match(/<TableHeaderCell\b[^>]*secondary/g) ?? [];
   const cells = code.match(/<TableCell\b[^>]*secondary/g) ?? [];
-  // Four columns now drop on a phone: the ICCID, and the three identity and
-  // topology readings added beside it. The count is a census; the invariant
-  // is the equality below, which is what stops a header outliving its values.
+  // Seven columns now drop on a phone: the ICCID, the identity and topology
+  // readings beside it, and the two added so the cloud shows what the edge
+  // panel always did -- the matrix key this module resolves to, and the proxy
+  // listeners bound to it. The count is a census; the invariant is the
+  // equality below, which is what stops a header outliving its values.
   assert.equal(
     headers.length,
-    5,
-    "the ICCID, firmware, number, control-port and APN headers are the ones that drop",
+    7,
+    "ICCID, firmware, number, control port, APN, matrix key and proxy drop",
   );
   assert.equal(
     cells.length,

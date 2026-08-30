@@ -51,14 +51,40 @@ const OPERATORS: Record<string, string> = {
   "454-29": "csl. PCCW",
 };
 
-const TERRITORIES: Record<string, string> = {
-  "310": "美国",
-  "311": "美国",
-  "460": "中国大陆",
-  "454": "中国香港",
-  "455": "中国澳门",
-  "466": "中国台湾",
+/**
+ * Where an MCC is, as one entry rather than a name table beside a flag table.
+ *
+ * Two records keyed by MCC drift the moment one of them gains a row, and this
+ * file's whole opening comment is about a drift that is already silent. One
+ * entry per MCC is the shape that cannot.
+ *
+ * `code` is the ISO 3166-1 alpha-2 the flag is built from, and it is optional:
+ * an entry whose flag would not match the name it is listed under is better
+ * with no flag than with a wrong one, and the name still renders either way.
+ */
+const TERRITORIES: Record<string, { name: string; code?: string }> = {
+  "310": { name: "美国", code: "US" },
+  "311": { name: "美国", code: "US" },
+  "460": { name: "中国大陆", code: "CN" },
+  "454": { name: "中国香港", code: "HK" },
+  "455": { name: "中国澳门", code: "MO" },
+  "466": { name: "中国台湾" },
+  // Present in edge-core/src/network.rs and missing here until 2026-08-30,
+  // which is the drift the opening comment predicted: a card on any of these
+  // rendered its operator with no territory beside it and nothing failed.
+  "440": { name: "日本", code: "JP" },
+  "450": { name: "韩国", code: "KR" },
+  "505": { name: "澳大利亚", code: "AU" },
+  "525": { name: "新加坡", code: "SG" },
 };
+
+/** Regional-indicator pair for an alpha-2 code: "US" -> 🇺🇸. */
+function flagOf(code: string): string {
+  const BASE = 0x1f1e6; // 🇦
+  return String.fromCodePoint(
+    ...[...code].map((letter) => BASE + letter.charCodeAt(0) - "A".charCodeAt(0)),
+  );
+}
 
 /** Operator name for a "460-01" style PLMN, or the pair itself when unknown. */
 export function operatorName(plmn: string): string {
@@ -67,7 +93,20 @@ export function operatorName(plmn: string): string {
 
 /** Territory of the MCC, when it is one this product meets. */
 export function territoryName(plmn: string): string | null {
-  return TERRITORIES[plmn.slice(0, 3)] ?? null;
+  return TERRITORIES[plmn.slice(0, 3)]?.name ?? null;
+}
+
+/**
+ * Flag for the MCC's territory, or null when there is no flag to show.
+ *
+ * Null covers two different cases on purpose — an MCC nobody has listed, and a
+ * listed one carrying no `code` — because the caller does the same thing for
+ * both: render the name without a flag. Distinguishing them would only invite
+ * a caller to treat one as an error.
+ */
+export function territoryFlag(plmn: string): string | null {
+  const code = TERRITORIES[plmn.slice(0, 3)]?.code;
+  return code ? flagOf(code) : null;
 }
 
 /**

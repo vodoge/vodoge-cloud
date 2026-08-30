@@ -78,6 +78,13 @@ type Store interface {
 	ListSessions(ctx context.Context, tenantID string) ([]Session, error)
 	ListModems(ctx context.Context, tenantID string) ([]Modem, error)
 	ListCommands(ctx context.Context, tenantID, deviceID string, limit int) ([]CommandRow, error)
+	// ListUptime returns recent hourly buckets for one device, newest first.
+	// An hour with no row is an hour nothing was heard from, and it is absent
+	// rather than zero -- see migration 0048.
+	ListUptime(ctx context.Context, tenantID, deviceID string, hours int) ([]UptimeHour, error)
+	// ListCandidates returns the endpoints an agent has seen and not written
+	// to. What the console offers to approve; not devices.
+	ListCandidates(ctx context.Context, tenantID string) ([]CandidateRow, error)
 	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
 	ListEsimProfiles(ctx context.Context, tenantID, deviceID string) ([]EsimProfileRow, error)
 	RenameDevice(ctx context.Context, tenantID, deviceID, name string) error
@@ -120,7 +127,14 @@ type Modem struct {
 	ServingPlmn *string `json:"serving_plmn"`
 	SmsMo       *string `json:"sms_mo"`
 	SmsMt       *string `json:"sms_mt"`
-	LastSeen    *int64  `json:"last_seen"`
+	// The carrier half of the capability-matrix key, and whether the matrix
+	// had a rule for this (family, carrier) pair at all. The edge panel has
+	// shown both since it existed; without them the console cannot tell a pair
+	// characterised as "probe" from one nobody has ever considered, and those
+	// are the two states a support-ledger entry is written between.
+	CarrierProfile   *string `json:"carrier_profile"`
+	CapabilityOrigin *string `json:"capability_origin"`
+	LastSeen         *int64  `json:"last_seen"`
 	// Identity the edge reads on every probe and used to discard. Firmware
 	// answers "which build is on that stick" without a diagnostic round trip;
 	// the number is often absent because plenty of operators never write one
@@ -148,6 +162,34 @@ type CommandRow struct {
 	CompletedAt *int64          `json:"completed_at"`
 	Payload     json.RawMessage `json:"payload"`
 	Result      json.RawMessage `json:"result"`
+}
+
+// CandidateRow is one endpoint an agent has seen and not written to.
+//
+// It is not a modem: it has no IMEI until somebody approves a probe, which is
+// the whole reason this list exists separately from the fleet.
+type CandidateRow struct {
+	DeviceID     string  `json:"device_id"`
+	CandidateKey string  `json:"candidate_key"`
+	UsbDevice    *string `json:"usb_device"`
+	Transport    string  `json:"transport"`
+	ControlPort  string  `json:"control_port"`
+	VendorID     *string `json:"vendor_id"`
+	ProductID    *string `json:"product_id"`
+	State        string  `json:"state"`
+	IMEI         *string `json:"imei"`
+	Detail       string  `json:"detail"`
+	LastSeen     *int64  `json:"last_seen"`
+}
+
+// UptimeHour is one device's presence in one closed hour.
+//
+// `MinutesOnline` is out of sixty and the denominator is not carried: an hour
+// is an hour. What the row cannot say is whether the device was expected to be
+// up, so a console drawing a ratio counts only hours that have rows.
+type UptimeHour struct {
+	Hour          int64 `json:"hour"`
+	MinutesOnline int   `json:"minutes_online"`
 }
 
 // EsimProfileRow is one profile on one eUICC, as last reported.
@@ -202,6 +244,14 @@ func (Empty) ListCommands(context.Context, string, string, int) ([]CommandRow, e
 	return []CommandRow{}, nil
 }
 
+func (Empty) ListUptime(context.Context, string, string, int) ([]UptimeHour, error) {
+	return []UptimeHour{}, nil
+}
+
+func (Empty) ListCandidates(context.Context, string) ([]CandidateRow, error) {
+	return []CandidateRow{}, nil
+}
+
 func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error) {
 	return []EventRow{}, nil
 }
@@ -237,6 +287,14 @@ type Memory struct {
 	Commands map[string][]CommandRow
 	Events   map[string][]EventRow
 	Esim     map[string][]EsimProfileRow
+	// Keyed by device rather than tenant: the question this answers is always
+	// about one device, and a tenant-keyed map would have every test that
+	// touches uptime also state which tenant the device is in.
+	Uptime map[string][]UptimeHour
+	// A flat list rather than a map: candidates are read for the whole tenant
+	// and filtered per device by the caller, which is the shape the console
+	// needs -- "what is plugged in anywhere" is the fleet question.
+	Candidates []CandidateRow
 }
 
 // ListEsimProfiles returns the tenant's eUICC contents.
@@ -353,6 +411,26 @@ func (store *Memory) ListEvents(
 
 // ListCommands returns the tenant's commands, filtered to one device when
 // deviceID is given.
+func (store *Memory) ListCandidates(_ context.Context, _ string) ([]CandidateRow, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return append([]CandidateRow{}, store.Candidates...), nil
+}
+
+func (store *Memory) ListUptime(
+	_ context.Context,
+	_, deviceID string,
+	hours int,
+) ([]UptimeHour, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	rows := store.Uptime[deviceID]
+	if hours > 0 && len(rows) > hours {
+		rows = rows[:hours]
+	}
+	return append([]UptimeHour{}, rows...), nil
+}
+
 func (store *Memory) ListCommands(
 	_ context.Context,
 	tenantID, deviceID string,
@@ -588,7 +666,14 @@ func (store SQL) ListCommands(
 			       status::text,
 			       issued_at,
 			       completed_at,
-			       payload,
+			       -- The one read of a command payload that a person sees, so
+			       -- it is the one that must not carry a credential. Stripped
+			       -- in SQL rather than in Go because this row is serialised
+			       -- straight to the console as json.RawMessage: whatever is
+			       -- left in it is on the wire. configure_apn is the only
+			       -- command carrying a password, and dropping the key
+			       -- everywhere costs nothing where there is none.
+			       payload - 'password',
 			       result
 			  FROM app.commands
 			 WHERE ($1 = '' OR device_id = $1::uuid)
@@ -652,6 +737,8 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       serving_plmn,
 			       capability ->> 'sms_mo',
 			       capability ->> 'sms_mt',
+			       capability ->> 'carrier_profile',
+			       capability ->> 'origin',
 			       last_seen_at,
 			       firmware,
 			       msisdn,
@@ -667,6 +754,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 		for rows.Next() {
 			var item Modem
 			var iccid, state, registration, homePlmn, servingPlmn, smsMo, smsMt sql.NullString
+			var carrierProfile, capabilityOrigin sql.NullString
 			var discovery sql.NullString
 			var firmware, msisdn, controlPort, usbDevice sql.NullString
 			var apnContexts []byte
@@ -678,7 +766,8 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 				&item.ID, &item.DeviceID, &item.IMEI, &item.Family,
 				&iccid, &state, &registration, &signal,
 				&rsrp, &rsrq, &sinr, &discovery, &manageable,
-				&homePlmn, &servingPlmn, &smsMo, &smsMt, &lastSeen,
+				&homePlmn, &servingPlmn, &smsMo, &smsMt,
+				&carrierProfile, &capabilityOrigin, &lastSeen,
 				&firmware, &msisdn, &controlPort, &usbDevice, &apnContexts,
 			); err != nil {
 				return err
@@ -698,6 +787,8 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			item.ServingPlmn = nullableString(servingPlmn)
 			item.SmsMo = nullableString(smsMo)
 			item.SmsMt = nullableString(smsMt)
+			item.CarrierProfile = nullableString(carrierProfile)
+			item.CapabilityOrigin = nullableString(capabilityOrigin)
 			item.Firmware = nullableString(firmware)
 			item.Msisdn = nullableString(msisdn)
 			item.ControlPort = nullableString(controlPort)
@@ -971,4 +1062,85 @@ func cloneMessages(in []Message) []Message {
 // UnixMilli is exported for tests that compare last_seen.
 func UnixMilli(ts time.Time) int64 {
 	return ts.UnixMilli()
+}
+
+// ListUptime reads recent hourly buckets for one device.
+func (store SQL) ListUptime(
+	ctx context.Context,
+	tenantID, deviceID string,
+	hours int,
+) ([]UptimeHour, error) {
+	if hours <= 0 || hours > 24*30 {
+		hours = 24 * 7
+	}
+	rows := []UptimeHour{}
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		queried, err := tx.QueryContext(ctx, `
+			SELECT extract(epoch from hour) * 1000, minutes_online
+			  FROM app.device_uptime
+			 WHERE device_id = $1::uuid
+			 ORDER BY hour DESC
+			 LIMIT $2`, deviceID, hours)
+		if err != nil {
+			return err
+		}
+		defer queried.Close()
+		for queried.Next() {
+			var item UptimeHour
+			var stamp float64
+			if err := queried.Scan(&stamp, &item.MinutesOnline); err != nil {
+				return err
+			}
+			item.Hour = int64(stamp)
+			rows = append(rows, item)
+		}
+		return queried.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListCandidates reads every unclaimed endpoint the tenant's agents report.
+func (store SQL) ListCandidates(ctx context.Context, tenantID string) ([]CandidateRow, error) {
+	rows := []CandidateRow{}
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		queried, err := tx.QueryContext(ctx, `
+			SELECT device_id::text, candidate_key, usb_device, transport,
+			       control_port, vendor_id, product_id, state, imei, detail,
+			       extract(epoch from last_seen) * 1000
+			  FROM app.modem_candidates
+			 ORDER BY device_id, candidate_key`)
+		if err != nil {
+			return err
+		}
+		defer queried.Close()
+		for queried.Next() {
+			var item CandidateRow
+			var usbDevice, vendorID, productID, imei sql.NullString
+			var lastSeen sql.NullFloat64
+			if err := queried.Scan(
+				&item.DeviceID, &item.CandidateKey, &usbDevice, &item.Transport,
+				&item.ControlPort, &vendorID, &productID, &item.State, &imei,
+				&item.Detail, &lastSeen,
+			); err != nil {
+				return err
+			}
+			item.UsbDevice = nullableString(usbDevice)
+			item.VendorID = nullableString(vendorID)
+			item.ProductID = nullableString(productID)
+			item.IMEI = nullableString(imei)
+			if lastSeen.Valid {
+				stamp := int64(lastSeen.Float64)
+				item.LastSeen = &stamp
+			}
+			rows = append(rows, item)
+		}
+		return queried.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

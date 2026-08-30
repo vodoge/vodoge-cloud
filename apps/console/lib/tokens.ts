@@ -2649,6 +2649,12 @@ export function assertConsequence(consequence: string): string {
  */
 export const CONFIRM_CONSEQUENCE_KEYS = [
   "device.usbnetWarning",
+  // Writing an APN context. The module keeps it across a reboot and there is
+  // no automatic way back, which is the same shape as the usbnet warning above.
+  "device.confirmConfigureApn",
+  "device.confirmClaimCandidate",
+  "device.confirmDisableProfile",
+  "device.confirmDeleteProfile",
   /**
    * The five edits the card policy table can make. Every one of them is a write
    * that reaches every device in the tenant, and until this card none of the
@@ -3156,6 +3162,48 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       why: "the default bearer goes down and anything routed through this module stops",
     },
     { when: {}, consequence: null, why: "bringing data back up is the way back from the guarded half" },
+  ],
+  rename_esim_profile: [
+    {
+      when: {},
+      consequence: null,
+      why: "it changes a label stored on the card and nothing about the subscription; a dialog in front of renaming trains people to click through the one in front of deleting",
+    },
+  ],
+  disable_esim_profile: [
+    {
+      when: {},
+      consequence: "device.confirmDisableProfile",
+      why: "the module is left with no profile in service, so it drops off the network until another one is enabled",
+    },
+  ],
+  delete_esim_profile: [
+    {
+      when: {},
+      consequence: "device.confirmDeleteProfile",
+      why: "the only irreversible command in this catalogue: the card keeps no copy and a paid profile generally needs a fresh activation code from the operator",
+    },
+  ],
+  claim_modem_candidate: [
+    {
+      when: {},
+      consequence: "device.confirmClaimCandidate",
+      why: "approving one lets the agent write AT to a port it has only looked at, and a serial endpoint is not necessarily a modem",
+    },
+  ],
+  read_logs: [
+    {
+      when: {},
+      consequence: null,
+      why: "it returns the agent's own recent output and touches no module; a dialog in front of reading a log is how people stop reading logs",
+    },
+  ],
+  configure_apn: [
+    {
+      when: {},
+      consequence: "device.confirmConfigureApn",
+      why: "the module keeps a written context across a reboot, so a wrong APN takes the stick off data until somebody notices and there is no automatic way back",
+    },
   ],
   select_operator: [
     {
@@ -3769,6 +3817,17 @@ export const NOTIFICATION_FIELDS: readonly SettingsField[] = [
 ];
 
 export const SMS_FIELDS: readonly SettingsField[] = [{ path: "hourly_limit", kind: "number" }];
+
+/**
+ * The one bound on self-service enrolment.
+ *
+ * A device presents a certificate and registers itself, which is what makes
+ * bringing an edge machine online a matter of installing the agent -- and what
+ * means nothing else limits how many one tenant can bring. Leaving the box
+ * empty is unlimited, which is what every tenant is until somebody decides
+ * otherwise; the gateway refuses a zero rather than reading it as "none".
+ */
+export const DEVICE_FIELDS: readonly SettingsField[] = [{ path: "device_quota", kind: "number" }];
 
 export const SECURITY_FIELDS: readonly SettingsField[] = [
   { path: "session_ttl_hours", kind: "number" },

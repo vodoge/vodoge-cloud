@@ -91,6 +91,12 @@ type Server struct {
 		Add(name string, delta int64, labels ...string)
 		AddGauge(name string, delta int64)
 	}
+	// Uptime records the minute each frame arrived in, so the console can say
+	// whether a device has been reachable rather than only whether it is now.
+	// Optional: a gateway without Redis serves and records nothing.
+	Uptime interface {
+		Seen(ctx context.Context, tenantID, deviceID string, at time.Time) error
+	}
 	Now func() time.Time
 }
 
@@ -243,6 +249,7 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 			return errors.New("connection superseded")
 		}
 		server.hintPresence(device.DeviceID)
+		server.recordUptime(device, server.now())
 
 		if seen := server.now(); seen.Sub(lastPendingCheck) >= pendingEvery {
 			lastPendingCheck = seen
@@ -448,6 +455,24 @@ func (server *Server) hintPresence(deviceID string) {
 	defer cancel()
 	// Presence is a routing hint. A down Redis must not close the session.
 	_ = wakeup.Maybe(server.Wakeups).RegisterDevice(ctx, deviceID)
+}
+
+// recordUptime marks the minute this frame arrived in.
+//
+// Every frame, not only the sequenced ones: the heartbeat is what proves a
+// quiet device is still there, and a device with nothing to report is exactly
+// the one whose uptime is worth knowing.
+//
+// A failure here is swallowed for the same reason the presence hint's is. The
+// worst case is a minute missing from a ratio; closing a healthy session over
+// it would turn a reporting gap into an outage.
+func (server *Server) recordUptime(device identity.Device, at time.Time) {
+	if server.Uptime == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wakeup.HintTimeout)
+	defer cancel()
+	_ = server.Uptime.Seen(ctx, device.TenantID, device.DeviceID, at)
 }
 
 func (server *Server) hintEvent(event wakeup.Event) {

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
+  Checkbox,
   Field,
   FormError,
   FormHint,
@@ -32,6 +33,8 @@ import {
   ussdSessionState,
   ussdStageLabelKey,
   ussdStartRequest,
+  type ApnContextRow,
+  type CandidateRow,
   type ModemRow,
   type UssdRequest,
   type UssdStageLabelKey,
@@ -129,6 +132,28 @@ export type DeviceLabelKey =
   | "logNote"
   | "usbnetMode"
   | "usbnetWarning"
+  | "apnContext"
+  | "apn"
+  | "apnPdpType"
+  | "apnUsername"
+  | "apnAuth"
+  | "apnPassword"
+  | "apnPasswordKeep"
+  | "apnClearPassword"
+  | "apnKeep"
+  | "apnHint"
+  | "agentLog"
+  | "agentLogNote"
+  | "agentLogFilter"
+  | "agentLogFilterHint"
+  | "agentLogRead"
+  | "agentLogNone"
+  | "agentLogEmpty"
+  | "candidates"
+  | "candidatesNote"
+  | "candidatesNone"
+  | "candidatesHint"
+  | "candidateClaim"
   | "modem_report"
   | "list_esim_profiles"
   | "restart_modem"
@@ -467,11 +492,14 @@ export function DeviceDiagnostics({
 export function DeviceConsole({
   deviceId,
   modems,
+  candidates,
   labels,
   locale,
 }: {
   deviceId: string;
   modems: ModemRow[];
+  /** Already narrowed to this device by the caller. */
+  candidates: CandidateRow[];
   labels: Labels;
   /**
    * The locale of the request, resolved on the server.
@@ -562,8 +590,18 @@ export function DeviceConsole({
         <div className={PAGE.section}>
           <OperatorControls busy={busy} labels={labels} onRun={request} />
           <UsbnetControls busy={busy} labels={labels} onRun={request} />
+          <ApnControls
+            busy={busy}
+            contexts={modems.find((modem) => modem.imei === imei)?.apnContexts ?? null}
+            labels={labels}
+            onRun={request}
+          />
         </div>
       </CardPanel>
+
+      <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
+
+      <AgentLogCard busy={busy} commands={commands} labels={labels} onRun={request} />
 
       <DangerZone busy={busy} labels={labels} onRun={request} />
 
@@ -992,6 +1030,320 @@ function UsbnetControls({
       {/* The long form of the same warning, on screen before the dialog. rmnet
           is the mode this agent speaks, so the sentence is about the others. */}
       {mode === "rmnet" ? null : <FormError>{labels.usbnetWarning}</FormError>}
+    </InlineForm>
+  );
+}
+
+
+
+
+/**
+ * Endpoints this agent has seen and has not written to.
+ *
+ * The nearest thing this product has to "add a device by hand", and
+ * deliberately not that: enrolment is certificate-based, so a device the
+ * console invented would have nothing to connect with. What is approved here
+ * is something the agent already found, addressed by the key the agent gave
+ * it -- the form carries no port and no IMEI, because a console that could
+ * name those could describe hardware nobody has looked at.
+ *
+ * 🔴 Approving one lets the agent write AT to a port it has so far only
+ * looked at. That is a real line to cross -- a serial endpoint that is not a
+ * modem can be a GPS, a debug console, or something that reboots when it is
+ * spoken to -- which is why it is guarded like the disruptive commands rather
+ * than offered as a plain button.
+ */
+function CandidatesCard({
+  busy,
+  candidates,
+  labels,
+  onRun,
+}: {
+  busy: boolean;
+  candidates: CandidateRow[];
+  labels: Labels;
+  onRun: Request;
+}) {
+  // Only the ones nobody has acted on. A claimed endpoint becomes a module on
+  // the next poll and is listed above with the rest of them; leaving it here
+  // would offer an approval that has already happened.
+  const pending = candidates.filter((row) => row.state === "found");
+  return (
+    <CardPanel title={labels.candidates} note={labels.candidatesNote}>
+      {pending.length === 0 ? (
+        <FormHint>{labels.candidatesNone}</FormHint>
+      ) : (
+        <div className={PAGE.section}>
+          {pending.map((candidate) => (
+            <InlineForm
+              key={candidate.candidateKey}
+              onSubmit={(event) => {
+                event.preventDefault();
+                onRun("claim_modem_candidate", { candidate_key: candidate.candidateKey });
+              }}
+            >
+              <span>
+                <Output>{candidate.controlPort}</Output>
+                <FormHint>
+                  {candidate.transport}
+                  {candidate.vendorId && candidate.productId
+                    ? ` · ${candidate.vendorId}:${candidate.productId}`
+                    : ""}
+                  {candidate.usbDevice ? ` · ${candidate.usbDevice}` : ""}
+                </FormHint>
+              </span>
+              <Button type="submit" variant="risk" disabled={busy}>
+                {labels.candidateClaim}
+              </Button>
+            </InlineForm>
+          ))}
+          <FormHint>{labels.candidatesHint}</FormHint>
+        </div>
+      )}
+    </CardPanel>
+  );
+}
+
+/**
+ * The agent's own log, read from the cloud.
+ *
+ * `edge-panel/src/logs.rs` keeps these lines precisely because reaching them
+ * otherwise means an SSH session and `journalctl` -- "the access an on-site
+ * operator does not have". A cloud operator has less access than that, so the
+ * ring is served here too rather than only over the LAN panel.
+ *
+ * The lines come back inside an ordinary command result, so this card is a
+ * reader over the command log rather than a second fetch: whatever the newest
+ * `read_logs` returned is what it shows, and the raw JSON stays visible in the
+ * log card below for anything this rendering leaves out.
+ */
+function AgentLogCard({
+  busy,
+  commands,
+  labels,
+  onRun,
+}: {
+  busy: boolean;
+  commands: CommandRow[];
+  labels: Labels;
+  onRun: Request;
+}) {
+  const [contains, setContains] = useState("");
+  const newest = commands.find(
+    (row) => row.kind === "read_logs" && row.result?.details !== undefined,
+  );
+  const lines = agentLogLines(newest?.result?.details);
+  return (
+    <CardPanel title={labels.agentLog} note={labels.agentLogNote}>
+      <div className={PAGE.section}>
+        <InlineForm
+          onSubmit={(event) => {
+            event.preventDefault();
+            const extra: Record<string, unknown> = {};
+            if (contains.trim()) extra.log_contains = contains.trim();
+            onRun("read_logs", extra);
+          }}
+        >
+          <Field label={labels.agentLogFilter} inline>
+            <Input
+              value={contains}
+              placeholder={labels.agentLogFilterHint}
+              onChange={(event) => setContains(event.target.value)}
+            />
+          </Field>
+          <Button type="submit" variant="ghost" disabled={busy}>
+            {labels.agentLogRead}
+          </Button>
+        </InlineForm>
+        {lines === null ? (
+          <FormHint>{labels.agentLogNone}</FormHint>
+        ) : lines.length === 0 ? (
+          <FormHint>{labels.agentLogEmpty}</FormHint>
+        ) : (
+          <Output>
+            {lines
+              .map((line) => `${new Date(line.at).toLocaleTimeString()}  ${line.text}`)
+              .join("\n")}
+          </Output>
+        )}
+      </div>
+    </CardPanel>
+  );
+}
+
+/**
+ * The lines out of a `read_logs` result, or null when there is no result to
+ * read yet.
+ *
+ * Written defensively because this is edge-supplied JSON crossing two hops:
+ * a shape that does not match is drawn as "nothing to show" rather than
+ * throwing inside a render.
+ */
+function agentLogLines(details: unknown): { at: number; text: string }[] | null {
+  if (!details || typeof details !== "object") return null;
+  const lines = (details as Record<string, unknown>).lines;
+  if (!Array.isArray(lines)) return null;
+  return lines.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    if (typeof row.text !== "string") return [];
+    return [{ at: typeof row.at === "number" ? row.at : 0, text: row.text }];
+  });
+}
+
+/**
+ * Writing one packet data context.
+ *
+ * The context identifier is a picker rather than a number box because it is an
+ * address, not a quantity: `AT+QICSGP=1` and `AT+QICSGP=2` are different rows
+ * on the module, and a typo in a free-text field rewrites the wrong one. The
+ * list is 1..8 whatever the module reported, because a module holding no
+ * contexts at all -- the EC200U-CN on this bench holds none -- is exactly the
+ * one somebody needs to write a first context to.
+ *
+ * 🔴 **Blank means "leave it alone", and that is not a convention this
+ * component invented.** `AT+QICSGP=` rewrites every field of the context, so
+ * the edge puts back whatever it read for anything the request did not name.
+ * Sending an empty username here would clear a working credential, so an
+ * untouched box sends nothing at all, and clearing one is a separate,
+ * deliberate act with its own checkbox.
+ */
+function ApnControls({
+  busy,
+  contexts,
+  labels,
+  onRun,
+}: {
+  busy: boolean;
+  contexts: ApnContextRow[] | null;
+  labels: Labels;
+  onRun: Request;
+}) {
+  const [cid, setCid] = useState("1");
+  const chosen = contexts?.find((row) => String(row.cid) === cid) ?? null;
+  return (
+    <div className={PAGE.section}>
+      <Field label={labels.apnContext} inline>
+        <Select value={cid} onChange={(event) => setCid(event.target.value)}>
+          {APN_CIDS.map((option) => {
+            const known = contexts?.find((row) => row.cid === option);
+            return (
+              <option key={option} value={String(option)}>
+                {option}
+                {known?.apn ? `: ${known.apn}` : ""}
+              </option>
+            );
+          })}
+        </Select>
+      </Field>
+      {/* Keyed on the identifier so changing the picker starts from what that
+          context actually holds. A useEffect writing the same values into
+          state would be a second source of truth for the same boxes. */}
+      <ApnEditor
+        key={cid}
+        cid={cid}
+        context={chosen}
+        busy={busy}
+        labels={labels}
+        onRun={onRun}
+      />
+    </div>
+  );
+}
+
+/** The contexts a module addresses. 1..8 covers every family on this bench. */
+const APN_CIDS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+const APN_AUTHS = ["none", "pap", "chap", "pap_or_chap"] as const;
+
+function ApnEditor({
+  cid,
+  context,
+  busy,
+  labels,
+  onRun,
+}: {
+  cid: string;
+  context: ApnContextRow | null;
+  busy: boolean;
+  labels: Labels;
+  onRun: Request;
+}) {
+  const [apn, setApn] = useState(context?.apn ?? "");
+  const [pdpType, setPdpType] = useState(context?.pdpType ?? "");
+  const [username, setUsername] = useState(context?.username ?? "");
+  const [auth, setAuth] = useState(context?.auth ?? "");
+  const [password, setPassword] = useState("");
+  const [clearPassword, setClearPassword] = useState(false);
+  const startingUsername = context?.username ?? "";
+  return (
+    <InlineForm
+      onSubmit={(event) => {
+        event.preventDefault();
+        const extra: Record<string, unknown> = { cid: Number(cid), apn };
+        if (pdpType) extra.pdp_type = pdpType;
+        if (auth) extra.auth = auth;
+        // Only a username the operator actually changed travels. Sending the
+        // one read off the module back unchanged would be harmless today and
+        // would become a silent overwrite the moment two people edit at once.
+        if (username !== startingUsername) extra.username = username;
+        if (clearPassword) extra.password = "";
+        else if (password) extra.password = password;
+        onRun("configure_apn", extra);
+      }}
+    >
+      <Field label={labels.apn} inline>
+        <Input value={apn} onChange={(event) => setApn(event.target.value)} />
+      </Field>
+      <Field label={labels.apnPdpType} inline>
+        <Select value={pdpType} onChange={(event) => setPdpType(event.target.value)}>
+          <option value="">{labels.apnKeep}</option>
+          {["IP", "IPV6", "IPV4V6"].map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={labels.apnUsername} inline>
+        <Input value={username} onChange={(event) => setUsername(event.target.value)} />
+      </Field>
+      <Field label={labels.apnAuth} inline>
+        <Select value={auth} onChange={(event) => setAuth(event.target.value)}>
+          <option value="">{labels.apnKeep}</option>
+          {APN_AUTHS.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {/* `type="password"` with no reveal, like every other secret box in this
+          console: the value is never read back from the module, so a reveal
+          could only ever show what was typed a moment ago. */}
+      <Field label={labels.apnPassword} inline>
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          disabled={clearPassword}
+          placeholder={labels.apnPasswordKeep}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </Field>
+      <InlineField label={labels.apnClearPassword}>
+        <Checkbox
+          checked={clearPassword}
+          onChange={(event) => {
+            setClearPassword(event.target.checked);
+            if (event.target.checked) setPassword("");
+          }}
+        />
+      </InlineField>
+      <Button type="submit" variant="risk" disabled={busy}>
+        {labels.run}
+      </Button>
+      <FormHint>{labels.apnHint}</FormHint>
     </InlineForm>
   );
 }

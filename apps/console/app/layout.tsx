@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { headers } from "next/headers";
 import { ConnectionStatus } from "@/components/connection-status";
 import { MobileNav } from "@/components/mobile-nav";
@@ -15,12 +15,32 @@ import "./globals.css";
 export const dynamic = "force-dynamic";
 
 /**
- * DM Mono, fetched during the build and served from this origin.
+ * DM Mono, vendored in this repository and served from this origin.
  *
- * `next/font` downloads the face while `next build` runs and rewrites the
- * `@font-face` to point at a file this server hosts, so the delivered page
- * asks Google for nothing at all: no stylesheet and no font file crosses to a
- * third party, and nobody outside this origin learns who reads the console.
+ * `next/font` rewrites the `@font-face` to point at a file this server hosts,
+ * so the delivered page asks Google for nothing at all: no stylesheet and no
+ * font file crosses to a third party, and nobody outside this origin learns
+ * who reads the console. That was already true when the face was fetched by
+ * `next/font/google` during the build; what changed is when the download
+ * happens, not what the browser is served.
+ *
+ * 🔴 **`next/font/local`, not `next/font/google`, because the build must not
+ * need the network.** The google loader downloads each face while `next build`
+ * runs, and `fetch-resource.js` gives that request no timeout outside dev:
+ *
+ *     const timeout = isDev ? 3000 : undefined;
+ *
+ * So one stalled socket hangs the build for ever, with no output and no CPU,
+ * and the loader's own "Retrying 1/3" never fires because nothing errors.
+ * Measured 2026-08-30 on this workstation: `curl` fetched every one of these
+ * faces through the same proxy in under a second, while the loader's own path
+ * fetched three and hung for ever on the fourth. It had been passing only
+ * because `node_modules/.cache` still held the faces from an earlier run --
+ * a reinstall is what exposed it.
+ *
+ * The files are ~8.5 KB each and are the exact bytes Google served for the
+ * URLs its stylesheet named. Vendoring them changes nothing about what
+ * reaches a browser; it removes a third party from the build.
  *
  * It is bound to `--font-mono`, the property the recipes already resolve
  * through, rather than to a name of its own. A new custom property is not
@@ -51,9 +71,15 @@ export const dynamic = "force-dynamic";
  * rather than the `font-semibold` they used to: 600 does not exist in this
  * face, and asking for it buys a synthesised bold instead of a drawn one.
  */
-const monoFace = DM_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const monoFace = localFont({
+  // The same two faces `DM_Mono({ subsets: ["latin"] })` used to download:
+  // the latin cut at each of the two weights, taken from the URLs Google's
+  // own stylesheet names. The latin-ext cuts are left out because the google
+  // loader left them out too -- `subsets: ["latin"]` never fetched them.
+  src: [
+    { path: "./fonts/dm-mono-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/dm-mono-latin-500.woff2", weight: "500", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-mono",
   fallback: [
