@@ -179,7 +179,7 @@ ssh -p 2222 root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep
 
 ### 2.4 数据库迁移
 
-**当前 schema 版本：51**。迁移文件在 `packages/db/migrations/`，
+**当前 schema 版本：52**。迁移文件在 `packages/db/migrations/`，
 命名 `NNNN_name.sql`，四位数字连号。
 
 应用一条新迁移（从**工作站**发起）：
