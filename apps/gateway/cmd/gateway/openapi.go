@@ -438,6 +438,32 @@ func apiOperations() []openapi.Operation {
 			},
 		},
 		{
+			Method: "GET", Path: "/v1/alerts", Tag: tagFleet,
+			Summary: "Faults the agents announced, newest first.",
+			Description: "Throttled at the edge rather than here: a code is announced when it " +
+				"starts and then at most once per window while it persists, carrying how many " +
+				"occurrences were held back in context.repeats. So a row is a time somebody " +
+				"should have been told, not a time the fault happened.",
+			Security: []string{schemeSession},
+			Query: []openapi.Parameter{
+				{
+					Name:        "device_id",
+					Description: "Only this device. Omitted means every device in the tenant.",
+					Schema:      openapi.Schema{Type: "string"},
+				},
+				{
+					Name:        "limit",
+					Description: "How many rows, 1 to 500. Defaults to 100.",
+					Schema:      openapi.Schema{Type: "integer"},
+				},
+			},
+			Responses: []openapi.Response{
+				jsonOK("The alerts.", wrap("alerts", "One announced fault.")),
+				plain(400, "The limit is out of range."),
+				plain(500, "The catalog could not be read."),
+			},
+		},
+		{
 			Method: "GET", Path: "/v1/candidates", Tag: tagFleet,
 			Summary: "Endpoints the agents have seen and not written to.",
 			Description: "Modem-shaped serial endpoints an agent found and has not been told " +

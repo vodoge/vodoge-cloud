@@ -16,9 +16,12 @@ import {
   fetchCardPolicies,
   fetchConsoleRole,
   fetchDevices,
+  fetchAlerts,
   fetchModems,
   type CardPolicyRow,
   type DeviceRow,
+  alertTone,
+  type AlertRow,
   type ModemRow,
 } from "@/lib/catalog";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
@@ -107,12 +110,18 @@ export default async function DevicesPage({
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
   let policies: CardPolicyRow[] = [];
+  // What the agents announced, without anybody having to go and read a log.
+  // On this page rather than the landing page on purpose: the install
+  // screenshots are of the landing page, and a card added there would make
+  // the PWA's install dialog advertise chrome this tree no longer renders.
+  let alerts: AlertRow[] = [];
   let loadError = false;
   try {
-    [devices, modems, policies] = await Promise.all([
+    [devices, modems, policies, alerts] = await Promise.all([
       fetchDevices(host, token),
       fetchModems(host, token),
       fetchCardPolicies(host, token),
+      fetchAlerts(host, token, undefined, 20),
     ]);
   } catch {
     loadError = true;
@@ -140,6 +149,54 @@ export default async function DevicesPage({
       {loadError ? <p className={PAGE.error}>{t("devices.loadError", locale)}</p> : null}
 
       <div className={PAGE.stack}>
+        <Card title={t("alerts.title", locale)} note={t("alerts.note", locale)} bodyless>
+          {alerts.length === 0 ? (
+            <CardEmpty title={t("alerts.none", locale)} />
+          ) : (
+            <Table>
+              <TableHead>
+                <TableRow head>
+                  <TableHeaderCell>{t("alerts.colLevel", locale)}</TableHeaderCell>
+                  <TableHeaderCell>{t("alerts.colCode", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>{t("alerts.colMessage", locale)}</TableHeaderCell>
+                  <TableHeaderCell secondary>{t("alerts.colWhen", locale)}</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {alerts.map((alert) => (
+                  <TableRow key={alert.id}>
+                    <TableCell>
+                      <Badge tone={alertTone(alert.level)}>{alert.level}</Badge>
+                    </TableCell>
+                    <TableCell mono>
+                      <span className={TABLE.cellInline}>
+                        {alert.code}
+                        {/* How many were held back since this code was last
+                            announced. The number that says "still happening"
+                            rather than "happened again". */}
+                        {typeof alert.context.repeats === "number" ? (
+                          <span className={TABLE.cellFaint}>
+                            ×{alert.context.repeats + 1}
+                          </span>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {alert.message}
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {new Date(alert.occurredAt)
+                        .toISOString()
+                        .replace("T", " ")
+                        .slice(0, 19)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+
         <Card bodyless>
           {devices.length === 0 ? (
             <CardEmpty

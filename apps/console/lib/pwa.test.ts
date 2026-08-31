@@ -2483,7 +2483,18 @@ const CAPTURED_FROM = {
   // rather than about bytes: the family, both weights, `display: swap` and
   // the whole fallback chain are unchanged, so the same glyphs are drawn from
   // the same faces. Only the URL the browser fetches them from moved.
-  chrome: "7a099f794ee3486ab057620bb90b9a2dfd818dcb8a6cbad89924579271361ec1",
+  //
+  // Re-stamped for the alerts card on `/devices`. Paid for the usual way and
+  // back to byte-identical: 15907 bytes hashing to
+  // efcff242dc5a7c82ddcb5f48bb6d500b8c5139904e43508db2c8070ef3e324f3, the
+  // same as the build immediately before it -- every control in the new card
+  // is an existing component and no file gained a class string of its own.
+  //
+  // The card went on `/devices` rather than the landing page deliberately.
+  // The landing page is what these frames show, so a card there would make
+  // the install dialog advertise chrome this tree no longer renders, and
+  // recapturing needs a signed-in browser at the frames' exact viewport.
+  chrome: "4380d0d7da1a672398b498e2d748abcdb52dbf25149d18499ae1b33069f2686b",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

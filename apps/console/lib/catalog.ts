@@ -2285,3 +2285,78 @@ export async function fetchCandidates(
     ];
   });
 }
+
+/**
+ * One fault an agent announced.
+ *
+ * Already throttled at the edge: a code is announced when it starts and then
+ * at most once per window while it persists, with how many occurrences were
+ * held back in `context.repeats`. So a row is a time somebody should have been
+ * told, not a time the fault happened — and a list of five is five things
+ * worth reading, not five seconds of a loop.
+ */
+export type AlertRow = {
+  id: string;
+  deviceId: string;
+  level: string;
+  code: string;
+  message: string;
+  context: Record<string, unknown>;
+  occurredAt: number;
+};
+
+export async function fetchAlerts(
+  host: string,
+  token: string | undefined,
+  deviceId?: string,
+  limit = 50,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AlertRow[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (deviceId) query.set("device_id", deviceId);
+  const body = await getCatalog(host, `/v1/alerts?${query.toString()}`, token, fetchImpl);
+  return arrayOf(body.alerts).flatMap((value) => {
+    const row = value as Record<string, unknown>;
+    const id = asString(row.id);
+    if (!id) return [];
+    return [
+      {
+        id,
+        deviceId: asString(row.device_id) ?? "",
+        level: asString(row.level) ?? "error",
+        code: asString(row.code) ?? "unknown",
+        message: asString(row.message) ?? "",
+        context:
+          row.context && typeof row.context === "object"
+            ? (row.context as Record<string, unknown>)
+            : {},
+        occurredAt: asNumber(row.occurred_at) ?? 0,
+      },
+    ];
+  });
+}
+
+/**
+ * The badge tone a level deserves.
+ *
+ * An unknown level gets `neutral` rather than a guess, for the same reason
+ * `toneForState` does: colouring something red because its name was not
+ * recognised is a claim the console has no basis for.
+ *
+ * `critical` and `error` share `bad`. The palette has one alarming colour and
+ * splitting it would give two reds nobody could tell apart; the level itself
+ * is on the badge, which is where the difference is legible.
+ */
+export function alertTone(level: string): "bad" | "warn" | "info" | "neutral" {
+  switch (level) {
+    case "critical":
+    case "error":
+      return "bad";
+    case "warning":
+      return "warn";
+    case "info":
+      return "info";
+    default:
+      return "neutral";
+  }
+}

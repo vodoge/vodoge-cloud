@@ -85,6 +85,11 @@ type Store interface {
 	// ListCandidates returns the endpoints an agent has seen and not written
 	// to. What the console offers to approve; not devices.
 	ListCandidates(ctx context.Context, tenantID string) ([]CandidateRow, error)
+	// ListAlerts returns what the agents announced, newest first. Already
+	// throttled at the edge: one row per code per window, so the count is the
+	// number of times somebody should have been told rather than the number
+	// of times the fault happened.
+	ListAlerts(ctx context.Context, tenantID, deviceID string, limit int) ([]AlertRow, error)
 	ListEvents(ctx context.Context, tenantID string, query EventQuery) ([]EventRow, error)
 	ListEsimProfiles(ctx context.Context, tenantID, deviceID string) ([]EsimProfileRow, error)
 	RenameDevice(ctx context.Context, tenantID, deviceID, name string) error
@@ -182,6 +187,17 @@ type CandidateRow struct {
 	LastSeen     *int64  `json:"last_seen"`
 }
 
+// AlertRow is one fault an agent announced.
+type AlertRow struct {
+	ID         string          `json:"id"`
+	DeviceID   string          `json:"device_id"`
+	Level      string          `json:"level"`
+	Code       string          `json:"code"`
+	Message    string          `json:"message"`
+	Context    json.RawMessage `json:"context"`
+	OccurredAt int64           `json:"occurred_at"`
+}
+
 // UptimeHour is one device's presence in one closed hour.
 //
 // `MinutesOnline` is out of sixty and the denominator is not carried: an hour
@@ -252,6 +268,10 @@ func (Empty) ListCandidates(context.Context, string) ([]CandidateRow, error) {
 	return []CandidateRow{}, nil
 }
 
+func (Empty) ListAlerts(context.Context, string, string, int) ([]AlertRow, error) {
+	return []AlertRow{}, nil
+}
+
 func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error) {
 	return []EventRow{}, nil
 }
@@ -295,6 +315,7 @@ type Memory struct {
 	// and filtered per device by the caller, which is the shape the console
 	// needs -- "what is plugged in anywhere" is the fleet question.
 	Candidates []CandidateRow
+	Alerts     []AlertRow
 }
 
 // ListEsimProfiles returns the tenant's eUICC contents.
@@ -411,6 +432,26 @@ func (store *Memory) ListEvents(
 
 // ListCommands returns the tenant's commands, filtered to one device when
 // deviceID is given.
+func (store *Memory) ListAlerts(
+	_ context.Context,
+	_, deviceID string,
+	limit int,
+) ([]AlertRow, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	out := []AlertRow{}
+	for _, row := range store.Alerts {
+		if deviceID != "" && row.DeviceID != deviceID {
+			continue
+		}
+		out = append(out, row)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (store *Memory) ListCandidates(_ context.Context, _ string) ([]CandidateRow, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -1135,6 +1176,50 @@ func (store SQL) ListCandidates(ctx context.Context, tenantID string) ([]Candida
 				stamp := int64(lastSeen.Float64)
 				item.LastSeen = &stamp
 			}
+			rows = append(rows, item)
+		}
+		return queried.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListAlerts reads recent alerts, for one device or for the whole tenant.
+func (store SQL) ListAlerts(
+	ctx context.Context,
+	tenantID, deviceID string,
+	limit int,
+) ([]AlertRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows := []AlertRow{}
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		queried, err := tx.QueryContext(ctx, `
+			SELECT id::text, device_id::text, level, code, message, context,
+			       extract(epoch from occurred_at) * 1000
+			  FROM app.alerts
+			 WHERE ($1 = '' OR device_id = $1::uuid)
+			 ORDER BY occurred_at DESC
+			 LIMIT $2`, deviceID, limit)
+		if err != nil {
+			return err
+		}
+		defer queried.Close()
+		for queried.Next() {
+			var item AlertRow
+			var context []byte
+			var stamp float64
+			if err := queried.Scan(
+				&item.ID, &item.DeviceID, &item.Level, &item.Code,
+				&item.Message, &context, &stamp,
+			); err != nil {
+				return err
+			}
+			item.Context = json.RawMessage(context)
+			item.OccurredAt = int64(stamp)
 			rows = append(rows, item)
 		}
 		return queried.Err()

@@ -869,6 +869,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("GET /v1/modems", process.modems)
 	mux.HandleFunc("GET /v1/devices/{id}/uptime", process.deviceUptime)
 	mux.HandleFunc("GET /v1/candidates", process.candidates)
+	mux.HandleFunc("GET /v1/alerts", process.alerts)
 	mux.HandleFunc("GET /v1/messages", process.messages)
 	mux.HandleFunc("GET /v1/sessions", process.sessions)
 	mux.HandleFunc("GET /v1/capability-matrix", process.getMatrix)
@@ -1189,6 +1190,35 @@ func (process *process) modems(writer http.ResponseWriter, request *http.Request
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(writer).Encode(map[string]any{"modems": list})
+}
+
+// alerts answers the question the log could not: what went wrong without
+// anybody having to go and look.
+//
+// Tenant-wide by default with an optional device filter, because "is anything
+// wrong anywhere" is the question an operator opens the console with.
+func (process *process) alerts(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	limit := 100
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			http.Error(writer, "limit must be between 1 and 500", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	list, err := process.catalog.ListAlerts(
+		request.Context(), entry.TenantID, request.URL.Query().Get("device_id"), limit)
+	if err != nil {
+		http.Error(writer, "catalog unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"alerts": list})
 }
 
 // candidates lists endpoints the agents have seen and not written to.

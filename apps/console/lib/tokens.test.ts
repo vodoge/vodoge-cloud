@@ -6252,8 +6252,8 @@ test("the tables being scanned are derived from the tree, not typed out", () => 
     for (const table of parsed) columns += table.headers.length;
   }
   assert.equal(found.length, 14, `${found.length} files render a table, not 14`);
-  assert.equal(tables, 22, `${tables} tables found, not 22`);
-  assert.equal(columns, 109, `${columns} columns found, not 109`);
+  assert.equal(tables, 23, `${tables} tables found, not 23`);
+  assert.equal(columns, 113, `${columns} columns found, not 113`);
 });
 
 test("a column that drops off the phone drops off in its header and its body alike", () => {
@@ -6325,7 +6325,7 @@ test("a column that drops off the phone drops off in its header and its body ali
     assert.match(why, /DEFECT/, `${key} is recorded as a defect but no longer says so`);
   }
 
-  assert.equal(checked, 109, `${checked} columns found, not the 109 these tables have`);
+  assert.equal(checked, 113, `${checked} columns found, not the 113 these tables have`);
 });
 
 test("a column with a control in it never drops off the phone", () => {
@@ -6819,13 +6819,14 @@ test("the device list is drawn by the shared components, at the point of use", (
   const code = codeOnly(readSource("app/devices/page.tsx"));
   const uses = (pattern: RegExp) => (code.match(pattern) ?? []).length;
 
-  assert.equal(uses(/<Table\b/g), 2, "the fleet table and the module table");
-  // Seventeen, which is what this page actually has. T021 reported nineteen and
-  // T030 recounted it; the number is here so that a column added without a
-  // narrow-screen decision fails rather than arrives.
-  assert.equal(uses(/<TableHeaderCell\b/g), 17, "nine columns then eight");
-  assert.equal(uses(/<CardEmpty\b/g), 2, "both empty cases still say what would be here");
-  assert.equal(uses(/<Card\b/g), 3, "devices, modules, card policies");
+  assert.equal(uses(/<Table\b/g), 3, "the alerts table, the fleet table and the module table");
+  // Twenty-one: four for the alerts table, then nine and eight. T021 reported
+  // nineteen for the two older tables and T030 recounted it to seventeen; the
+  // number is here so that a column added without a narrow-screen decision
+  // fails rather than arrives.
+  assert.equal(uses(/<TableHeaderCell\b/g), 21, "four, then nine, then eight");
+  assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
+  assert.equal(uses(/<Card\b/g), 4, "alerts, devices, modules, card policies");
   // Preflight is off, so a bare `<table>` is not merely a second implementation:
   // the legacy stylesheet would style it, which is the mechanism by which two
   // implementations drift apart.
@@ -6866,19 +6867,26 @@ test("the four hand-written pills on the device list are the shared badge", () =
   const rendered = [...code.matchAll(/<Badge\b[^>]*/g)]
     .filter((match) => match.index !== roleBadgeAt)
     .map((match) => match[0]);
-  // Six now. The bearer cell gained the sending direction beside the receiving
-  // one -- showing only receiving made a card that can take a message and not
-  // send one look fully capable, which is exactly what the Club profile is --
-  // and the uncharacterised pill marks a (family, carrier) pair the ledger has
-  // no rule for at all.
-  assert.equal(rendered.length, 6, "the four hand-written pills plus MO and uncharacterised");
+  // Seven now. The bearer cell gained the sending direction beside the
+  // receiving one -- showing only receiving made a card that can take a
+  // message and not send one look fully capable, which is exactly what the
+  // Club profile is -- the uncharacterised pill marks a (family, carrier)
+  // pair the ledger has no rule for at all, and the alert level badge joins
+  // them as a component from the start rather than a class this page writes.
+  assert.equal(
+    rendered.length,
+    7,
+    "the four hand-written pills, MO, uncharacterised and the alert level",
+  );
 
   const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);
   assert.deepEqual(
     tones,
-    ["warn", "warn", "neutral", "neutral", "warn", "warn"],
-    "backlog, not-manageable, MT, MO, uncharacterised, roaming — source order, " +
-      "and roaming is last because Network is declared below the page",
+    // The alert level is first: its table is drawn above the fleet one, and
+    // its tone is computed rather than written, so it reads as undefined here.
+    [undefined, "warn", "warn", "neutral", "neutral", "warn", "warn"],
+    "alert level, backlog, not-manageable, MT, MO, uncharacterised, roaming — " +
+      "source order, and roaming is last because Network is declared below the page",
   );
   // A count and a category are not states, so they take no status dot; the two
   // that qualify a module's condition keep theirs.
