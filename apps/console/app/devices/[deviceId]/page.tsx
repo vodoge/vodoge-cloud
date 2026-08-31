@@ -7,6 +7,7 @@ import {
 } from "@/components/device-console";
 import { EsimPanel } from "@/components/esim-panel";
 import { Badge, StateBadge } from "@/components/ui/badge";
+import { ModemNetwork } from "@/components/modem-network";
 import { Output } from "@/components/ui/output";
 import {
   Card as CardShell,
@@ -330,7 +331,7 @@ function OverviewPanel({
                     {modem.iccid ?? "—"}
                   </TableCell>
                   <TableCell>
-                    <Network home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
+                    <ModemNetwork home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
                   </TableCell>
                   <TableCell mono faint secondary>
                     {modem.firmware ?? "—"}
@@ -690,41 +691,6 @@ function ProxyBindings({
   );
 }
 
-function Network({
-  home,
-  serving,
-  locale,
-}: {
-  home: string | null;
-  serving: string | null;
-  locale: Locale;
-}) {
-  if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
-  const identity = home ?? serving!;
-  const territory = territoryName(identity);
-  // Decorative: the territory name beside it already says the same thing, and
-  // a screen reader spelling out "regional indicator symbol letter U" helps
-  // nobody.
-  const flag = territoryFlag(identity);
-  const roaming = home !== null && serving !== null && isRoaming(home, serving);
-  return (
-    <span className={TABLE.cellInline}>
-      <span>
-        {flag ? <span aria-hidden="true">{flag} </span> : null}
-        {operatorName(identity)}
-        {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
-      </span>
-      {roaming ? (
-        <Badge tone="warn">
-          {t("modems.roaming", locale)} → {territoryFlag(serving) ? (
-            <span aria-hidden="true">{territoryFlag(serving)} </span>
-          ) : null}
-          {operatorName(serving)}
-        </Badge>
-      ) : null}
-    </span>
-  );
-}
 
 /**
  * RSRP / RSRQ / SINR as one cell.

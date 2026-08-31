@@ -2494,7 +2494,22 @@ const CAPTURED_FROM = {
   // The landing page is what these frames show, so a card there would make
   // the install dialog advertise chrome this tree no longer renders, and
   // recapturing needs a signed-in browser at the frames' exact viewport.
-  chrome: "4380d0d7da1a672398b498e2d748abcdb52dbf25149d18499ae1b33069f2686b",
+  //
+  // Re-stamped alone at eefb542+1, on a diff rather than on judgement. Every
+  // other file in the closure -- app/layout.tsx, app/page.tsx,
+  // components/shell.tsx, both message catalogues, lib/i18n.ts, lib/catalog.ts
+  // and app/globals.css -- is byte-identical to the stamped tree. The single
+  // change is one line in lib/tokens.ts:
+  //
+  //   + "components/modem-network.tsx",
+  //
+  // added to MIGRATED_SOURCES, which is a list of filenames read by the
+  // migration-ledger test and by nothing that renders. The extraction it
+  // records moved the network cell out of two pages that are not in this
+  // closure. The built stylesheet came out identical too
+  // (9eb9f0c4694166eb.css), which is the same evidence the SN-T022 note above
+  // rests on.
+  chrome: "736b11ecdb49be3f2a4c216c52d4e23715e634a0b47a871b462ca2c50dbaf978",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

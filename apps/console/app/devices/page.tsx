@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge, StateBadge } from "@/components/ui/badge";
+import { ModemNetwork } from "@/components/modem-network";
 import { Button } from "@/components/ui/button";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/form";
@@ -467,41 +468,6 @@ export default async function DevicesPage({
  * answers "whose card is this"; the serving network only appears when it is a
  * different operator, which is exactly the roaming case worth noticing.
  */
-function ModemNetwork({
-  home,
-  serving,
-  locale,
-}: {
-  home: string | null;
-  serving: string | null;
-  locale: Locale;
-}) {
-  if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
-  const identity = home ?? serving!;
-  const territory = territoryName(identity);
-  // Decorative: the territory name beside it already says the same thing, and
-  // a screen reader spelling out "regional indicator symbol letter U" helps
-  // nobody.
-  const flag = territoryFlag(identity);
-  const roaming = home !== null && serving !== null && isRoaming(home, serving);
-  return (
-    <span className={TABLE.cellInline}>
-      <span>
-        {flag ? <span aria-hidden="true">{flag} </span> : null}
-        {operatorName(identity)}
-        {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
-      </span>
-      {roaming ? (
-        <Badge tone="warn">
-          {t("modems.roaming", locale)} → {territoryFlag(serving) ? (
-            <span aria-hidden="true">{territoryFlag(serving)} </span>
-          ) : null}
-          {operatorName(serving)}
-        </Badge>
-      ) : null}
-    </span>
-  );
-}
 
 /**
  * RSRP / RSRQ / SINR as one cell.

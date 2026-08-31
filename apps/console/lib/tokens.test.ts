@@ -2539,10 +2539,15 @@ test("the journal's payload row spans every column the table has", () => {
  */
 test("every .tsx in the console is on the checked side of the ledger", () => {
   assert.deepEqual([...UNMIGRATED_SOURCES], []);
+  // 49 since components/modem-network.tsx: the network cell was written twice,
+  // byte for byte, as `ModemNetwork` on the device list and `Network` on the
+  // device detail page. The names had already drifted while the bodies had
+  // not, which is what that looks like just before the next change lands in
+  // only one of them.
   assert.equal(
     MIGRATED_SOURCES.length,
-    48,
-    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 46 — ` +
+    49,
+    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 49 — ` +
       "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
 
@@ -6867,16 +6872,20 @@ test("the four hand-written pills on the device list are the shared badge", () =
   const rendered = [...code.matchAll(/<Badge\b[^>]*/g)]
     .filter((match) => match.index !== roleBadgeAt)
     .map((match) => match[0]);
-  // Seven now. The bearer cell gained the sending direction beside the
-  // receiving one -- showing only receiving made a card that can take a
-  // message and not send one look fully capable, which is exactly what the
-  // Club profile is -- the uncharacterised pill marks a (family, carrier)
-  // pair the ledger has no rule for at all, and the alert level badge joins
-  // them as a component from the start rather than a class this page writes.
+  // Six. The bearer cell gained the sending direction beside the receiving one
+  // -- showing only receiving made a card that can take a message and not send
+  // one look fully capable, which is exactly what the Club profile is -- the
+  // uncharacterised pill marks a (family, carrier) pair the ledger has no rule
+  // for at all, and the alert level badge joins them as a component from the
+  // start rather than a class this page writes.
+  //
+  // Roaming is no longer among them: the network cell was duplicated between
+  // this page and the device detail page, and it now lives in
+  // components/modem-network.tsx with its badge inside it.
   assert.equal(
     rendered.length,
-    7,
-    "the four hand-written pills, MO, uncharacterised and the alert level",
+    6,
+    "the three remaining hand-written pills, MO, uncharacterised and the alert level",
   );
 
   const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);
@@ -6884,9 +6893,9 @@ test("the four hand-written pills on the device list are the shared badge", () =
     tones,
     // The alert level is first: its table is drawn above the fleet one, and
     // its tone is computed rather than written, so it reads as undefined here.
-    [undefined, "warn", "warn", "neutral", "neutral", "warn", "warn"],
-    "alert level, backlog, not-manageable, MT, MO, uncharacterised, roaming — " +
-      "source order, and roaming is last because Network is declared below the page",
+    [undefined, "warn", "warn", "neutral", "neutral", "warn"],
+    "alert level, backlog, not-manageable, MT, MO, uncharacterised — source order, " +
+      "with roaming now drawn by components/modem-network.tsx",
   );
   // A count and a category are not states, so they take no status dot; the two
   // that qualify a module's condition keep theirs.
@@ -7072,10 +7081,15 @@ test("the device page is drawn by the shared components, at the point of use", (
   // The third is the APN context's "configured by us", added with the
   // credential columns: it marks a context this agent wrote rather than one
   // the module came with, and it is a component from the start.
+  // Four since the roaming pill moved: the network cell was duplicated between
+  // this page and the device list, and it now lives in
+  // components/modem-network.tsx with the roaming badge inside it. Its own
+  // guard is that file being on the ledger; counting it here again would pin a
+  // badge this page no longer draws.
   assert.equal(
     uses(/<Badge\b/g),
-    5,
-    "unmanaged, roaming, configured-APN, uncharacterised-pair and disabled-proxy",
+    4,
+    "unmanaged, configured-APN, uncharacterised-pair and disabled-proxy — roaming moved",
   );
   assert.equal(uses(/<StateBadge\b/g), 1, "the device's own state, in the heading");
   const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));

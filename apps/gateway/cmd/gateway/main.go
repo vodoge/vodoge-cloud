@@ -264,6 +264,41 @@ func main() {
 			}
 		}
 	}()
+	// The silence watchdog.
+	//
+	// 🔴 The one fault an agent cannot report about itself. On 2026-08-31 a USB
+	// re-enumeration wedged the edge process inside a kernel write for fifty
+	// minutes: it kept its session, answered nothing, and raised nothing,
+	// because the thread that would have raised an alert was the wedged one.
+	// Nothing downstream noticed, which is the whole reason this runs here.
+	//
+	// It sweeps tenants seen recently rather than tenants connected now --
+	// see `RecentTenants`, and note that a gateway restart forgets them.
+	go func() {
+		ticker := time.NewTicker(silenceTick)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-schedulerCtx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				for _, tenantID := range proc.live.RecentTenants(silenceMemory, now) {
+					raised, err := proc.catalog.RaiseSilenceAlerts(
+						schedulerCtx, tenantID, silenceAfter, now)
+					if err != nil {
+						logger.Warn("silence watchdog", "tenant", tenantID, "error", err)
+						continue
+					}
+					if raised > 0 {
+						logger.Warn("devices have gone quiet",
+							"tenant", tenantID, "devices", raised)
+					}
+				}
+			}
+		}
+	}()
+
 	// Closed hours out of Redis and into PostgreSQL.
 	//
 	// Every few minutes rather than on the hour: a sweep of an hour with
@@ -519,10 +554,49 @@ func (violations *contractViolations) Raise(
 type liveDevices struct {
 	mu       sync.Mutex
 	byDevice map[string]string
+	// When each tenant was last seen on a live session, kept after its
+	// devices disconnect.
+	//
+	// 🔴 This is what makes a silence watchdog possible at all. `Tenants`
+	// drops a device the moment the hub stops holding it, so a tenant whose
+	// devices have all gone quiet vanishes from enumeration -- and a tenant
+	// that cannot be enumerated cannot be swept, which is precisely the tenant
+	// the watchdog exists for. `app.tenants` is under FORCE row-level security
+	// and cannot be listed, so the identity still has to arrive from an
+	// authenticated mTLS session; this only remembers it for a while longer.
+	seenTenants map[string]time.Time
 }
 
 func newLiveDevices() *liveDevices {
-	return &liveDevices{byDevice: make(map[string]string)}
+	return &liveDevices{
+		byDevice:    make(map[string]string),
+		seenTenants: make(map[string]time.Time),
+	}
+}
+
+// RecentTenants returns tenants seen on a live session within `window`,
+// whether or not anything of theirs is connected now.
+//
+// ⚠️ Process-local, so a gateway restart forgets every tenant until one of
+// their devices connects again. A device that goes quiet across a restart is
+// therefore not announced. Fixing that means persisting the tenant list, which
+// is the thing FORCE RLS is there to prevent, so it stays a known limit rather
+// than a bug to be worked around.
+func (devices *liveDevices) RecentTenants(window time.Duration, now time.Time) []string {
+	if devices == nil {
+		return nil
+	}
+	devices.mu.Lock()
+	defer devices.mu.Unlock()
+	out := make([]string, 0, len(devices.seenTenants))
+	for tenantID, at := range devices.seenTenants {
+		if now.Sub(at) > window {
+			delete(devices.seenTenants, tenantID)
+			continue
+		}
+		out = append(out, tenantID)
+	}
+	return out
 }
 
 // Seen records that a device is connected on behalf of a tenant.
@@ -533,6 +607,7 @@ func (devices *liveDevices) Seen(tenantID, deviceID string) {
 	devices.mu.Lock()
 	defer devices.mu.Unlock()
 	devices.byDevice[deviceID] = tenantID
+	devices.seenTenants[tenantID] = time.Now()
 }
 
 // Tenants returns the connected devices grouped by tenant, dropping any the hub
@@ -608,6 +683,29 @@ func (process *process) mirrorScheduledCommand(
 // the tick happens to land. It is also the recovery time after a restart: the
 // tracker above refills as devices reconnect, and the first tick after that
 // picks up whatever came due while the process was gone.
+// How often the silence watchdog looks.
+//
+// A minute: the alert is about a device that has been quiet for many minutes,
+// so checking faster buys nothing, and the query is one indexed scan per
+// tenant with a NOT EXISTS that is satisfied immediately in the normal case.
+const silenceTick = time.Minute
+
+// How quiet a device has to be before it is announced.
+//
+// Five minutes. State reports arrive far more often than that, so this is well
+// clear of a slow poll or a brief reconnect, while still catching a wedge long
+// before an operator would notice by hand. The fifty-minute incident would
+// have been announced at minute five.
+const silenceAfter = 5 * time.Minute
+
+// How long a tenant stays sweepable after its last live session.
+//
+// A day, because the failure being watched for is a device that stops talking
+// and stays stopped: the tenant has to remain sweepable for far longer than
+// the silence threshold, or the watchdog forgets the tenant before it notices
+// the silence.
+const silenceMemory = 24 * time.Hour
+
 const scheduleTick = 15 * time.Second
 
 // uptimeFlushTick is how often closed hours are swept out of Redis.

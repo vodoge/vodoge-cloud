@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -85,6 +86,17 @@ type Store interface {
 	// ListCandidates returns the endpoints an agent has seen and not written
 	// to. What the console offers to approve; not devices.
 	ListCandidates(ctx context.Context, tenantID string) ([]CandidateRow, error)
+	// RaiseSilenceAlerts announces devices that have stopped reporting.
+	//
+	// 🔴 The one fault an agent cannot announce about itself. On 2026-08-31 a
+	// USB re-enumeration wedged the edge process inside a kernel write for
+	// fifty minutes: it held its socket, answered nothing, and raised nothing,
+	// because the thread that would have raised an alert was the stuck one.
+	// Silence has to be noticed from outside.
+	RaiseSilenceAlerts(
+		ctx context.Context, tenantID string, quiet time.Duration, now time.Time,
+	) (int, error)
+
 	// ListAlerts returns what the agents announced, newest first. Already
 	// throttled at the edge: one row per code per window, so the count is the
 	// number of times somebody should have been told rather than the number
@@ -272,6 +284,12 @@ func (Empty) ListAlerts(context.Context, string, string, int) ([]AlertRow, error
 	return []AlertRow{}, nil
 }
 
+func (Empty) RaiseSilenceAlerts(
+	context.Context, string, time.Duration, time.Time,
+) (int, error) {
+	return 0, nil
+}
+
 func (Empty) ListEvents(context.Context, string, EventQuery) ([]EventRow, error) {
 	return []EventRow{}, nil
 }
@@ -432,6 +450,15 @@ func (store *Memory) ListEvents(
 
 // ListCommands returns the tenant's commands, filtered to one device when
 // deviceID is given.
+func (store *Memory) RaiseSilenceAlerts(
+	_ context.Context,
+	_ string,
+	_ time.Duration,
+	_ time.Time,
+) (int, error) {
+	return 0, nil
+}
+
 func (store *Memory) ListAlerts(
 	_ context.Context,
 	_, deviceID string,
@@ -1228,4 +1255,78 @@ func (store SQL) ListAlerts(
 		return nil, err
 	}
 	return rows, nil
+}
+
+// RaiseSilenceAlerts inserts one alert per device that has gone quiet.
+//
+// # Why one per episode, and how that is enforced without state
+//
+// The edge throttles its own alerts by remembering what it announced. Nothing
+// here can do that: this runs every tick, and a device that stays quiet for a
+// week must not produce a row per tick.
+//
+// The rule that gets it right with no bookkeeping is to compare against the
+// device's own clock: announce only when no `agent_silent` alert exists that
+// is *newer than the silence began*. `last_seen_at` moves the moment the
+// device reports again, so the next silence is automatically a new episode and
+// the previous alert no longer counts. One row per episode, decided by a
+// predicate rather than by remembering anything.
+//
+// A device that has never reported (`last_seen_at IS NULL`) is skipped: it has
+// not gone quiet, it has never spoken, and a fleet being provisioned would
+// otherwise alert on every device before its first check-in.
+func (store SQL) RaiseSilenceAlerts(
+	ctx context.Context,
+	tenantID string,
+	quiet time.Duration,
+	now time.Time,
+) (int, error) {
+	if quiet <= 0 {
+		return 0, nil
+	}
+	raised := 0
+	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO app.alerts (
+			    tenant_id, device_id, level, code, message, context, occurred_at
+			)
+			SELECT device.tenant_id,
+			       device.id,
+			       'error',
+			       'agent_silent',
+			       'no state report for ' ||
+			           floor(extract(epoch from ($2::timestamptz - device.last_seen_at)) / 60)::text ||
+			           ' minutes',
+			       jsonb_build_object(
+			           'last_seen_at',
+			           floor(extract(epoch from device.last_seen_at) * 1000)::bigint,
+			           'quiet_seconds',
+			           floor(extract(epoch from $3::interval))::bigint
+			       ),
+			       $2::timestamptz
+			  FROM app.devices device
+			 WHERE device.last_seen_at IS NOT NULL
+			   AND device.last_seen_at < $2::timestamptz - $3::interval
+			   AND NOT EXISTS (
+			       SELECT 1
+			         FROM app.alerts existing
+			        WHERE existing.device_id = device.id
+			          AND existing.code = 'agent_silent'
+			          AND existing.occurred_at > device.last_seen_at
+			   )`,
+			tenantID, now.UTC(), fmt.Sprintf("%d seconds", int64(quiet.Seconds())))
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		raised = int(affected)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return raised, nil
 }
