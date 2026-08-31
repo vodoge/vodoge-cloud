@@ -1295,18 +1295,18 @@ func (store SQL) RaiseSilenceAlerts(
 			       'error',
 			       'agent_silent',
 			       'no state report for ' ||
-			           floor(extract(epoch from ($2::timestamptz - device.last_seen_at)) / 60)::text ||
+			           floor(extract(epoch from ($1::timestamptz - device.last_seen_at)) / 60)::text ||
 			           ' minutes',
 			       jsonb_build_object(
 			           'last_seen_at',
 			           floor(extract(epoch from device.last_seen_at) * 1000)::bigint,
 			           'quiet_seconds',
-			           floor(extract(epoch from $3::interval))::bigint
+			           floor(extract(epoch from $2::interval))::bigint
 			       ),
-			       $2::timestamptz
+			       $1::timestamptz
 			  FROM app.devices device
 			 WHERE device.last_seen_at IS NOT NULL
-			   AND device.last_seen_at < $2::timestamptz - $3::interval
+			   AND device.last_seen_at < $1::timestamptz - $2::interval
 			   AND NOT EXISTS (
 			       SELECT 1
 			         FROM app.alerts existing
@@ -1314,7 +1314,14 @@ func (store SQL) RaiseSilenceAlerts(
 			          AND existing.code = 'agent_silent'
 			          AND existing.occurred_at > device.last_seen_at
 			   )`,
-			tenantID, now.UTC(), fmt.Sprintf("%d seconds", int64(quiet.Seconds())))
+			// tenantID is deliberately not a parameter here: row-level
+			// security scopes both the SELECT and the INSERT, and a $1 the
+			// statement never references is one Postgres cannot infer a type
+			// for -- which is exactly how this shipped broken once
+			// (SQLSTATE 42P18, caught in the gateway log rather than by the
+			// test, because the test was hand-written SQL with literals
+			// rather than the statement the code sends).
+			now.UTC(), fmt.Sprintf("%d seconds", int64(quiet.Seconds())))
 		if err != nil {
 			return err
 		}
