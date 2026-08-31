@@ -165,9 +165,10 @@ type ProxyTrafficEntry struct {
 }
 
 type DeviceStatePayload struct {
-	ObservedAt int64        `json:"observed_at"`
-	Modems     []ModemState `json:"modems"`
-	Host       *HostState   `json:"host,omitempty"`
+	ObservedAt  int64                `json:"observed_at"`
+	Modems      []ModemState         `json:"modems"`
+	Host        *HostState           `json:"host,omitempty"`
+	Discoveries []DiscoveryCandidate `json:"discoveries,omitempty"`
 }
 
 type HostState struct {
@@ -203,24 +204,82 @@ type ModemState struct {
 	Msisdn       *string           `json:"msisdn,omitempty"`
 	ControlPort  *string           `json:"control_port,omitempty"`
 	UsbDevice    *string           `json:"usb_device,omitempty"`
-	// Packet data profiles the module holds. nil means unread; an empty slice
-	// means it answered and held none.
-	ApnContexts  []ApnContext      `json:"apn_contexts,omitempty"`
+	ApnContexts  *[]ApnContext     `json:"apn_contexts,omitempty"`
 	Capability   CapabilitySummary `json:"capability"`
 }
 
-// ApnContext is one packet data profile as the module reports it.
+type DiscoveryCandidate struct {
+	CandidateKey string  `json:"candidate_key"`
+	UsbDevice    *string `json:"usb_device,omitempty"`
+	Transport    string  `json:"transport"`
+	ControlPort  string  `json:"control_port"`
+	VendorID     *string `json:"vendor_id,omitempty"`
+	ProductID    *string `json:"product_id,omitempty"`
+	State        string  `json:"state"`
+	Imei         *string `json:"imei,omitempty"`
+	Detail       *string `json:"detail,omitempty"`
+	LastSeen     *int64  `json:"last_seen,omitempty"`
+}
+
+type RenameEsimProfileCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Iccid     string  `json:"iccid"`
+	Nickname  *string `json:"nickname,omitempty"`
+}
+
+type DisableEsimProfileCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Iccid     string `json:"iccid"`
+}
+
+type DeleteEsimProfileCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+	Iccid     string `json:"iccid"`
+}
+
+type ClaimModemCandidateCommand struct {
+	Kind         string `json:"kind"`
+	CandidateKey string `json:"candidate_key"`
+}
+
+type ReadLogsCommand struct {
+	Kind     string  `json:"kind"`
+	After    *int64  `json:"after,omitempty"`
+	Limit    *int64  `json:"limit,omitempty"`
+	Contains *string `json:"contains,omitempty"`
+}
+
+type ConfigureApnCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Cid       int64   `json:"cid"`
+	PdpType   *string `json:"pdp_type,omitempty"`
+	Apn       string  `json:"apn"`
+	Username  *string `json:"username,omitempty"`
+	Password  *string `json:"password,omitempty"`
+	Auth      *string `json:"auth,omitempty"`
+}
+
 type ApnContext struct {
-	Cid     int    `json:"cid"`
-	PdpType string `json:"pdp_type,omitempty"`
-	Apn     string `json:"apn,omitempty"`
+	Cid         int64   `json:"cid"`
+	PdpType     *string `json:"pdp_type,omitempty"`
+	Apn         *string `json:"apn,omitempty"`
+	Username    *string `json:"username,omitempty"`
+	Auth        *string `json:"auth,omitempty"`
+	HasPassword *bool   `json:"has_password,omitempty"`
+	Source      *string `json:"source,omitempty"`
 }
 
 type CapabilitySummary struct {
-	SmsMo         string  `json:"sms_mo"`
-	SmsMt         string  `json:"sms_mt"`
-	MatrixVersion string  `json:"matrix_version"`
-	Reason        *string `json:"reason,omitempty"`
+	SmsMo          string  `json:"sms_mo"`
+	SmsMt          string  `json:"sms_mt"`
+	MatrixVersion  string  `json:"matrix_version"`
+	CarrierProfile *string `json:"carrier_profile,omitempty"`
+	Origin         *string `json:"origin,omitempty"`
+	Reason         *string `json:"reason,omitempty"`
 }
 
 type CommandResultPayload struct {
@@ -272,10 +331,7 @@ type RunAtCommandCommand struct {
 	ModemImei string `json:"modem_imei"`
 	Command   string `json:"command"`
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
-	// Force sends a command the agent classifies as disruptive anyway. Omitted
-	// when false so an unchanged payload stays byte-identical to what an older
-	// console sent, which is what keeps command deduplication stable.
-	Force bool `json:"force,omitempty"`
+	Force     *bool  `json:"force,omitempty"`
 }
 
 type SendUssdCommand struct {
@@ -421,23 +477,19 @@ type UpdateCardPolicyCommand struct {
 	Policies      []CardPolicy `json:"policies"`
 }
 
-type CardPolicy struct {
-	Iccid           string  `json:"iccid"`
-	CellularEnabled bool    `json:"cellular_enabled"`
-	Vertical        string  `json:"vertical"`
-	Apn             *string `json:"apn,omitempty"`
-	// Omitted entirely when nothing is declared, so a card with no
-	// declaration produces the same bytes it did before this field existed.
-	Capability *SubscriptionCapability `json:"capability,omitempty"`
+type SubscriptionCapability struct {
+	SmsSend    any `json:"sms_send,omitempty"`
+	SmsReceive any `json:"sms_receive,omitempty"`
+	Data       any `json:"data,omitempty"`
+	Voice      any `json:"voice,omitempty"`
 }
 
-// SubscriptionCapability is strictly subtractive: false withholds, true
-// asserts nothing, nil is undeclared.
-type SubscriptionCapability struct {
-	SmsSend    *bool `json:"sms_send,omitempty"`
-	SmsReceive *bool `json:"sms_receive,omitempty"`
-	Data       *bool `json:"data,omitempty"`
-	Voice      *bool `json:"voice,omitempty"`
+type CardPolicy struct {
+	Iccid           string                  `json:"iccid"`
+	CellularEnabled bool                    `json:"cellular_enabled"`
+	Vertical        string                  `json:"vertical"`
+	Apn             *string                 `json:"apn,omitempty"`
+	Capability      *SubscriptionCapability `json:"capability,omitempty"`
 }
 
 type UpdateCapabilityMatrixCommand struct {
@@ -507,8 +559,13 @@ var PayloadConstraints = map[MessageKind][]FieldConstraint{
 		{Path: "modems[].state", Enum: []string{"online", "offline", "recovering", "unknown"}},
 		{Path: "modems[].registration", Enum: []string{"registered", "searching", "denied", "unregistered", "unknown"}},
 		{Path: "modems[].discovery", Enum: []string{"qmi", "at"}},
+		{Path: "modems[].apn_contexts[].auth", Enum: []string{"none", "pap", "chap", "pap_or_chap"}},
+		{Path: "modems[].apn_contexts[].source", Enum: []string{"configured"}},
 		{Path: "modems[].capability.sms_mo", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
 		{Path: "modems[].capability.sms_mt", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
+		{Path: "modems[].capability.origin", Enum: []string{"rule", "fallback"}},
+		{Path: "discoveries[].transport", Enum: []string{"qmi", "at"}},
+		{Path: "discoveries[].state", Enum: []string{"manageable", "probe_failed", "at_only", "found", "claimed"}},
 	},
 	MessageKindCommandResult: {
 		{Path: "status", Enum: []string{"succeeded", "failed", "unknown", "expired", "cancelled"}},

@@ -184,6 +184,7 @@ export interface DeviceStatePayload {
   observed_at: number;
   modems: Array<ModemState>;
   host?: HostState | null;
+  discoveries?: Array<DiscoveryCandidate>;
 }
 
 export interface HostState {
@@ -191,6 +192,13 @@ export interface HostState {
   cpu_percent?: number | null;
   memory_used_bytes?: number | null;
   memory_total_bytes?: number | null;
+  disk_used_bytes?: number | null;
+  disk_total_bytes?: number | null;
+  net_rx_bytes_per_sec?: number | null;
+  net_tx_bytes_per_sec?: number | null;
+  cpu_model?: string | null;
+  kernel?: string | null;
+  hostname?: string | null;
 }
 
 export interface ModemState {
@@ -208,13 +216,85 @@ export interface ModemState {
   imsi?: Imsi | null;
   home_plmn?: Plmn | null;
   serving_plmn?: Plmn | null;
+  firmware?: string | null;
+  msisdn?: string | null;
+  control_port?: string | null;
+  usb_device?: string | null;
+  apn_contexts?: Array<ApnContext> | null;
   capability: CapabilitySummary;
+}
+
+export interface DiscoveryCandidate {
+  candidate_key: string;
+  usb_device?: string | null;
+  transport: "qmi" | "at";
+  control_port: string;
+  vendor_id?: string | null;
+  product_id?: string | null;
+  state: "manageable" | "probe_failed" | "at_only" | "found" | "claimed";
+  imei?: string | null;
+  detail?: string;
+  last_seen?: number;
+}
+
+export interface RenameEsimProfileCommand {
+  kind: "RenameEsimProfile";
+  modem_imei: Imei;
+  iccid: Iccid;
+  nickname?: string;
+}
+
+export interface DisableEsimProfileCommand {
+  kind: "DisableEsimProfile";
+  modem_imei: Imei;
+  iccid: Iccid;
+}
+
+export interface DeleteEsimProfileCommand {
+  kind: "DeleteEsimProfile";
+  modem_imei: Imei;
+  iccid: Iccid;
+}
+
+export interface ClaimModemCandidateCommand {
+  kind: "ClaimModemCandidate";
+  candidate_key: string;
+}
+
+export interface ReadLogsCommand {
+  kind: "ReadLogs";
+  after?: number;
+  limit?: number;
+  contains?: string;
+}
+
+export interface ConfigureApnCommand {
+  kind: "ConfigureApn";
+  modem_imei: Imei;
+  cid: number;
+  pdp_type?: "IP" | "IPV6" | "IPV4V6";
+  apn: string;
+  username?: string;
+  password?: string;
+  auth?: "none" | "pap" | "chap" | "pap_or_chap";
+}
+
+export interface ApnContext {
+  cid: number;
+  pdp_type?: string;
+  apn?: string;
+  username?: string;
+  auth?: "none" | "pap" | "chap" | "pap_or_chap";
+  has_password?: boolean;
+  source?: "configured";
 }
 
 export interface CapabilitySummary {
   sms_mo: "supported" | "degraded" | "unsupported" | "unknown";
   sms_mt: "supported" | "degraded" | "unsupported" | "unknown";
   matrix_version: string;
+  carrier_profile?: string;
+  origin?: "rule" | "fallback";
   reason?: string | null;
 }
 
@@ -267,6 +347,7 @@ export interface RunAtCommandCommand {
   modem_imei: Imei;
   command: string;
   timeout_ms?: number;
+  force?: boolean;
 }
 
 export interface SendUssdCommand {
@@ -412,11 +493,19 @@ export interface UpdateCardPolicyCommand {
   policies: Array<CardPolicy>;
 }
 
+export interface SubscriptionCapability {
+  sms_send?: unknown;
+  sms_receive?: unknown;
+  data?: unknown;
+  voice?: unknown;
+}
+
 export interface CardPolicy {
   iccid: Iccid;
   cellular_enabled: boolean;
   vertical: "cn" | "intl";
   apn?: string | null;
+  capability?: SubscriptionCapability;
 }
 
 export interface UpdateCapabilityMatrixCommand {
@@ -459,9 +548,15 @@ export type Command =
   | ModemReportCommand |
   | ResetModemUsbCommand |
   | SetDataNetworkCommand |
+  | ConfigureApnCommand |
   | SetUsbnetModeCommand |
   | ReregisterNetworkCommand |
   | RefreshModemsCommand |
+  | ReadLogsCommand |
+  | ClaimModemCandidateCommand |
+  | RenameEsimProfileCommand |
+  | DisableEsimProfileCommand |
+  | DeleteEsimProfileCommand |
   | ConfigureProxyCommand |
   | ProxyLifecycleCommand |
   | ProbeUpstreamProxyCommand |

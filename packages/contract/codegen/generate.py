@@ -540,7 +540,18 @@ def emit_go(schema: dict) -> str:
         for field, spec in properties.items():
             ty = go_type(spec, defs)
             if field not in required and not ty.startswith("*") and not ty.startswith("[]"):
-                if ty in {"string", "int64", "uint64", "bool", "float64"}:
+                # 🔴 Struct types need the pointer as much as scalars do, and
+                # for a sharper reason: `omitempty` does nothing to a struct.
+                # An optional struct emitted by value is written on every
+                # encode, so "carried only when somebody declared it" cannot be
+                # expressed at all -- every card policy push would look like a
+                # change to the edge even when nothing was ever filled in.
+                #
+                # This was hand-patched in the generated file once, which is
+                # why `--check` had been failing: the committed contract.go was
+                # right and unreproducible. Generating it is what makes the two
+                # agree.
+                if ty in {"string", "int64", "uint64", "bool", "float64"} or ty in defs:
                     ty = "*" + ty
             tag = f'`json:"{field}'
             if field not in required:
