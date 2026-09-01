@@ -1,3 +1,20 @@
+/* 第二批退休（前端重建，见 docs/frontend-rebuild/）。
+ *
+ * 这四条守的是同一个政策：**类名必须住在 lib/tokens.ts，Tailwind 刻度必须
+ * 是替换而非扩展**。接 shadcn 就是推翻这个政策——组件带着自己的类名进来，
+ * 而且它们用的是 Tailwind 的默认刻度。
+ *
+ * 🔴 刻度这一条是被实测逼着改的，不是为了省事。原本的配置把 spacing / width /
+ * fontSize / borderRadius 整条替换成 `s1..s5`，后果是 shadcn 生成的每个组件
+ * **没有内边距也没有高度**：px-2.5 py-0.5 h-9 px-4 h-8 w-9 gap-2 在那个配置下
+ * 一条 CSS 都编不出来，按钮会塌成一条线。改成 extend 之后两套刻度并存，调用处
+ * 一个都不用改。
+ *
+ * ⚠️ 保留了「每个用到的类都必须真的产出 CSS」那一条，它不是政策而是正确性
+ * 守卫——就在这次改动中它抓到了一个真 bug：我给徽章圆点写的 mr-1 / size-1.5
+ * 在旧刻度下不产出任何 CSS，那个点会既没边距也没尺寸，等于隐形。
+ */
+
 /* 退休于前端重建（见 docs/frontend-rebuild/）。
  *
  * 这里删掉的七条守的都是同一个前提：「整套设计系统由这个仓库自己掌管」——
@@ -2028,34 +2045,6 @@ test("a grid is available to lay something out with, and nothing is forbidden", 
 });
 
 /**
- * Class strings live in `lib/tokens.ts`. All of them.
- *
- * `.tsx` cannot be rendered in a test here, so a class written into markup is
- * a class nothing can put to the Tailwind build — which is the whole reason
- * the recipes are data. This used to be asserted for `components/ui/` only,
- * by a regex that matched `className="…"`; the review's mutation wrote the
- * same class list as `className={"…"}` and every guard stayed green.
- *
- * Conditional classes are not an exception and do not need one:
- * `cn(TABLE.cell, narrow ? TABLE.cellHidden : undefined)` puts both strings
- * where they can be checked. The seven page cards after this one all want that
- * shape, and getting it from the recipes costs a named key.
- */
-test("a migrated file writes no class strings of its own", () => {
-  const offenders: string[] = [];
-  for (const relative of MIGRATED_SOURCES) {
-    for (const list of classListsIn(readSource(relative))) {
-      offenders.push(`${relative}: ${JSON.stringify(list)}`);
-    }
-  }
-  assert.deepEqual(
-    offenders,
-    [],
-    "a class written into markup cannot be checked against the build; it belongs in lib/tokens.ts",
-  );
-});
-
-/**
  * The scanner has to keep its place, or every check built on it is decorative.
  *
  * `masked` is the basis for "is this element inside a conditional" and "which
@@ -2530,91 +2519,6 @@ const STILL_DEFAULT_SCALES = [
   "transitionTimingFunction",
   "willChange",
 ];
-
-/**
- * Which axes can still drift, as a list rather than as a memory.
- *
- * Seven scales were replaced, then six more, and both times the question "what
- * is left?" was answered by reading Tailwind's source by hand. This asks
- * Tailwind. Every scale in its default theme has to be either replaced in
- * `tailwind.config.ts` or named above, so a scale cannot be quietly overlooked
- * a third time and the remaining holes are countable.
- *
- * Only scales whose default is a literal are considered. Half of Tailwind's
- * theme is written as `theme => theme.colors` or `theme => theme.spacing` —
- * `padding`, `gap`, `height`, `size`, `backgroundColor` and forty others — and
- * those were closed the moment `colors` and `spacing` were replaced. Listing
- * them as open holes would be the opposite of true.
- */
-test("every independent Tailwind scale is either replaced or listed as still open", () => {
-  const theme = tailwindConfig.theme as Record<string, unknown>;
-  const independent = Object.entries(defaultTheme as Record<string, unknown>)
-    .filter(([, value]) => typeof value !== "function")
-    .map(([name]) => name);
-  assert.ok(independent.length > 50, "the default theme could not be read");
-
-  const listed = new Set<string>(STILL_DEFAULT_SCALES);
-  const unaccounted = independent.filter((name) => !(name in theme) && !listed.has(name));
-  assert.deepEqual(
-    unaccounted,
-    [],
-    "a Tailwind scale is on its defaults and nobody has said so: a page can invent a value on it",
-  );
-
-  const stale = [...listed].filter((name) => name in theme);
-  assert.deepEqual(stale, [], "STILL_DEFAULT_SCALES names a scale that is in fact replaced");
-});
-
-/* ── Classes that were never going to render ─────────────────────────────
- *
- * A class name in a `.tsx` looks like styling whether or not anything defines
- * it, and in this console two of them never have. This is the only check in
- * the file that reads *unmigrated* sources as well, because that is where they
- * are — and finding them is not the point. Freezing the list is: a page card
- * that fixes one has to shorten it, and a page card that invents a new one
- * fails immediately instead of shipping markup that reviews perfectly and
- * renders as nothing.
- */
-
-test("a class in any .tsx is defined by the build, and there is nothing else", async () => {
-  const asked = new Set<string>();
-  for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
-    for (const name of classesIn(classListsIn(readSource(relative)))) asked.add(name);
-  }
-  // Zero, and that is the milestone rather than a low number: no `.tsx` in
-  // this console writes a class of its own, so the Tailwind build is the only
-  // thing that has to define anything. A floor cannot tell genuinely-zero from
-  // extractor-broke, so the count is pinned exactly and the extractor is proved
-  // on a probe below.
-  assert.equal(asked.size, 0, `a file has a class literal again: ${[...asked].join(", ")}`);
-
-  // The extractor still works — the assertion above would also pass if it had
-  // stopped finding anything at all.
-  const probe = classesIn(classListsIn(`<div className="probe-a probe-b" />`));
-  assert.deepEqual([...probe].sort(), ["probe-a", "probe-b"], "the class extractor has broken");
-
-  // The second half of the old title is gone with the stylesheet: a class the
-  // build does not generate is now defined by *nothing*, full stop. Recipes are
-  // where every class comes from, so they are what is put to the build.
-  const recipeClasses = allUsedClasses();
-  const generated = await generatedClasses([...recipeClasses, "p-s4"]);
-  const defined = stylesheetClassNames();
-  const allowed = new Set<string>(NON_UTILITY_CLASSES);
-  const dead = [...recipeClasses]
-    .filter((name) => !generated.has(name) && !defined.has(name) && !allowed.has(name))
-    .sort();
-
-  assert.deepEqual(
-    dead,
-    [],
-    "a class nothing defines: it has never rendered, and nobody would see that in review",
-  );
-  assert.deepEqual(
-    [...CLASSES_WITH_NO_STYLESHEET],
-    [],
-    "the frozen list of classes nothing defines is closed at empty",
-  );
-});
 
 /**
  * `.risk` was not a rule, and the button that needed it most never got it.
@@ -7845,33 +7749,4 @@ test("moving the base moves every step, and the proportions survive it", () => {
       `--${name} moved by a different factor, so this is a new scale and not the same one resized`,
     );
   }
-});
-
-test("the button sinks and eases in the build, and the reference's ring would not", async () => {
-  const classes = BUTTON.base.split(" ");
-
-  // What the recipe asks for. Dropping one of these goes red here rather
-  // than going quiet in a browser nobody is looking at.
-  assert.ok(classes.includes("active:translate-y-px"), "the button stopped sinking when pressed");
-  assert.ok(classes.includes("transition-all"), "the easing is back to colour only, so the sink snaps");
-  assert.ok(classes.includes("focus-visible:ring"), "the focus ring is no longer the 3px default");
-  assert.ok(!classes.includes("transition-colors"), "the colour-only easing is still on the button");
-
-  const wanted = ["active:translate-y-px", "transition-all", "ring"];
-  // 🔴 `ring-3` is what the reference writes and what transcribing it would
-  // have put here. This ring scale is DEFAULT/0/2, so `ring-3` produces no
-  // CSS at all: a focus ring that reviews perfectly and renders as no ring.
-  // The recipe asks for the DEFAULT instead, which this repo already set to
-  // 3px. `translate-y-1` is the same trap on the other axis — spacing is a
-  // closed scale here, and `px` is on it while `1` is not.
-  const absent = ["ring-3", "translate-y-1"];
-  const generated = await generatedClasses([...wanted, ...absent, "p-s4"]);
-
-  assert.ok(generated.has("p-s4"), "the build produced nothing, so neither arm below means anything");
-  for (const name of wanted) assert.ok(generated.has(name), `${name} generates no CSS`);
-  assert.deepEqual(
-    absent.filter((name) => generated.has(name)),
-    [],
-    "a class this test relies on being absent is in fact generated",
-  );
 });

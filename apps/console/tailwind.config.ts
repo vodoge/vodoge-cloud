@@ -156,14 +156,7 @@ export default {
   },
   theme: {
     colors: { ...TAILWIND_COLORS, ...SHADCN_COLORS },
-    spacing: TAILWIND_SPACING,
-    fontSize: TAILWIND_FONT_SIZE,
-    borderRadius: TAILWIND_BORDER_RADIUS,
-    boxShadow: TAILWIND_BOX_SHADOW,
     fontFamily: TAILWIND_FONT_FAMILY,
-    maxWidth: TAILWIND_MAX_WIDTH,
-    lineHeight: TAILWIND_LINE_HEIGHT,
-    letterSpacing: TAILWIND_LETTER_SPACING,
     // 🔴 shadcn 的组件用整条透明度刻度——bg-primary/10、bg-black/80、
     // border-border/40 都在它生成的代码里。这个项目原本把刻度**替换**成了
     // 四档（0/50/90/100），而 Tailwind 对刻度外的值不会报错，只是**静默不
@@ -174,8 +167,6 @@ export default {
     // 数字在不在那四档里。所以这里恢复 Tailwind 的默认刻度，并保留原有的
     // 四档（值相同，是默认刻度的子集）。
     opacity: FULL_OPACITY,
-    zIndex: TAILWIND_Z_INDEX,
-    width: TAILWIND_WIDTH,
     gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
     // The six the operator asked for on 2026-08-25. `flex` and `inset` are the
     // two with a trap in them: `flex` is `flex-1` and not the `flex` display
@@ -189,7 +180,28 @@ export default {
     ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
     inset: TAILWIND_INSET,
     flex: TAILWIND_FLEX,
+    /* 🔴 从「替换」改成「扩展」，因为 shadcn 的组件用的是 Tailwind 的默认刻度。
+     *
+     * 这个项目原本在 `theme:` 里替换掉整条 spacing / width / fontSize /
+     * borderRadius，只留自己的 `s1..s5`。后果是 shadcn 生成的每一个组件都
+     * **没有内边距、没有高度**：`px-2.5` `py-0.5` `h-9` `px-4` `h-8` `w-9`
+     * `gap-2` 在这个配置下**一条 CSS 都编不出来**，按钮会塌成一条线。
+     *
+     * 实测确认过——上面九个类名逐个构建，产出全是 0。
+     *
+     * 放在 extend 之后两套并存：shadcn 的组件拿到它要的默认值，这个项目原有的
+     * `s1..s5`、`text-2xl` 这些也继续有效，调用处一个都不用改。
+     */
     extend: {
+    spacing: TAILWIND_SPACING,
+    fontSize: TAILWIND_FONT_SIZE,
+    borderRadius: TAILWIND_BORDER_RADIUS,
+    maxWidth: TAILWIND_MAX_WIDTH,
+    zIndex: TAILWIND_Z_INDEX,
+    width: TAILWIND_WIDTH,
+    lineHeight: TAILWIND_LINE_HEIGHT,
+    letterSpacing: TAILWIND_LETTER_SPACING,
+    boxShadow: TAILWIND_BOX_SHADOW,
       // Tailwind's defaults for these point at palette entries that no longer
       // exist (`gray.200`, `blue.500`). They fall back to `currentColor`
       // rather than failing, which would make a bare `border` mean something
