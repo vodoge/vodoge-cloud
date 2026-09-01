@@ -240,6 +240,17 @@ type DeleteEsimProfileCommand struct {
 	Iccid     string `json:"iccid"`
 }
 
+type RegisterModemCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Note      *string `json:"note,omitempty"`
+}
+
+type UnregisterModemCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
 type ClaimModemCandidateCommand struct {
 	Kind         string `json:"kind"`
 	CandidateKey string `json:"candidate_key"`

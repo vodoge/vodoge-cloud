@@ -77,6 +77,9 @@ type Request struct {
 	// ClaimModemCandidate
 	CandidateKey string `json:"candidate_key"`
 
+	// RegisterModem
+	Note string `json:"note"`
+
 	// ReadLogs
 	//
 	// LogAfter is a pointer so that resuming from the very first line -- a
@@ -458,6 +461,32 @@ var catalogue = map[string]Spec{
 			// to either trust it or check it -- the first is wrong and the
 			// second makes the field pointless.
 			return map[string]any{"kind": "ClaimModemCandidate", "candidate_key": key}, nil
+		},
+	},
+	"register_modem": {
+		// Mutating: it changes what the agent manages, which is a decision
+		// worth confirming. The edge refuses an IMEI it has not identified, so
+		// the failure mode is a clear refusal rather than a phantom device.
+		Kind: "register_modem", ContractKind: "RegisterModem", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			payload := map[string]any{
+				"kind": "RegisterModem", "modem_imei": request.ModemIMEI,
+			}
+			if note := strings.TrimSpace(request.Note); note != "" {
+				if len(note) > 256 {
+					return nil, ErrInvalid{"note must be 256 characters or fewer"}
+				}
+				payload["note"] = note
+			}
+			return payload, nil
+		},
+	},
+	"unregister_modem": {
+		Kind: "unregister_modem", ContractKind: "UnregisterModem", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			return map[string]any{
+				"kind": "UnregisterModem", "modem_imei": request.ModemIMEI,
+			}, nil
 		},
 	},
 	"read_logs": {

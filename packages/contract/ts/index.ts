@@ -256,6 +256,17 @@ export interface DeleteEsimProfileCommand {
   iccid: Iccid;
 }
 
+export interface RegisterModemCommand {
+  kind: "RegisterModem";
+  modem_imei: Imei;
+  note?: string;
+}
+
+export interface UnregisterModemCommand {
+  kind: "UnregisterModem";
+  modem_imei: Imei;
+}
+
 export interface ClaimModemCandidateCommand {
   kind: "ClaimModemCandidate";
   candidate_key: string;
@@ -554,6 +565,8 @@ export type Command =
   | RefreshModemsCommand |
   | ReadLogsCommand |
   | ClaimModemCandidateCommand |
+  | RegisterModemCommand |
+  | UnregisterModemCommand |
   | RenameEsimProfileCommand |
   | DisableEsimProfileCommand |
   | DeleteEsimProfileCommand |
