@@ -40,80 +40,15 @@ jobs:
         working-directory: apps/console
         run: npm run typecheck
 
-  # The cross-repository token guard.
+  # 跨仓库 token 一致性守卫退休于前端重建（docs/frontend-rebuild/）。
   #
-  # `apps/console/app/globals.css` and the edge panel's
-  # `edge-panel/src/index.html` declare the same token names with the same
-  # values, and the edge copies them by hand — it is one self-contained file
-  # served by a Rust binary with no toolchain on the box, so there is no build
-  # step that could generate it.
+  # 它的前提是「边缘面板逐个手抄云端的 token 名字和值」——lib/tokens.ts 的文件头
+  # 曾写着「在这里改一个 token 名字，等于改了另一个仓库」。两端各自换框架之后这个
+  # 前提不成立：云端用 shadcn 的语义变量（--background/--primary/--secondary…），
+  # 边缘端要换成 Leptos + Thaw UI，不会再有这些名字。
   #
-  # Until SN-T024 nothing ran the comparison. The reason given was that neither
-  # CI can see both repositories — but that was a description of the checkout
-  # configuration, not a limit. Both repositories are public: an unauthenticated
-  # `git ls-remote` against either one returns the same SHA the workstation has.
-  # So this job clones the other tree beside the checkout, with no credential,
-  # no deploy key and no secret.
-  #
-  # The shape is copied from the edge repository's own CI, which already
-  # materialises its read-only vowifi-go mirror at `$GITHUB_WORKSPACE/..` in
-  # production. That is a cross-repository, two-tree check that has been running
-  # for some time; it is the precedent worth copying. `scripts/sync-contract.sh`
-  # is not — it is a writer rather than a checker, and nothing has ever run it
-  # automatically either.
-  #
-  # 🔴 WHY HERE AND NOT IN THE EDGE CI. `scripts/sync-contract.sh` states that
-  # the edge repository must be able to build and run CI without this one beside
-  # it. Making the edge CI clone the cloud would break that written decision.
-  # There is no matching requirement in this direction, so putting the job here
-  # preserves it instead of spending it.
-  #
-  # 🔴 WHAT THIS JOB DOES NOT COVER — read this before trusting it:
-  #   · it fires on activity HERE. A one-sided drift committed to the edge
-  #     repository is not seen until the next push to this one.
-  #   · it reads edge `main`, so a token change that moves both ends has to
-  #     land on the EDGE side first. The other order leaves the cloud PR red
-  #     until the edge merge lands — that is the guard working, not broken.
-  #     Only one direction queues, because only one side checks.
-  #   · it therefore floats: a commit that was green here can go red on re-run
-  #     because edge main moved. The verdict is correct — that is real drift —
-  #     but a historical re-run is not reproducible. ⚠️ Do not "fix" that by
-  #     pinning the edge ref. A pinned copy is the two-snapshots design that was
-  #     rejected, and for a reason that still holds: each repository's author
-  #     can edit their own snapshot, so both CIs go green while the two trees
-  #     really have drifted.
-  # A `schedule:` trigger would shorten the first bullet, but `on:` is shared by
-  # every job in this file, so adding one would also put the postgres
-  # `migrations` job on a timer. Not done here; it is a change to the other four
-  # jobs, not an addition.
-  tokens:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Materialise the edge tree beside this one
-        # Sibling of $GITHUB_WORKSPACE because that is the layout both the
-        # script and the workstation assume. The .git is kept on purpose: the
-        # script prints the HEAD of each tree it read, and a guard that cannot
-        # say which trees it scored is the exact defect this job closes.
-        run: git clone --quiet --depth 1 https://github.com/vodoge/vodoge-edge.git "$GITHUB_WORKSPACE/../vodoge-edge"
-      - name: Design tokens agree at both ends
-        # 🔴 Both roots explicitly. The script has no defaults — it used to
-        # carry two hardcoded workstation paths, which meant it exited 2 on
-        # every runner and, on that one machine, silently scored the main trees
-        # from inside any other directory. No npm install: the script uses only
-        # node builtins.
-        run: node scripts/check-token-parity.cjs "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/../vodoge-edge"
+  # ⚠️ 后果是两端的视觉从此**各走各的**。这是这次重建的直接结果，不是疏忽。
 
-
-  # One lone CR -- a 0x0D that is not followed by 0x0A -- switches end-of-line
-  # normalisation off for the WHOLE file, makes git classify the file as binary,
-  # and reports none of it: `git status` stays clean. Commit 62f4b6dd wrote 7428
-  # changed lines of which only 116 were semantic; the seed was one stray CR after
-  # an array bracket. SN-T025 established the mechanism with a controlled A/B and
-  # SN-T031 turned it into this gate.
   lone-cr:
     runs-on: ubuntu-latest
     steps:
