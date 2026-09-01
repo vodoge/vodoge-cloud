@@ -204,6 +204,12 @@ ssh -p 2222 root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep
 
 ### 2.4 数据库迁移
 
+> 📐 **前端重建的方案在 [`docs/frontend-rebuild/`](frontend-rebuild/)。**
+> 两端各自换成现成的 UI 框架——云端 shadcn/ui，边缘端 Leptos + WASM + Thaw UI。
+> 分阶段、已定的决定、以及各自放弃了什么，都写在那里。边缘端有一组**现在还不
+> 成立的前置条件**（那台机器没有 rustup、没有 wasm32 std、DNS 是坏的），开工前
+> 先看 `edge-leptos.md`。
+
 **当前 schema 版本：53**。迁移文件在 `packages/db/migrations/`，
 命名 `NNNN_name.sql`，四位数字连号。
 
