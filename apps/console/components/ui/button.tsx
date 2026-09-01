@@ -1,3 +1,6 @@
+/* 密度：shadcn 的默认尺寸是给内容型页面调的，对运维控制台偏松。
+ * 这里集中调小一档，而不是在调用处逐个覆盖——那样等于又开始手写。
+ * 判据是设备页在 1080p 上一屏能看到的模组行数不少于改造前。 */
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -31,10 +34,10 @@ const buttonVariants = cva(
           "border border-destructive bg-transparent text-destructive shadow-sm hover:bg-destructive/10",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        default: "h-8 px-3 py-1.5",
+        sm: "h-7 rounded-md px-2.5 text-xs",
+        lg: "h-9 rounded-md px-6",
+        icon: "h-8 w-8",
       },
     },
     defaultVariants: {

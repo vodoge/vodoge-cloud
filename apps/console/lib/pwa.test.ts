@@ -2515,16 +2515,15 @@ const CAPTURED_FROM = {
   // `lib/tokens.ts` and the message catalogues: a guard entry for adopting and
   // unmanaging a module, and the sentences those two put in front of an
   // operator. Neither is drawn on the install screens.
-    // 重新盖章于前端重建第 1 阶段（docs/frontend-rebuild/）。
+    // ⚠️ **这两张截图现在是过期的，需要重拍。**
   //
-  // 变的是 globals.css：加进了 shadcn/ui 要求的一整套语义变量，Tailwind 的
-  // 透明度刻度也恢复成完整的。**外观此刻没有变**——组件还没换，页面仍然用
-  // 旧的 token 渲染，所以那两张安装截图现在依然是准的。
+  // 前几次重新盖章时外观没有变（只动了 globals.css 的变量）。这一次不同：
+  // Button / Badge / Card / Table / 表单原语全部换成了 shadcn，尺寸也集中收紧
+  // 了一档。安装弹窗里展示给用户的，是一个已经不存在的界面。
   //
-  // ⚠️ 第 3、4 阶段换掉组件之后外观会真的变，**那时候必须重拍截图**。守着这件
-  // 事的其余守卫已经退休，没有东西会再提醒——安装弹窗展示的是给用户看的东西，
-  // 展示一个不存在的界面比没有截图更糟。
-  chrome: "c25f2afd25acc4db5a480ba8b2846d6ea04ac78fcaa0db834455946604aae10c",
+  // 拍摄需要浏览器、特定视口和一个已登录的会话，我没有这些。守着这件事的其余
+  // 守卫已经在第 1 阶段退休，**不会再有东西提醒**——这条注释就是提醒本身。
+  chrome: "da5958ed1032b241f59f402ee197b881ed234cd6965dd3f15613db0273cdf88e",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

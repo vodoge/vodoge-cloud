@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { ButtonRow } from "@/components/ui/button-row";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { CONFIRM, assertConsequence } from "@/lib/tokens";
 
@@ -46,14 +54,26 @@ import { CONFIRM, assertConsequence } from "@/lib/tokens";
  */
 
 export type ConfirmLabels = {
-  /** `confirm.question` — "Continue?", asked the same way everywhere. */
   question: string;
-  /** `confirm.proceed` */
   proceed: string;
-  /** `confirm.cancel` */
   cancel: string;
 };
 
+/**
+ * 确认对话框，内部换成 Radix 的 AlertDialog。
+ *
+ * props 一个都没变，11 处调用和盯着它的四条安全测试都不用动。变的是实现：
+ * 焦点陷阱、Escape、滚动锁、aria 角色、以及**打开时焦点落在取消上**，全部由
+ * Radix 提供，不再是这里手写的两个 useEffect。
+ *
+ * 🔴 焦点落在取消上是这个组件存在的理由之一，原注释说得很清楚：以危险按钮
+ * 获得焦点的方式打开对话框，**一次误按回车就等于执行了那条命令**。Radix 的
+ * AlertDialog 默认把焦点给 Cancel，所以这个属性是被换过来的实现保住的，不是
+ * 碰巧还在。
+ *
+ * `assertConsequence` 保留。它拦的是「弹了个框却没说会发生什么」，那是内容
+ * 问题，换任何组件都解决不了。
+ */
 export function ConfirmDialog({
   open,
   title,
@@ -66,62 +86,42 @@ export function ConfirmDialog({
   className,
 }: {
   open: boolean;
-  /** What is about to happen, named: the command, the instance, the number. */
   title: string;
-  /**
-   * What it will do — required, and a statement rather than a question.
-   *
-   * Name the object, say what changes, and say whether it can be undone. The
-   * two worked examples are `device.confirmUsbnet` and `esim.dlWarn`.
-   */
   consequence: string;
   labels: ConfirmLabels;
-  /** Overrides `labels.proceed` where the verb is worth repeating: "Send", "Delete". */
   confirmLabel?: string;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   className?: string;
 }) {
-  const cancelRef = useRef<HTMLButtonElement>(null);
-
-  // Focus lands on the way out, not on the way through. A dialog that opens
-  // with the destructive button focused turns a stray Return into the command.
-  useEffect(() => {
-    if (open) cancelRef.current?.focus();
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
-
-  if (!open) return null;
-
-  // Not in an effect and not behind a flag: the check has to run on the render
-  // that shows the dialog, which is the only render where being wrong matters.
-  const stated = assertConsequence(consequence);
-
+  assertConsequence(consequence);
   return (
-    <div className={cn(CONFIRM.overlay, className)} role="dialog" aria-modal="true">
-      <div className={CONFIRM.scrim} onClick={onCancel} aria-hidden="true" />
-      <div className={CONFIRM.panel}>
-        <h2 className={CONFIRM.title}>{title}</h2>
-        <p className={CONFIRM.consequence}>{stated}</p>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        // Radix 在按 Escape 和点遮罩时都走这里。两者都是「取消」，和原来手写的
+        // Escape 监听同义。
+        if (!next) onCancel();
+      }}
+    >
+      <AlertDialogContent className={cn(CONFIRM.panel, className)}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{consequence}</AlertDialogDescription>
+        </AlertDialogHeader>
         <p className={CONFIRM.question}>{labels.question}</p>
-        <ButtonRow className={CONFIRM.actions}>
-          <Button ref={cancelRef} variant="outline" onClick={onCancel} disabled={busy}>
-            {labels.cancel}
-          </Button>
-          <Button variant="destructive" onClick={onConfirm} disabled={busy}>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>{labels.cancel}</AlertDialogCancel>
+          <AlertDialogAction
+            className={buttonVariants({ variant: "risk" })}
+            disabled={busy}
+            onClick={onConfirm}
+          >
             {confirmLabel ?? labels.proceed}
-          </Button>
-        </ButtonRow>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
