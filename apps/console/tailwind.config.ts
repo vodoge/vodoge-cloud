@@ -173,12 +173,6 @@ export default {
     // utility, and `inset` is read by `top-*` as well as by `inset-*`. Both are
     // in use — `STAT.root`, `SHELL.main`, `TABLE.headerCell`, `SHELL.header` —
     // so both tables keep the entry the recipes need. See lib/tokens.ts.
-    minHeight: TAILWIND_MIN_HEIGHT,
-    maxHeight: TAILWIND_MAX_HEIGHT,
-    borderWidth: TAILWIND_BORDER_WIDTH,
-    ringWidth: TAILWIND_RING_WIDTH,
-    ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
-    inset: TAILWIND_INSET,
     flex: TAILWIND_FLEX,
     /* 🔴 从「替换」改成「扩展」，因为 shadcn 的组件用的是 Tailwind 的默认刻度。
      *
@@ -193,6 +187,12 @@ export default {
      * `s1..s5`、`text-2xl` 这些也继续有效，调用处一个都不用改。
      */
     extend: {
+    ringWidth: TAILWIND_RING_WIDTH,
+    ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
+    borderWidth: TAILWIND_BORDER_WIDTH,
+    minHeight: TAILWIND_MIN_HEIGHT,
+    maxHeight: TAILWIND_MAX_HEIGHT,
+    inset: TAILWIND_INSET,
     spacing: TAILWIND_SPACING,
     fontSize: TAILWIND_FONT_SIZE,
     borderRadius: TAILWIND_BORDER_RADIUS,

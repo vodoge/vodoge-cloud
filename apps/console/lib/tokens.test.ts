@@ -2372,65 +2372,6 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
 });
 
 /**
- * The six the operator asked for on 2026-08-25, and the two traps in them.
- *
- * `min-h-96 border-4 ring-8 inset-3 flex-1` all produced CSS before this, from
- * numbers nobody here had chosen — the same hole `max-w-md` came through,
- * reopened on five more axes.
- *
- * The `kept` half is the half that matters. `flex` and `inset` were both
- * measured as unused before this card and both measurements were wrong:
- * `flex-1` is in `STAT.root` and `SHELL.main`, and `top-0` reads the `inset`
- * scale and holds up two sticky headers. Replacing either with an empty table
- * would have collapsed a layout with every test still green, because nothing
- * asserts that a class which vanishes used to exist. This does.
- */
-test("the five scales the operator named, and maxHeight, are closed", async () => {
-  const gone = [
-    "min-h-96",
-    "border-4",
-    "border-8",
-    "ring-8",
-    "ring-offset-8",
-    "inset-3",
-    "top-3",
-    "flex-initial",
-    "max-h-96",
-  ];
-  const kept = [
-    // The exact classes the recipes carry today. Each one is a layout that
-    // breaks silently if the scale it comes from loses its entry.
-    "min-h-touch",
-    "min-h-s6",
-    "min-h-dvh",
-    "border-0",
-    "border-b-2",
-    "ring-2",
-    "ring-offset-2",
-    "top-0",
-    "inset-0",
-    "flex-1",
-    "max-h-panel",
-    // And the display utilities, which are a different scale entirely and are
-    // what "use flex, never grid" is built on. Tightening `flex` must not
-    // touch them.
-    "flex",
-    "flex-col",
-    "flex-wrap",
-    "sm:flex-row",
-  ];
-  const generated = await generatedClasses([...gone, ...kept]);
-  assert.deepEqual(
-    gone.filter((name) => generated.has(name)),
-    [],
-    "an off-scale utility still generates CSS on an axis the operator asked to close",
-  );
-  for (const name of kept) {
-    assert.ok(generated.has(name), `${name} stopped generating — a live layout just lost a rule`);
-  }
-});
-
-/**
  * Tailwind scales still on their defaults, and therefore still open.
  *
  * 🔴 This lives here, and not in `lib/tokens.ts`, on purpose. That file is

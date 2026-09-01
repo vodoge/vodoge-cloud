@@ -1,4 +1,5 @@
 import { cn } from "@/lib/cn";
+import { Input as ShadcnInput } from "@/components/ui/input";
 import { FORM } from "@/lib/tokens";
 
 /**
@@ -88,11 +89,19 @@ export function Checkbox({
   className,
   ...props
 }: Omit<React.InputHTMLAttributes<HTMLInputElement>, "type">) {
+  // 保持原生 input[type=checkbox]。shadcn 的 Checkbox 是 Radix 的按钮，不是
+  // 真正的 input——它不会随 form 提交，而这两处调用都在受控表单里。
   return <input type="checkbox" className={cn(FORM.checkbox, className)} {...props} />;
 }
 
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn(FORM.input, className)} {...props} />;
+/**
+ * 输入框，委托给 shadcn 的。
+ *
+ * 保留这个名字而不是让 33 处调用改 import：两者 props 完全一致，改名只会
+ * 制造一次没有收益的大规模改动。
+ */
+export function Input(props: React.ComponentPropsWithRef<typeof ShadcnInput>) {
+  return <ShadcnInput {...props} />;
 }
 
 /**
@@ -109,7 +118,13 @@ export function Select({
 }: React.SelectHTMLAttributes<HTMLSelectElement> & { compact?: boolean }) {
   return (
     <select
-      className={cn(FORM.select, compact ? FORM.selectCompact : undefined, className)}
+      className={cn(
+        // shadcn 输入框的外观，逐字取自 components/ui/input.tsx，让原生
+        // select 和它旁边的 input 看起来是一套。
+        "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+        compact ? FORM.selectCompact : undefined,
+        className,
+      )}
       {...props}
     />
   );
