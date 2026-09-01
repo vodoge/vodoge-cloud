@@ -5,8 +5,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import {
@@ -96,18 +96,18 @@ export default async function ProxyPage() {
             <CardEmpty title={t("proxy.noTraffic", locale)} />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("proxy.colHour", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("proxy.colName", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("proxy.colUp", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("proxy.colDown", locale)}</TableHeaderCell>
+                  <TableHead>{t("proxy.colHour", locale)}</TableHead>
+                  <TableHead>{t("proxy.colName", locale)}</TableHead>
+                  <TableHead>{t("proxy.colUp", locale)}</TableHead>
+                  <TableHead>{t("proxy.colDown", locale)}</TableHead>
                   {/* The count is the least of the five: an operator reading
                       this on a phone is asking how much went out, not how
                       many times. */}
-                  <TableHeaderCell secondary>{t("proxy.colConns", locale)}</TableHeaderCell>
+                  <TableHead secondary>{t("proxy.colConns", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {traffic.map((point) => (
                   <TableRow key={`${point.instanceId}-${point.hour}`}>

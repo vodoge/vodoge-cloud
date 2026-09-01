@@ -4,8 +4,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { auditScreen, loadAudit } from "@/lib/catalog";
@@ -67,13 +67,13 @@ export default async function AuditPage() {
           />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               <TableRow head>
-                <TableHeaderCell>{t("audit.colActor", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("audit.colAction", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("audit.colTarget", locale)}</TableHeaderCell>
+                <TableHead>{t("audit.colActor", locale)}</TableHead>
+                <TableHead>{t("audit.colAction", locale)}</TableHead>
+                <TableHead>{t("audit.colTarget", locale)}</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {screen.rows.map((event, index) => (
                 <TableRow key={`${event.action}:${index}`}>

@@ -24,8 +24,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { Tab, TabList, TabPanel } from "@/components/ui/tabs";
@@ -280,37 +280,37 @@ function OverviewPanel({
           <CardEmpty title={t("device.noModems", locale)} />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               <TableRow head>
-                <TableHeaderCell>{t("modems.colImei", locale)}</TableHeaderCell>
+                <TableHead>{t("modems.colImei", locale)}</TableHead>
                 {/* The ICCID is the SIM's identity, not the module's, and the
                     controls on this page all address a module by IMEI. It is
                     the widest value in the table at twenty characters, so it is
                     the one that goes on a phone. */}
-                <TableHeaderCell secondary>{t("modems.colIccid", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("modems.colNetwork", locale)}</TableHeaderCell>
+                <TableHead secondary>{t("modems.colIccid", locale)}</TableHead>
+                <TableHead>{t("modems.colNetwork", locale)}</TableHead>
                 {/* Read by the edge on every identity probe and, until now,
                     discarded with the family it was used to detect. Answering
                     "which build is on that stick" needed a diagnostic command
                     and somebody to read the reply. */}
-                <TableHeaderCell secondary>{t("modems.colFirmware", locale)}</TableHeaderCell>
+                <TableHead secondary>{t("modems.colFirmware", locale)}</TableHead>
                 {/* Often blank for a real reason: plenty of operators never
                     write a number to the card. */}
-                <TableHeaderCell secondary>{t("modems.colMsisdn", locale)}</TableHeaderCell>
+                <TableHead secondary>{t("modems.colMsisdn", locale)}</TableHead>
                 {/* Physical position on the edge machine. The cloud cannot see
                     that host's /dev, and this is the first thing asked for
                     when a module stops answering. */}
-                <TableHeaderCell secondary>{t("modems.colPort", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary title={t("modems.apnHint", locale)}>
+                <TableHead secondary>{t("modems.colPort", locale)}</TableHead>
+                <TableHead secondary title={t("modems.apnHint", locale)}>
                   {t("modems.colApn", locale)}
-                </TableHeaderCell>
+                </TableHead>
                 {/* The matrix key this module resolves to, which is what a
                     ledger rule is written against and cannot be read off an
                     operator name. */}
-                <TableHeaderCell secondary>{t("modems.colCapability", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("modems.colProxy", locale)}</TableHeaderCell>
+                <TableHead secondary>{t("modems.colCapability", locale)}</TableHead>
+                <TableHead secondary>{t("modems.colProxy", locale)}</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {modems.map((modem) => (
                 <TableRow key={modem.id}>
@@ -523,15 +523,15 @@ function DiagnosticsPanel({
           <CardEmpty title={t("device.noModems", locale)} />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               <TableRow head>
-                <TableHeaderCell>{t("modems.colImei", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("modems.colSignal", locale)}</TableHeaderCell>
-                <TableHeaderCell title={t("modems.qualityHint", locale)}>
+                <TableHead>{t("modems.colImei", locale)}</TableHead>
+                <TableHead>{t("modems.colSignal", locale)}</TableHead>
+                <TableHead title={t("modems.qualityHint", locale)}>
                   {t("modems.colQuality", locale)}
-                </TableHeaderCell>
+                </TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {modems.map((modem) => (
                 <TableRow key={modem.id}>

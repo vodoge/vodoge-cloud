@@ -8,8 +8,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import type { JournalEvent } from "@/lib/catalog";
@@ -127,17 +127,17 @@ export function Journal({
       </div>
 
       <Table>
-        <TableHead>
+        <TableHeader>
           <TableRow head>
-            <TableHeaderCell>{labels.colAt}</TableHeaderCell>
-            <TableHeaderCell>{labels.colKind}</TableHeaderCell>
-            <TableHeaderCell secondary>{labels.colSeq}</TableHeaderCell>
+            <TableHead>{labels.colAt}</TableHead>
+            <TableHead>{labels.colKind}</TableHead>
+            <TableHead secondary>{labels.colSeq}</TableHead>
             {/* The toggle column has no heading, as it had none before. The
                 cell itself stays, so the header row still has one cell per
                 column. */}
-            <TableHeaderCell />
+            <TableHead />
           </TableRow>
-        </TableHead>
+        </TableHeader>
         <TableBody>
           {shown.map((event) => {
             const key = rowKey(event);

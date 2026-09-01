@@ -1,121 +1,139 @@
-import { cn } from "@/lib/cn";
-import { TABLE, tableCellClass } from "@/lib/tokens";
+import * as React from "react"
 
-/**
- * A table that scrolls sideways inside its card rather than stretching the
- * page. On a phone a fleet table is always wider than the screen; the choice
- * is where the overflow goes, and a card that scrolls keeps the page's own
- * layout intact.
- *
- * The row, not the cell, carries the horizontal rule. With
- * `border-collapse: collapse` a row border renders, and "no rule under the
- * last row" is then a plain `last:` variant instead of something that has to
- * reach every cell of the last row.
- *
- * Class strings live in `lib/tokens.ts`. See the note in `button.tsx`.
- */
+import { cn } from "@/lib/cn"
+import { TABLE, tableCellClass } from "@/lib/tokens"
 
-export function Table({
-  className,
-  wrapperClassName,
-  ...props
-}: React.TableHTMLAttributes<HTMLTableElement> & { wrapperClassName?: string }) {
-  return (
-    <div className={cn(TABLE.wrapper, wrapperClassName)}>
-      <table className={cn(TABLE.table, className)} {...props} />
-    </div>
-  );
-}
-
-export function TableHead({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn(TABLE.head, className)} {...props} />;
-}
-
-export function TableBody({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={cn(TABLE.body, className)} {...props} />;
-}
-
-/** `head` drops the rule and the hover tint: a header row is not a data row. */
-export function TableRow({
-  head,
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLTableRowElement> & { head?: boolean }) {
-  return <tr className={cn(head ? TABLE.headRow : TABLE.row, className)} {...props} />;
-}
-
-export function TableHeaderCell({
-  secondary,
-  className,
-  scope = "col",
-  ...props
-}: React.ThHTMLAttributes<HTMLTableCellElement> & { secondary?: boolean }) {
-  return (
-    <th
-      scope={scope}
-      className={cn(TABLE.headerCell, secondary ? TABLE.cellSecondary : undefined, className)}
+const Table = React.forwardRef<
+  HTMLTableElement,
+  React.HTMLAttributes<HTMLTableElement> & { wrapperClassName?: string }
+>(({ className, wrapperClassName, ...props }, ref) => (
+  // `wrapperClassName` 是这个项目加的：包裹层负责横向滚动，而有几张表需要
+  // 给它设最大高度做纵向滚动。shadcn 的版本把这层写死，调用方够不着。
+  <div className={cn("relative w-full overflow-auto", wrapperClassName)}>
+    <table
+      ref={ref}
+      className={cn("w-full caption-bottom text-sm", className)}
       {...props}
     />
-  );
-}
+  </div>
+))
+Table.displayName = "Table"
 
-/**
- * `mono` for anything an operator will compare character by character — an
- * IMEI, an id, an address. `faint` for a value that is context rather than the
- * answer to the question the row is being read for.
+const TableHeader = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>(({ className, ...props }, ref) => (
+  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
+))
+TableHeader.displayName = "TableHeader"
+
+const TableBody = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>(({ className, ...props }, ref) => (
+  <tbody
+    ref={ref}
+    className={cn("[&_tr:last-child]:border-0", className)}
+    {...props}
+  />
+))
+TableBody.displayName = "TableBody"
+
+const TableFooter = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>(({ className, ...props }, ref) => (
+  <tfoot
+    ref={ref}
+    className={cn(
+      "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
+      className
+    )}
+    {...props}
+  />
+))
+TableFooter.displayName = "TableFooter"
+
+const TableRow = React.forwardRef<
+  HTMLTableRowElement,
+  // `head` 标出表头行。这个项目的表头行和数据行的边框、底色都不同，而
+  // shadcn 只有一种行。
+  React.HTMLAttributes<HTMLTableRowElement> & { head?: boolean }
+>(({ className, head, ...props }, ref) => (
+  <tr
+    ref={ref}
+    className={cn(
+      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+      head && TABLE.headRow,
+      className
+    )}
+    {...props}
+  />
+))
+TableRow.displayName = "TableRow"
+
+const TableHead = React.forwardRef<
+  HTMLTableCellElement,
+  React.ThHTMLAttributes<HTMLTableCellElement> & { secondary?: boolean }
+>(({ className, secondary, ...props }, ref) => (
+  <th
+    ref={ref}
+    className={cn(
+      "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+      secondary && TABLE.cellSecondary,
+      className
+    )}
+    {...props}
+  />
+))
+TableHead.displayName = "TableHead"
+
+const TableCell = React.forwardRef<
+  HTMLTableCellElement,
+  /* 内容类型修饰，shadcn 没有这些。它们不是装饰：
+   *   mono      标识符要等宽，IMEI 和 ICCID 是一位一位对着读的
+   *   faint     次要信息压暗，不和主值抢
+   *   secondary 手机上收起这一列
+   *   wrap/nowrap  少数几列需要覆盖默认的换行行为 */
+  React.TdHTMLAttributes<HTMLTableCellElement> & {
+    mono?: boolean
+    faint?: boolean
+    secondary?: boolean
+    wrap?: boolean
+    nowrap?: boolean
+  }
+>(({ className, mono, faint, secondary, wrap, nowrap, ...props }, ref) => (
+  <td
+    ref={ref}
+    className={cn(
+      "p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+      tableCellClass({ mono, faint }),
+      secondary && TABLE.cellSecondary,
+      wrap && TABLE.cellWrap,
+      nowrap && TABLE.cellNowrap,
+      className
+    )}
+    {...props}
+  />
+))
+TableCell.displayName = "TableCell"
+
+const TableCaption = React.forwardRef<
+  HTMLTableCaptionElement,
+  React.HTMLAttributes<HTMLTableCaptionElement>
+>(({ className, ...props }, ref) => (
+  <caption
+    ref={ref}
+    className={cn("mt-4 text-sm text-muted-foreground", className)}
+    {...props}
+  />
+))
+TableCaption.displayName = "TableCaption"
+
+/* ── 这个产品自己的组合件 ────────────────────────────────────────────
+ *
+ * `SpecTable` / `SpecRow` 是「名称—值」两列的规格表，shadcn 没有对应物。
  */
-export function TableCell({
-  mono,
-  faint,
-  secondary,
-  wrap,
-  nowrap,
-  className,
-  ...props
-}: React.TdHTMLAttributes<HTMLTableCellElement> & {
-  mono?: boolean;
-  faint?: boolean;
-  /** Drops off the phone. Put it on the header cell of the same column too. */
-  secondary?: boolean;
-  /**
-   * For a column with no upper bound on its width — an SMS body, a pasted
-   * name, a payload. It lets the cell be narrower than its longest unbroken
-   * run, which is the only thing that stops one long URL from making the whole
-   * table three times the width of the phone. See `TABLE.cellWrap`.
-   *
-   * Only on a column that dominates its row: it also lets the column be
-   * squeezed *to* nothing when its neighbours want the space.
-   */
-  wrap?: boolean;
-  /**
-   * For a cell holding one atomic reading — a name, a cadence, a timestamp.
-   *
-   * Needed rather than decorative on any label that might be Chinese: CJK
-   * breaks between any two characters, so a name's min-content width is one
-   * character and a crowded table will lay it out that way. See
-   * `TABLE.cellNowrap`.
-   */
-  nowrap?: boolean;
-}) {
-  return (
-    <td
-      className={cn(
-        tableCellClass({ mono, faint }),
-        secondary ? TABLE.cellSecondary : undefined,
-        wrap ? TABLE.cellWrap : undefined,
-        nowrap ? TABLE.cellNowrap : undefined,
-        className,
-      )}
-      {...props}
-    />
-  );
-}
 
 /**
  * The other table shape: a list of name/reading pairs.
@@ -172,4 +190,15 @@ export function SpecRow({
       <td className={cn(TABLE.specDetail, mono ? TABLE.cellMono : undefined)}>{children}</td>
     </tr>
   );
+}
+
+export {
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableCaption,
 }

@@ -7,8 +7,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import {
@@ -190,13 +190,13 @@ export default async function InboxPage() {
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("inbox.contactName", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colPeer", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colUnread", locale)}</TableHeaderCell>
+                  <TableHead>{t("inbox.contactName", locale)}</TableHead>
+                  <TableHead>{t("inbox.colPeer", locale)}</TableHead>
+                  <TableHead>{t("inbox.colUnread", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {contacts.map((contact) => {
                   const thread = threads.find((row) => row.peer === contact.peer);
@@ -235,18 +235,18 @@ export default async function InboxPage() {
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("inbox.colPeer", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colLast", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.messages", locale)}</TableHeaderCell>
+                  <TableHead>{t("inbox.colPeer", locale)}</TableHead>
+                  <TableHead>{t("inbox.colLast", locale)}</TableHead>
+                  <TableHead>{t("inbox.messages", locale)}</TableHead>
                   {/* The timestamp is context rather than the answer, and it
                       is the widest fixed column. It drops on a phone; the
                       three that say who wrote, what they said and whether it
                       is waiting on you do not. */}
-                  <TableHeaderCell secondary>{t("inbox.colReceived", locale)}</TableHeaderCell>
+                  <TableHead secondary>{t("inbox.colReceived", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {threads.map((thread) => (
                   <TableRow key={thread.peer}>

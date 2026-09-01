@@ -14,8 +14,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import {
@@ -417,24 +417,24 @@ export function EsimPanel({
                   {t("esim.colEid", locale)} <span className={PAGE.mono}>{eid}</span>
                 </h3>
                 <Table>
-                  <TableHead>
+                  <TableHeader>
                     <TableRow head>
-                      <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
-                      <TableHeaderCell>{t("esim.colNickname", locale)}</TableHeaderCell>
-                      <TableHeaderCell>{t("esim.colState", locale)}</TableHeaderCell>
+                      <TableHead>{t("esim.colIccid", locale)}</TableHead>
+                      <TableHead>{t("esim.colNickname", locale)}</TableHead>
+                      <TableHead>{t("esim.colState", locale)}</TableHead>
                       {/* Two columns of provenance. Useful when a switch is
                           being argued about, and not what the row is read for
                           on a phone. */}
-                      <TableHeaderCell secondary>
+                      <TableHead secondary>
                         {t("esim.colCollected", locale)}
-                      </TableHeaderCell>
-                      <TableHeaderCell secondary>{t("esim.colSource", locale)}</TableHeaderCell>
+                      </TableHead>
+                      <TableHead secondary>{t("esim.colSource", locale)}</TableHead>
                       {/* Header and cell together. A column kept for actions
                           nobody has leaves the table one heading wider than
                           it has values for. */}
-                      {writable ? <TableHeaderCell /> : null}
+                      {writable ? <TableHead /> : null}
                     </TableRow>
-                  </TableHead>
+                  </TableHeader>
                   <TableBody>
                     {rows.map((profile) => (
                       <TableRow key={profile.iccid}>
@@ -666,20 +666,20 @@ export function EsimPanel({
                   <p className={PAGE.note}>{t("esim.noNotifications", locale)}</p>
                 ) : (
                   <Table>
-                    <TableHead>
+                    <TableHeader>
                       <TableRow head>
-                        <TableHeaderCell>{t("esim.colSeq", locale)}</TableHeaderCell>
-                        <TableHeaderCell>{t("esim.colOperation", locale)}</TableHeaderCell>
+                        <TableHead>{t("esim.colSeq", locale)}</TableHead>
+                        <TableHead>{t("esim.colOperation", locale)}</TableHead>
                         {/* An SM-DP+ host name is the widest value in this
                             table and the one a phone can do without: the row
                             is read for which sequence number is outstanding. */}
-                        <TableHeaderCell secondary>
+                        <TableHead secondary>
                           {t("esim.colAddress", locale)}
-                        </TableHeaderCell>
-                        <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
-                        {writable ? <TableHeaderCell /> : null}
+                        </TableHead>
+                        <TableHead>{t("esim.colIccid", locale)}</TableHead>
+                        {writable ? <TableHead /> : null}
                       </TableRow>
-                    </TableHead>
+                    </TableHeader>
                     <TableBody>
                       {info.notifications.map((notification) => (
                         <TableRow key={`${info.eid}-${notification.sequenceNumber}`}>
@@ -1210,13 +1210,13 @@ function DownloadSection({
         <p className={PAGE.note}>—</p>
       ) : (
         <Table>
-          <TableHead>
+          <TableHeader>
             <TableRow head>
-              <TableHeaderCell>{t("esim.colIccid", locale)}</TableHeaderCell>
-              <TableHeaderCell>{t("esim.colNickname", locale)}</TableHeaderCell>
-              <TableHeaderCell>{t("esim.colState", locale)}</TableHeaderCell>
+              <TableHead>{t("esim.colIccid", locale)}</TableHead>
+              <TableHead>{t("esim.colNickname", locale)}</TableHead>
+              <TableHead>{t("esim.colState", locale)}</TableHead>
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             {after.profiles.map((profile) => (
               <TableRow key={profile.iccid}>

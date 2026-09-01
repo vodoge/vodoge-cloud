@@ -5,8 +5,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { fetchRules, type RuleRow } from "@/lib/catalog";
@@ -71,13 +71,13 @@ export default async function RulesPage() {
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("rules.colName", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>{t("rules.colId", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("rules.colEnabled", locale)}</TableHeaderCell>
+                  <TableHead>{t("rules.colName", locale)}</TableHead>
+                  <TableHead secondary>{t("rules.colId", locale)}</TableHead>
+                  <TableHead>{t("rules.colEnabled", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {rules.map((rule) => (
                   <TableRow key={rule.id}>

@@ -14,8 +14,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { fetchDevices, fetchMessages, fetchSessions, type DeviceRow } from "@/lib/catalog";
@@ -117,14 +117,14 @@ export default async function OverviewPage() {
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("inbox.colPeer", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colBody", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colBearer", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("inbox.colReceived", locale)}</TableHeaderCell>
+                  <TableHead>{t("inbox.colPeer", locale)}</TableHead>
+                  <TableHead>{t("inbox.colBody", locale)}</TableHead>
+                  <TableHead>{t("inbox.colBearer", locale)}</TableHead>
+                  <TableHead>{t("inbox.colReceived", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {recent.map((message) => (
                   <TableRow key={message.id}>

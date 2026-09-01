@@ -8,8 +8,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { CardPolicies } from "@/components/card-policies";
@@ -155,14 +155,14 @@ export default async function DevicesPage({
             <CardEmpty title={t("alerts.none", locale)} />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("alerts.colLevel", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("alerts.colCode", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>{t("alerts.colMessage", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>{t("alerts.colWhen", locale)}</TableHeaderCell>
+                  <TableHead>{t("alerts.colLevel", locale)}</TableHead>
+                  <TableHead>{t("alerts.colCode", locale)}</TableHead>
+                  <TableHead secondary>{t("alerts.colMessage", locale)}</TableHead>
+                  <TableHead secondary>{t("alerts.colWhen", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {alerts.map((alert) => (
                   <TableRow key={alert.id}>
@@ -206,25 +206,25 @@ export default async function DevicesPage({
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("devices.colName", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>{t("devices.colId", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("devices.colState", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>
+                  <TableHead>{t("devices.colName", locale)}</TableHead>
+                  <TableHead secondary>{t("devices.colId", locale)}</TableHead>
+                  <TableHead>{t("devices.colState", locale)}</TableHead>
+                  <TableHead secondary>
                     {t("devices.colVersionShort", locale)}
-                  </TableHeaderCell>
-                  <TableHeaderCell>{t("devices.colQueue", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>
+                  </TableHead>
+                  <TableHead>{t("devices.colQueue", locale)}</TableHead>
+                  <TableHead secondary>
                     {t("devices.colPublicIp", locale)}
-                  </TableHeaderCell>
-                  <TableHeaderCell secondary>{t("devices.colHostCpu", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>
+                  </TableHead>
+                  <TableHead secondary>{t("devices.colHostCpu", locale)}</TableHead>
+                  <TableHead secondary>
                     {t("devices.colHostMemory", locale)}
-                  </TableHeaderCell>
-                  <TableHeaderCell>{t("devices.colLastSeen", locale)}</TableHeaderCell>
+                  </TableHead>
+                  <TableHead>{t("devices.colLastSeen", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {devices.map((device) => (
                   <TableRow key={device.id}>
@@ -313,24 +313,24 @@ export default async function DevicesPage({
             />
           ) : (
             <Table>
-              <TableHead>
+              <TableHeader>
                 <TableRow head>
-                  <TableHeaderCell>{t("modems.colImei", locale)}</TableHeaderCell>
+                  <TableHead>{t("modems.colImei", locale)}</TableHead>
                   {/* The widest value in the console: nineteen or twenty
                       digits of monospace, and the identity of the
                       subscription rather than of the module the row is
                       about. */}
-                  <TableHeaderCell secondary>{t("modems.colIccid", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("modems.colNetwork", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("modems.colState", locale)}</TableHeaderCell>
-                  <TableHeaderCell>{t("modems.colSignal", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary title={t("modems.qualityHint", locale)}>
+                  <TableHead secondary>{t("modems.colIccid", locale)}</TableHead>
+                  <TableHead>{t("modems.colNetwork", locale)}</TableHead>
+                  <TableHead>{t("modems.colState", locale)}</TableHead>
+                  <TableHead>{t("modems.colSignal", locale)}</TableHead>
+                  <TableHead secondary title={t("modems.qualityHint", locale)}>
                     {t("modems.colQuality", locale)}
-                  </TableHeaderCell>
-                  <TableHeaderCell secondary>{t("modems.colSms", locale)}</TableHeaderCell>
-                  <TableHeaderCell secondary>{t("modems.colSeen", locale)}</TableHeaderCell>
+                  </TableHead>
+                  <TableHead secondary>{t("modems.colSms", locale)}</TableHead>
+                  <TableHead secondary>{t("modems.colSeen", locale)}</TableHead>
                 </TableRow>
-              </TableHead>
+              </TableHeader>
               <TableBody>
                 {orderModems(matchingModems(modems, needle), order).map((modem) => (
                   <TableRow key={modem.id}>

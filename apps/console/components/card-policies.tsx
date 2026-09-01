@@ -10,8 +10,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import type { CardPolicyRow } from "@/lib/catalog";
@@ -225,27 +225,27 @@ export function CardPolicies({
         <p className={FORM.hint}>{labels.none}</p>
       ) : (
         <Table>
-          <TableHead>
+          <TableHeader>
             <TableRow head>
-              <TableHeaderCell>{labels.colIccid}</TableHeaderCell>
-              <TableHeaderCell>{labels.colCellular}</TableHeaderCell>
-              <TableHeaderCell>{labels.colVertical}</TableHeaderCell>
+              <TableHead>{labels.colIccid}</TableHead>
+              <TableHead>{labels.colCellular}</TableHead>
+              <TableHead>{labels.colVertical}</TableHead>
               {/* The only reading in this table, and therefore the only column
                   that may drop off a phone. The other four each hold a control,
                   and hiding a control is not deprioritising context. */}
-              <TableHeaderCell secondary>{labels.colApn}</TableHeaderCell>
+              <TableHead secondary>{labels.colApn}</TableHead>
               {/* The only layer that separates two cards on one network in
                   one module. Secondary because it is four controls wide and
                   the phone has no room for it beside the identity. */}
-              <TableHeaderCell secondary title={labels.capabilityHint}>
+              <TableHead secondary title={labels.capabilityHint}>
                 {labels.colCapability}
-              </TableHeaderCell>
+              </TableHead>
               {/* The actions column goes as a column, header and cells
                   together. Leaving the header behind would leave the table a
                   column wider than it has values for. */}
-              {writable ? <TableHeaderCell /> : null}
+              {writable ? <TableHead /> : null}
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             {policies.map((policy) => (
               <TableRow key={policy.iccid}>

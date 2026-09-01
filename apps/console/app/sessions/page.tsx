@@ -4,8 +4,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { fetchSessions, type SessionRow } from "@/lib/catalog";
@@ -63,14 +63,14 @@ export default async function SessionsPage() {
           />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               <TableRow head>
-                <TableHeaderCell>{t("sessions.colPeer", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("sessions.colCount", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("sessions.colLastBody", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("sessions.colLastReceived", locale)}</TableHeaderCell>
+                <TableHead>{t("sessions.colPeer", locale)}</TableHead>
+                <TableHead secondary>{t("sessions.colCount", locale)}</TableHead>
+                <TableHead>{t("sessions.colLastBody", locale)}</TableHead>
+                <TableHead>{t("sessions.colLastReceived", locale)}</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {sessions.map((row) => (
                 <TableRow key={`${row.deviceId}:${row.peer}`}>

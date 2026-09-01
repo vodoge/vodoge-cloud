@@ -12,8 +12,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import type { CountryRuleRow, ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
@@ -281,16 +281,16 @@ function UpstreamList({
         <p className={PAGE.note}>{labels.noUpstreams}</p>
       ) : (
         <Table>
-          <TableHead>
+          <TableHeader>
             <TableRow head>
-              <TableHeaderCell>{labels.colName}</TableHeaderCell>
-              <TableHeaderCell>{labels.colAddress}</TableHeaderCell>
+              <TableHead>{labels.colName}</TableHead>
+              <TableHead>{labels.colAddress}</TableHead>
               {/* Diagnostics rather than identity: the column an operator on a
                   phone can do without, and the one that carries a sentence. */}
-              <TableHeaderCell secondary>{labels.colProbe}</TableHeaderCell>
-              <TableHeaderCell />
+              <TableHead secondary>{labels.colProbe}</TableHead>
+              <TableHead />
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             {upstreams.map((upstream) => (
               <TableRow key={upstream.id}>
@@ -481,17 +481,17 @@ function InstanceList({
         <p className={PAGE.note}>{labels.noInstances}</p>
       ) : (
         <Table>
-          <TableHead>
+          <TableHeader>
             <TableRow head>
-              <TableHeaderCell>{labels.colName}</TableHeaderCell>
-              <TableHeaderCell>{labels.colListen}</TableHeaderCell>
+              <TableHead>{labels.colName}</TableHead>
+              <TableHead>{labels.colListen}</TableHead>
               {/* Fifteen digits of IMEI, and the answer to "which module" is
                   already in the listener's name on a phone-sized screen. */}
-              <TableHeaderCell secondary>{labels.colModem}</TableHeaderCell>
-              <TableHeaderCell>{labels.colUpstream}</TableHeaderCell>
-              <TableHeaderCell />
+              <TableHead secondary>{labels.colModem}</TableHead>
+              <TableHead>{labels.colUpstream}</TableHead>
+              <TableHead />
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             {instances.map((instance) => (
               <TableRow key={instance.id}>
@@ -823,13 +823,13 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
           ) : (
             <>
               <Table>
-                <TableHead>
+                <TableHeader>
                   <TableRow head>
-                    <TableHeaderCell>{labels.colName}</TableHeaderCell>
-                    <TableHeaderCell>{labels.colAddress}</TableHeaderCell>
-                    <TableHeaderCell />
+                    <TableHead>{labels.colName}</TableHead>
+                    <TableHead>{labels.colAddress}</TableHead>
+                    <TableHead />
                   </TableRow>
-                </TableHead>
+                </TableHeader>
                 <TableBody>
                   {result.endpoints.map((endpoint) => (
                     <TableRow key={endpoint.id}>
@@ -978,13 +978,13 @@ function CountryRuleList({
         <p className={PAGE.note}>{labels.noCountryRules}</p>
       ) : (
         <Table>
-          <TableHead>
+          <TableHeader>
             <TableRow head>
-              <TableHeaderCell>{labels.colCountry}</TableHeaderCell>
-              <TableHeaderCell>{labels.colUpstream}</TableHeaderCell>
-              <TableHeaderCell />
+              <TableHead>{labels.colCountry}</TableHead>
+              <TableHead>{labels.colUpstream}</TableHead>
+              <TableHead />
             </TableRow>
-          </TableHead>
+          </TableHeader>
           <TableBody>
             {rules.map((rule) => (
               <TableRow key={rule.countryCode}>

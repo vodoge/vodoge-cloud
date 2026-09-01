@@ -2524,7 +2524,7 @@ const CAPTURED_FROM = {
   // ⚠️ 第 3、4 阶段换掉组件之后外观会真的变，**那时候必须重拍截图**。守着这件
   // 事的其余守卫已经退休，没有东西会再提醒——安装弹窗展示的是给用户看的东西，
   // 展示一个不存在的界面比没有截图更糟。
-  chrome: "f7a3af33f1ca7c99b53a64e2527865bbccb122519d8e4d9c8e473f55b638b56f",
+  chrome: "c25f2afd25acc4db5a480ba8b2846d6ea04ac78fcaa0db834455946604aae10c",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

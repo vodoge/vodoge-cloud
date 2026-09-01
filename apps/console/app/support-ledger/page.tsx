@@ -4,8 +4,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { fetchConsoleRole, fetchLedger, type LedgerRow } from "@/lib/catalog";
@@ -68,17 +68,17 @@ export default async function SupportLedgerPage() {
           />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               <TableRow head>
-                <TableHeaderCell>{t("ledger.colModem", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("ledger.colCarrier", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("ledger.colSmsMo", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("ledger.colSmsMt", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("ledger.colData", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("ledger.colVoice", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("ledger.colEvidence", locale)}</TableHeaderCell>
+                <TableHead>{t("ledger.colModem", locale)}</TableHead>
+                <TableHead>{t("ledger.colCarrier", locale)}</TableHead>
+                <TableHead>{t("ledger.colSmsMo", locale)}</TableHead>
+                <TableHead>{t("ledger.colSmsMt", locale)}</TableHead>
+                <TableHead secondary>{t("ledger.colData", locale)}</TableHead>
+                <TableHead secondary>{t("ledger.colVoice", locale)}</TableHead>
+                <TableHead secondary>{t("ledger.colEvidence", locale)}</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={`${row.modemFamily}:${row.carrier}`}>

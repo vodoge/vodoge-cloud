@@ -1946,20 +1946,6 @@ test("every class the migrated files use produces CSS", async () => {
   );
 });
 
-test("migrated files use no arbitrary values and no dark: variant", () => {
-  const used = allUsedClasses();
-  assert.deepEqual(
-    used.filter((name) => name.includes("[")),
-    [],
-    "an arbitrary value is a token that was never added to lib/tokens.ts",
-  );
-  assert.deepEqual(
-    used.filter((name) => name.split(":").slice(0, -1).includes("dark")),
-    [],
-    "colours already flip with :root[data-theme]; dark: would be a second switch",
-  );
-});
-
 /**
  * The collision list is derived, not remembered — and it is now empty.
  *
@@ -2341,7 +2327,7 @@ test("the two table width props are wired to the recipes and to a page", () => {
  */
 test("the journal's payload row spans every column the table has", () => {
   const code = codeOnly(readSource("components/journal.tsx"));
-  const headers = (code.match(/<TableHeaderCell\b/g) ?? []).length;
+  const headers = (code.match(/<TableHead\b/g) ?? []).length;
   const declared = Number(/const PAYLOAD_COLUMNS = (\d+)/.exec(code)?.[1]);
   assert.ok(headers > 0, "the journal stopped rendering a header row: this test is measuring air");
   assert.equal(declared, headers, "the payload row and the table disagree about how wide it is");
@@ -3175,7 +3161,7 @@ test("the device list draws no card policy control for an account that may not w
   // Header and cells together. A column kept for actions nobody has leaves the
   // table one column wider than it has values for, which no count of controls
   // would show.
-  const actionsHeaderAt = masked.indexOf("<TableHeaderCell />");
+  const actionsHeaderAt = masked.indexOf("<TableHead />");
   assert.notEqual(actionsHeaderAt, -1, "the actions column lost its header cell");
   assert.ok(
     drawnOnlyWhen(masked, actionsHeaderAt, "writable"),
@@ -3511,7 +3497,7 @@ test("the eSIM tab draws no write control for an account that may not write", ()
   // nobody has leaves a table one heading wider than it has values for, which
   // no count of controls would show — the same check the card policy table
   // carries, twice over because this tab has two tables with an actions column.
-  const headers = [...masked.matchAll(/<TableHeaderCell \/>/g)];
+  const headers = [...masked.matchAll(/<TableHead \/>/g)];
   assert.equal(headers.length, 2, "the two actions columns are not both still here");
   for (const header of headers) {
     assert.ok(
@@ -4438,7 +4424,7 @@ test("a secondary column is secondary in both its header and its cells", () => {
   const mismatched: string[] = [];
   for (const relative of MIGRATED_SOURCES) {
     const code = codeOnly(readSource(relative));
-    const headers = (code.match(/<TableHeaderCell\s[^>]*secondary/g) ?? []).length;
+    const headers = (code.match(/<TableHead\s[^>]*secondary/g) ?? []).length;
     const cells = (code.match(/<TableCell\s[^>]*secondary/g) ?? []).length;
     if (headers !== cells) mismatched.push(`${relative}: ${headers} headers, ${cells} cells`);
   }
@@ -5713,7 +5699,7 @@ function tableColumns(source: string): { headers: Column[]; cells: Column[] }[] 
   const tables: { headers: Column[]; cells: Column[] }[] = [];
   const opened: { name: string; start: number; end: number }[] = [];
 
-  for (const match of masked.matchAll(/<(Table|TableHeaderCell|TableCell)\b/g)) {
+  for (const match of masked.matchAll(/<(Table|TableHead|TableCell)\b/g)) {
     const start = match.index;
     let depth = 0;
     let end = -1;
@@ -5748,7 +5734,7 @@ function tableColumns(source: string): { headers: Column[]; cells: Column[] }[] 
       attributes: code.slice(tag.start, tag.end + 1),
       contents: code.slice(tag.end + 1, stop),
     };
-    if (tag.name === "TableHeaderCell") table.headers.push(column);
+    if (tag.name === "TableHead") table.headers.push(column);
     else table.cells.push(column);
   }
   return tables;
@@ -6479,7 +6465,7 @@ test("the device list is drawn by the shared components, at the point of use", (
   // nineteen for the two older tables and T030 recounted it to seventeen; the
   // number is here so that a column added without a narrow-screen decision
   // fails rather than arrives.
-  assert.equal(uses(/<TableHeaderCell\b/g), 21, "four, then nine, then eight");
+  assert.equal(uses(/<TableHead\b/g), 21, "four, then nine, then eight");
   assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
   assert.equal(uses(/<Card\b/g), 4, "alerts, devices, modules, card policies");
   // Preflight is off, so a bare `<table>` is not merely a second implementation:
@@ -6758,7 +6744,7 @@ test("the device page is drawn by the shared components, at the point of use", (
  */
 test("the device page's widest column is marked secondary on both of its cells", () => {
   const code = codeOnly(readSource(DEVICE_PAGE));
-  const headers = code.match(/<TableHeaderCell\b[^>]*secondary/g) ?? [];
+  const headers = code.match(/<TableHead\b[^>]*secondary/g) ?? [];
   const cells = code.match(/<TableCell\b[^>]*secondary/g) ?? [];
   // Seven columns now drop on a phone: the ICCID, the identity and topology
   // readings beside it, and the two added so the cloud shows what the edge

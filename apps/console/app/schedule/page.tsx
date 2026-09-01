@@ -4,8 +4,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
   TableHead,
-  TableHeaderCell,
   TableRow,
 } from "@/components/ui/table";
 import { fetchSchedules, type ScheduleRow } from "@/lib/catalog";
@@ -109,7 +109,7 @@ export default async function SchedulePage() {
           />
         ) : (
           <Table>
-            <TableHead>
+            <TableHeader>
               {/*
                 Eight columns, and the widest table on any read-only page here.
                 Three of them are marked `secondary` and leave the phone: the
@@ -121,16 +121,16 @@ export default async function SchedulePage() {
                 together.
               */}
               <TableRow head>
-                <TableHeaderCell>{t("schedule.colName", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("schedule.colAction", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("schedule.colTarget", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("schedule.colCadence", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("schedule.colNextDue", locale)}</TableHeaderCell>
-                <TableHeaderCell secondary>{t("schedule.colLastRun", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("schedule.colLastResult", locale)}</TableHeaderCell>
-                <TableHeaderCell>{t("schedule.colEnabled", locale)}</TableHeaderCell>
+                <TableHead>{t("schedule.colName", locale)}</TableHead>
+                <TableHead>{t("schedule.colAction", locale)}</TableHead>
+                <TableHead secondary>{t("schedule.colTarget", locale)}</TableHead>
+                <TableHead secondary>{t("schedule.colCadence", locale)}</TableHead>
+                <TableHead>{t("schedule.colNextDue", locale)}</TableHead>
+                <TableHead secondary>{t("schedule.colLastRun", locale)}</TableHead>
+                <TableHead>{t("schedule.colLastResult", locale)}</TableHead>
+                <TableHead>{t("schedule.colEnabled", locale)}</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {schedules.map((row) => (
                 <TableRow key={row.id}>
