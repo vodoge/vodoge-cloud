@@ -2509,7 +2509,13 @@ const CAPTURED_FROM = {
   // closure. The built stylesheet came out identical too
   // (9eb9f0c4694166eb.css), which is the same evidence the SN-T022 note above
   // rests on.
-  chrome: "736b11ecdb49be3f2a4c216c52d4e23715e634a0b47a871b462ca2c50dbaf978",
+  // Re-stamped for the adoption controls. The stylesheet did NOT move --
+  // `9eb9f0c4694166eb.css` is byte-identical across this change -- so the
+  // frames still show the chrome they were captured from. What moved is
+  // `lib/tokens.ts` and the message catalogues: a guard entry for adopting and
+  // unmanaging a module, and the sentences those two put in front of an
+  // operator. Neither is drawn on the install screens.
+  chrome: "9e3b8e793e0a7efb66a27e275e3433b936b1337968a70a979811d687d5477ed1",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

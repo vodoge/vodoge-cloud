@@ -2653,6 +2653,11 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   // no automatic way back, which is the same shape as the usbnet warning above.
   "device.confirmConfigureApn",
   "device.confirmClaimCandidate",
+  // Unmanaging a module. Nothing is written to the hardware, so this is not a
+  // warning about the stick -- it is a warning about the list: a working
+  // module disappears from it, and the operator who did this by accident has
+  // to find it again in the candidates card to put it back.
+  "device.confirmUnregister",
   "device.confirmDisableProfile",
   "device.confirmDeleteProfile",
   /**
@@ -3189,6 +3194,20 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       when: {},
       consequence: "device.confirmClaimCandidate",
       why: "approving one lets the agent write AT to a port it has only looked at, and a serial endpoint is not necessarily a modem",
+    },
+  ],
+  register_modem: [
+    {
+      when: {},
+      consequence: null,
+      why: "adopting a module the agent already identified changes nothing on the hardware; reading its identity is what already happened, and the list it joins is the point",
+    },
+  ],
+  unregister_modem: [
+    {
+      when: {},
+      consequence: "device.confirmUnregister",
+      why: "the module stops being polled and leaves the list; what it carried is kept, but an operator who did this by accident would see a working stick vanish",
     },
   ],
   read_logs: [

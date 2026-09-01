@@ -153,6 +153,7 @@ export type DeviceLabelKey =
   | "candidatesNote"
   | "candidatesNone"
   | "candidatesHint"
+  | "candidateAdopt"
   | "candidateClaim"
   | "modem_report"
   | "list_esim_profiles"
@@ -161,6 +162,7 @@ export type DeviceLabelKey =
   | "scan_operators"
   | "rotate_ip"
   | "set_radio"
+  | "unregister_modem"
   | "set_data_network"
   | "reregister_network"
   | "refresh_modems"
@@ -212,6 +214,12 @@ const DISRUPTIVE = [
   "set_radio",
   "set_data_network",
   "reregister_network",
+  // Not disruptive to the hardware -- nothing is written to the module -- but
+  // it takes a working stick out of the list, and an operator who did it by
+  // accident would watch one vanish. It belongs behind the same confirmation
+  // as the rest, and the adoption that undoes it is one press in the
+  // candidates card below.
+  "unregister_modem",
 ] as const;
 
 /**
@@ -1067,6 +1075,16 @@ function CandidatesCard({
   // Only the ones nobody has acted on. A claimed endpoint becomes a module on
   // the next poll and is listed above with the rest of them; leaving it here
   // would offer an approval that has already happened.
+  //
+  // Two kinds sit in this list, and they are two different decisions:
+  //
+  //   no IMEI   the agent has looked at the port and not spoken to it. The
+  //             action is permission to probe, and it is guarded, because a
+  //             serial endpoint that is not a modem can be a GPS, a debug
+  //             console, or something that reboots when it is spoken to.
+  //   an IMEI   the agent has identified the module and nobody has adopted it.
+  //             The action is adoption, and it is ordinary: reading identity
+  //             already happened, and managing a module changes nothing on it.
   const pending = candidates.filter((row) => row.state === "found");
   return (
     <CardPanel title={labels.candidates} note={labels.candidatesNote}>
@@ -1079,12 +1097,17 @@ function CandidatesCard({
               key={candidate.candidateKey}
               onSubmit={(event) => {
                 event.preventDefault();
-                onRun("claim_modem_candidate", { candidate_key: candidate.candidateKey });
+                if (candidate.imei) {
+                  onRun("register_modem", { modem_imei: candidate.imei });
+                } else {
+                  onRun("claim_modem_candidate", { candidate_key: candidate.candidateKey });
+                }
               }}
             >
               <span>
-                <Output>{candidate.controlPort}</Output>
+                <Output>{candidate.imei ?? candidate.controlPort}</Output>
                 <FormHint>
+                  {candidate.imei ? `${candidate.controlPort} · ` : ""}
                   {candidate.transport}
                   {candidate.vendorId && candidate.productId
                     ? ` · ${candidate.vendorId}:${candidate.productId}`
@@ -1092,8 +1115,12 @@ function CandidatesCard({
                   {candidate.usbDevice ? ` · ${candidate.usbDevice}` : ""}
                 </FormHint>
               </span>
-              <Button type="submit" variant="risk" disabled={busy}>
-                {labels.candidateClaim}
+              <Button
+                type="submit"
+                variant={candidate.imei ? "ghost" : "risk"}
+                disabled={busy}
+              >
+                {candidate.imei ? labels.candidateAdopt : labels.candidateClaim}
               </Button>
             </InlineForm>
           ))}

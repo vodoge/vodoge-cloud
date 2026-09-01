@@ -7442,20 +7442,23 @@ test("each disruptive command has its own consequence, and restart names +CFUN: 
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
 
   const disruptive = stringArray(readSource(CONSOLE_SOURCE), "DISRUPTIVE");
-  assert.equal(disruptive.length, 7, "the danger zone is seven commands");
+  // Eight since unmanaging joined them. It writes nothing to the module, but
+  // it takes a working stick out of the list, and the confirmation is about
+  // that rather than about the hardware.
+  assert.equal(disruptive.length, 8, "the danger zone is eight commands");
 
   const keys = disruptive.map((kind) => {
     const guard = deviceCommandGuard(kind, { enabled: false });
     assert.ok(guard.consequence, `${kind} asks nothing before it runs`);
     return guard.consequence as string;
   });
-  assert.equal(new Set(keys).size, 7, "two of the seven share a sentence again");
+  assert.equal(new Set(keys).size, 8, "two of the eight share a sentence again");
 
   // And it has to be about *this* command. A per-command key holding the same
-  // paragraph seven times would pass everything above.
+  // paragraph eight times would pass everything above.
   for (const [language, catalogue] of [["zh", zh], ["en", en]] as const) {
     const texts = keys.map((key) => String(catalogue[key]));
-    assert.equal(new Set(texts).size, 7, `${language}: seven keys, fewer than seven sentences`);
+    assert.equal(new Set(texts).size, 8, `${language}: eight keys, fewer than eight sentences`);
   }
 
   const restart = deviceCommandGuard("restart_modem", {}).consequence as string;
