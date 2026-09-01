@@ -114,7 +114,7 @@ export function ConnectionStatus({
         <span className={PWA.connection.detail}>{labels.stale}</span>
         <span className={PWA.connection.time}>{formatClock(new Date(view.dataAt))}</span>
         <span className={PWA.connection.actions}>
-          <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
             {labels.retry}
           </Button>
         </span>

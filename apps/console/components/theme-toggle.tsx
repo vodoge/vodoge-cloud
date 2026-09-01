@@ -73,7 +73,7 @@ export function ThemeToggle({
 
   return (
     <Button
-      variant="subtle"
+      variant="ghost"
       size="icon"
       title={labels.toggle}
       aria-label={`${labels.toggle}: ${next === "dark" ? labels.dark : labels.light}`}

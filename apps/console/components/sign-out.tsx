@@ -15,7 +15,7 @@ export function SignOutButton({ label }: { label: string }) {
 
   return (
     <Button
-      variant="subtle"
+      variant="ghost"
       disabled={pending}
       onClick={async () => {
         setPending(true);

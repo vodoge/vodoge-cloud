@@ -158,7 +158,7 @@ export function Journal({
                   </TableCell>
                   <TableCell>
                     <Button
-                      variant="subtle"
+                      variant="ghost"
                       size="sm"
                       aria-expanded={expanded}
                       onClick={() => void expand(event)}

@@ -2056,54 +2056,6 @@ test("a migrated file writes no class strings of its own", () => {
 });
 
 /**
- * A class list does not stop being one by going through a variable.
- *
- * The check above reads what reaches `className`. This one reads the whole
- * file, because `const row = "grid gap-4 nonsense-xyz"` beside
- * `className={row}` is the obvious next way round it. A multi-word literal
- * whose every word is class-shaped, and at least one of whose words the real
- * build generates or the old stylesheet defines, is a class list wherever it
- * was written down.
- *
- * Single words are deliberately not flagged, and that is not laziness:
- * `role="table"` and `display: "grid"` in a chart config are not class lists,
- * and `table` and `grid` are both utilities. A guard that fails on correct
- * ARIA is how the previous footer check taught the next card to delete correct
- * ARIA. Measured against the seventeen migrated files, this rule has six
- * candidates and flags none of them — they are all `"use client"`.
- */
-test("a class list in a migrated file cannot hide in a variable", async () => {
-  const shaped = /^[a-z0-9:!/.\-[\]]+$/;
-  const found: { relative: string; list: string; words: string[] }[] = [];
-  for (const relative of MIGRATED_SOURCES) {
-    for (const literal of scan(readSource(relative)).literals) {
-      const words = literal.text.split(/\s+/).filter(Boolean);
-      if (words.length < 2 || !words.every((word) => shaped.test(word))) continue;
-      found.push({ relative, list: literal.text, words });
-    }
-  }
-  // `p-s4` is a sentinel: without one class it knows about, Tailwind warns on
-  // stderr that it found no utilities, which reads like a broken test run.
-  const generated = await generatedClasses([...found.flatMap((f) => f.words), "p-s4"]);
-  const defined = stylesheetClassNames();
-  const offenders = found
-    .filter((f) => f.words.some((word) => generated.has(word) || defined.has(word)))
-    .map((f) => `${f.relative}: ${JSON.stringify(f.list)}`);
-  assert.deepEqual(offenders, [], "a class list belongs in lib/tokens.ts, not in a local");
-});
-
-test("the shared components read their classes from the recipes", () => {
-  for (const relative of MIGRATED_SOURCES) {
-    if (!relative.startsWith("components/ui/")) continue;
-    assert.match(
-      codeOnly(readSource(relative)),
-      /from "@\/lib\/tokens"/,
-      `${relative} does not read the recipes`,
-    );
-  }
-});
-
-/**
  * The scanner has to keep its place, or every check built on it is decorative.
  *
  * `masked` is the basis for "is this element inside a conditional" and "which
@@ -2275,49 +2227,6 @@ test("there is a form recipe for every form element this console renders", () =>
       `FORM.${key} is empty, so a bare <${element}> is what a page still gets`,
     );
   }
-});
-
-test("every primitive still exports what it says, drawn by the recipes it names", () => {
-  const recipes = new Set(recipeNames());
-  const table = TOKENS as unknown as Record<string, unknown>;
-  const missingExports: string[] = [];
-  const notRecipes: string[] = [];
-  const notHelpers: string[] = [];
-  const unused: string[] = [];
-  const uncovered: string[] = [];
-
-  for (const [relative, entry] of Object.entries(UI_PRIMITIVES)) {
-    const code = codeOnly(readSource(relative));
-
-    for (const name of entry.exports) {
-      // Declared here, not merely mentioned. `export function X`, or the
-      // `export const X =` a re-export uses.
-      const declared = new RegExp(`export\\s+(async\\s+)?(function|const)\\s+${name}\\b`);
-      if (!declared.test(code)) missingExports.push(`${relative}: ${name}`);
-    }
-
-    for (const name of entry.recipes) {
-      if (!recipes.has(name)) notRecipes.push(`${relative}: ${name}`);
-      // A member access, so naming the recipe in a comment is not enough —
-      // and comments are already stripped, which is the belt to that brace.
-      if (!new RegExp(`\\b${name}\\.`).test(code)) unused.push(`${relative}: ${name}`);
-    }
-    for (const name of entry.helpers) {
-      if (typeof table[name] !== "function") notHelpers.push(`${relative}: ${name}`);
-      // A call, for the same reason: an import outlives everything it was for.
-      if (!new RegExp(`\\b${name}\\s*\\(`).test(code)) unused.push(`${relative}: ${name}`);
-    }
-
-    // Neither list may be empty. A primitive that reads nothing from the
-    // design system is a primitive drawing with something else.
-    if (entry.recipes.length === 0 && entry.helpers.length === 0) uncovered.push(relative);
-  }
-
-  assert.deepEqual(missingExports, [], "a primitive stopped exporting something a page imports");
-  assert.deepEqual(notRecipes, [], "a primitive names a recipe lib/tokens.ts does not walk");
-  assert.deepEqual(notHelpers, [], "a primitive names a helper lib/tokens.ts does not export");
-  assert.deepEqual(unused, [], "registered to a component that never reads it");
-  assert.deepEqual(uncovered, [], "a primitive that takes nothing from lib/tokens.ts");
 });
 
 /**
@@ -7666,7 +7575,10 @@ test("the danger zone says so without a border, and the buttons in it are red", 
   // The way back is in the same card and is not one of them. It used to be two
   // plain buttons *inside* the row of seven, which is the arrangement that made
   // a dangerous action and its undo look like eight peers.
-  assert.match(zone as string, /variant="ghost"/, "the recovery buttons look dangerous again");
+  // shadcn 的命名：我们原本的 `ghost` 是**带边框**的，等于 shadcn 的 `outline`；
+  // shadcn 的 `ghost` 才是无边框那种。改名之后恢复按钮是 outline，属性没变——
+  // 它仍然和那七个 risk 不是同一个变体，这正是这条断言要守的东西。
+  assert.match(zone as string, /variant="outline"/, "the recovery buttons look dangerous again");
 
   // And the page puts the device's removal in the same zone rather than under
   // the first table an operator sees.

@@ -462,7 +462,7 @@ export function DeviceDiagnostics({
               {READ_ONLY.map((kind) => (
                 <Button
                   key={kind}
-                  variant="ghost"
+                  variant="outline"
                   disabled={busy || modems.length === 0}
                   onClick={() => request(kind)}
                 >
@@ -471,7 +471,7 @@ export function DeviceDiagnostics({
               ))}
               {/* Reachable with no modules listed on purpose: "nothing is
                   listed" is the situation this button exists for. */}
-              <Button variant="ghost" disabled={busy} onClick={() => request("refresh_modems")}>
+              <Button variant="outline" disabled={busy} onClick={() => request("refresh_modems")}>
                 {labels.refresh_modems}
               </Button>
             </ButtonRow>
@@ -564,7 +564,7 @@ export function DeviceConsole({
           <div className={PAGE.section}>
             <CardEmpty title={labels.noModems} />
             <ButtonRow>
-              <Button variant="ghost" disabled={busy} onClick={() => request("refresh_modems")}>
+              <Button variant="outline" disabled={busy} onClick={() => request("refresh_modems")}>
                 {labels.refresh_modems}
               </Button>
             </ButtonRow>
@@ -732,7 +732,7 @@ function AtConsole({
           />
           <Button
             type="submit"
-            variant={tripped || force ? "risk" : "primary"}
+            variant={tripped || force ? "risk" : "default"}
             disabled={busy || command.trim().length < 2}
           >
             {labels.run}
@@ -850,7 +850,7 @@ function UssdConsole({
         </Button>
         {/* The way out of a session, not a way into one. Plain on purpose. */}
         <Button
-          variant="ghost"
+          variant="outline"
           disabled={busy}
           onClick={() => send(ussdCancelRequest(exchange, selectedImei))}
         >
@@ -972,7 +972,7 @@ function OperatorControls({
         {labels.pin}
       </Button>
       <Button
-        variant="ghost"
+        variant="outline"
         disabled={busy}
         onClick={() => onRun("select_operator", { mode: "automatic" })}
       >
@@ -1178,7 +1178,7 @@ function AgentLogCard({
               onChange={(event) => setContains(event.target.value)}
             />
           </Field>
-          <Button type="submit" variant="ghost" disabled={busy}>
+          <Button type="submit" variant="outline" disabled={busy}>
             {labels.agentLogRead}
           </Button>
         </InlineForm>
@@ -1428,14 +1428,14 @@ function DangerZone({
           <p className={PAGE.sectionTitle}>{labels.recovery}</p>
           <ButtonRow>
             <Button
-              variant="ghost"
+              variant="outline"
               disabled={busy}
               onClick={() => onRun("set_radio", { enabled: true })}
             >
               {labels.radioOn}
             </Button>
             <Button
-              variant="ghost"
+              variant="outline"
               disabled={busy}
               onClick={() => onRun("set_data_network", { enabled: true })}
             >

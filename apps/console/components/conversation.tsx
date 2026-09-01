@@ -200,7 +200,7 @@ export function Conversation({
               ) : null}
               {writable ? (
                 <Button
-                  variant="subtle"
+                  variant="ghost"
                   size="sm"
                   disabled={busy}
                   onClick={() => setPending({ kind: "message", id: message.id })}
@@ -309,7 +309,7 @@ function ContactName({
 
   if (!editing) {
     return (
-      <Button variant="ghost" disabled={busy} onClick={() => setEditing(true)}>
+      <Button variant="outline" disabled={busy} onClick={() => setEditing(true)}>
         {name ? labels.renameContact : labels.nameContact}
       </Button>
     );
@@ -325,11 +325,11 @@ function ContactName({
           aria-label={labels.contactName}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button variant="ghost" disabled={busy} onClick={save}>
+        <Button variant="outline" disabled={busy} onClick={save}>
           {labels.save}
         </Button>
         <Button
-          variant="ghost"
+          variant="outline"
           disabled={busy}
           onClick={() => {
             setDraft(name);

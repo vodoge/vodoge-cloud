@@ -307,7 +307,7 @@ function TestButton({
 
   return (
     <ButtonRow>
-      <Button variant="ghost" onClick={askTest} disabled={state === "sending"}>
+      <Button variant="outline" onClick={askTest} disabled={state === "sending"}>
         {labels.test} · {test.label}
       </Button>
       {state === "ok" ? <Badge tone="ok">{labels.testSent}</Badge> : null}

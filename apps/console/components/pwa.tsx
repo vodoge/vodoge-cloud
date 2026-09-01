@@ -180,11 +180,11 @@ export function InstallPrompt({
         {/* iOS gets no button, because there is nothing a button could call.
             Pretending otherwise is worse than directions that work. */}
         {ios ? null : (
-          <Button variant="primary" size="sm" onClick={install}>
+          <Button variant="default" size="sm" onClick={install}>
             {labels.action}
           </Button>
         )}
-        <Button variant="subtle" size="sm" onClick={remember}>
+        <Button variant="ghost" size="sm" onClick={remember}>
           {labels.dismiss}
         </Button>
       </span>

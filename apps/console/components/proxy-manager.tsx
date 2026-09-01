@@ -516,7 +516,7 @@ function InstanceList({
                         controls now, and only the two that interrupt traffic
                         are red and ask first. */}
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       disabled={busy}
                       onClick={() =>
@@ -798,7 +798,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
         </Button>
         {result ? (
           <Button
-            variant="ghost"
+            variant="outline"
             onClick={() => {
               setResult(null);
               setNote(null);
@@ -841,7 +841,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
                               goes to the clipboard and nowhere else. What the
                               row draws is `withoutPassword(endpoint)`. */}
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
                             onClick={() => void copy(endpoint.url)}
                           >

@@ -356,7 +356,7 @@ export function EsimPanel({
         actions={
           writable ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               disabled={busy || imei === ""}
               onClick={() =>
@@ -595,7 +595,7 @@ export function EsimPanel({
                   onChange={(event) => setRenameNickname(event.target.value)}
                 />
               </Field>
-              <Button type="submit" variant="ghost" disabled={busy || renameIccid === ""}>
+              <Button type="submit" variant="outline" disabled={busy || renameIccid === ""}>
                 {t("esim.rename", locale)}
               </Button>
               <FormHint>{t("esim.renameHint", locale)}</FormHint>
@@ -609,7 +609,7 @@ export function EsimPanel({
         actions={
           writable ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               disabled={busy || imei === ""}
               onClick={() =>
@@ -693,7 +693,7 @@ export function EsimPanel({
                             <TableCell>
                               <RowActions>
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
                                   disabled={busy}
                                   onClick={() =>
@@ -744,7 +744,7 @@ export function EsimPanel({
         actions={
           writable ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               disabled={busy || imei === ""}
               onClick={() =>

@@ -114,10 +114,10 @@ export function ConfirmDialog({
         <p className={CONFIRM.consequence}>{stated}</p>
         <p className={CONFIRM.question}>{labels.question}</p>
         <ButtonRow className={CONFIRM.actions}>
-          <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button ref={cancelRef} variant="outline" onClick={onCancel} disabled={busy}>
             {labels.cancel}
           </Button>
-          <Button variant="danger" onClick={onConfirm} disabled={busy}>
+          <Button variant="destructive" onClick={onConfirm} disabled={busy}>
             {confirmLabel ?? labels.proceed}
           </Button>
         </ButtonRow>
