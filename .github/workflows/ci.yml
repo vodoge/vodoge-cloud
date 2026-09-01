@@ -216,6 +216,33 @@ jobs:
             exit 1
           fi
           echo "every tenant table enforces isolation"
+      - name: Every command the catalogue can build is a value the table accepts
+        env:
+          PGPASSWORD: ci
+        # 🔴 Written after the same gap shipped twice — migrations 0052 and
+        # 0054 both exist because a command kind reached production without
+        # its enum value. The failure is invisible to every Go test: the
+        # catalogue builds a valid payload, the gateway validates it, and
+        # PostgreSQL rejects it at INSERT. The catalogue's own tests build
+        # payloads and never store one, so nothing there can see it.
+        #
+        # This is the one place both halves are available at once: the Go
+        # source that declares the kinds, and a database with the enum in it.
+        run: |
+          cd apps/gateway
+          go run ./cmd/list-command-kinds > /tmp/kinds.txt
+          cd -
+          missing=$(psql -h localhost -U vodoge -d vodoge -tAc "
+            SELECT string_agg(k, ' ')
+              FROM unnest(ARRAY[$(sed "s/.*/'&'/" /tmp/kinds.txt | paste -sd, -)]) AS k
+             WHERE k NOT IN (
+                 SELECT unnest(enum_range(NULL::app.command_kind))::text)")
+          if [ -n "$missing" ]; then
+            echo "these command kinds have no enum value, so issuing one fails at INSERT: $missing"
+            echo "add them in a new migration, following packages/db/migrations/0054"
+            exit 1
+          fi
+          echo "every catalogue kind is storable ($(wc -l < /tmp/kinds.txt) kinds)"
       - name: Migrations are recorded
         env:
           PGPASSWORD: ci
