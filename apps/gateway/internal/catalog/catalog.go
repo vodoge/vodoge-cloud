@@ -814,6 +814,12 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       usb_device,
 			       apn_contexts
 			  FROM app.modems
+			 -- Retired rows are kept and not listed. A module the edge no
+			 -- longer manages stops being updated, so leaving it in the list
+			 -- shows an observation frozen at whatever it was when somebody
+			 -- unmanaged it -- indistinguishable from a healthy module that
+			 -- went quiet, which is the confusion this whole change removes.
+			 WHERE managed
 			 ORDER BY last_seen_at DESC NULLS LAST, imei`)
 		if err != nil {
 			return err
