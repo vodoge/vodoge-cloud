@@ -1,42 +1,96 @@
-import { cn } from "@/lib/cn";
-import { CARD, STAT, type StatTone } from "@/lib/tokens";
+import * as React from "react"
 
-/**
- * A card, in parts.
+import { cn } from "@/lib/cn"
+import { CARD, STAT, type StatTone } from "@/lib/tokens"
+
+const Card = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn(
+      "rounded-xl border bg-card text-card-foreground shadow",
+      className
+    )}
+    {...props}
+  />
+))
+Card.displayName = "Card"
+
+const CardHeader = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex flex-col space-y-1.5 p-6", className)}
+    {...props}
+  />
+))
+CardHeader.displayName = "CardHeader"
+
+const CardTitle = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("font-semibold leading-none tracking-tight", className)}
+    {...props}
+  />
+))
+CardTitle.displayName = "CardTitle"
+
+const CardDescription = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("text-sm text-muted-foreground", className)}
+    {...props}
+  />
+))
+CardDescription.displayName = "CardDescription"
+
+const CardContent = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />
+))
+CardContent.displayName = "CardContent"
+
+const CardFooter = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex items-center p-6 pt-0", className)}
+    {...props}
+  />
+))
+CardFooter.displayName = "CardFooter"
+
+type DivProps = React.HTMLAttributes<HTMLDivElement>
+
+/* ── 这个产品自己的组合件 ────────────────────────────────────────────
  *
- * The old `Card` took `title`, `note`, `actions` and a `bodyless` flag, which
- * meant every new arrangement of a card header needed another prop. These
- * compose instead: a card whose content is a full-bleed table is `<Card>` with
- * a `<Table>` in it and no `<CardContent>`, rather than a boolean.
+ * 上面六个是 shadcn 的原语，下面几个是用它们拼出来的。shadcn 不提供
+ * `CardPanel` 或 `CardEmpty` 这种东西，也不该提供——把原语组合成应用自己的
+ * 部件正是它的用法，不是「又开始手写设计系统」。
  *
- * Class strings live in `lib/tokens.ts`. See the note in `button.tsx`.
+ * `CardNote` 是旧名字，现在是 shadcn `CardDescription` 的别名：五处调用不必
+ * 因为换库而改，而两个名字指同一个东西不值得留成两份实现。
  */
 
-type DivProps = React.HTMLAttributes<HTMLDivElement>;
-
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLElement>) {
-  return <section className={cn(CARD.root, className)} {...props} />;
-}
-
-export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLElement>) {
-  return <header className={cn(CARD.header, className)} {...props} />;
-}
-
-export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn(CARD.title, className)} {...props} />;
-}
-
-/** A qualifier on the title — a count, a timestamp — not a second title. */
-export function CardNote({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn(CARD.note, className)} {...props} />;
-}
+/** 旧名字，指向 shadcn 的 CardDescription。 */
+const CardNote = CardDescription
 
 export function CardActions({ className, ...props }: DivProps) {
   return <div className={cn(CARD.actions, className)} {...props} />;
-}
-
-export function CardContent({ className, ...props }: DivProps) {
-  return <div className={cn(CARD.content, className)} {...props} />;
 }
 
 /**
@@ -187,4 +241,8 @@ export function CardEmpty({
       {description ? <span className={CARD.emptyDescription}>{description}</span> : null}
     </div>
   );
+}
+
+export {
+  Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent, CardNote,
 }
