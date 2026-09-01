@@ -1,3 +1,18 @@
+/* 退休于前端重建（见 docs/frontend-rebuild/）。
+ *
+ * 这里删掉的七条守的都是同一个前提：「整套设计系统由这个仓库自己掌管」——
+ * token 清单要和 tokens.ts 逐个对齐、components/ui 下每个文件都要登记、
+ * Tailwind 刻度必须是替换而非扩展、样式表里不能有没人用的规则。
+ *
+ * 接入 shadcn/ui 之后这个前提不成立了：组件由 shadcn 生成并带着自己的类名
+ * 进来，透明度刻度必须恢复成完整的（它的组件用 /10 /40 /80），token 表里多出
+ * 它要求的一整套语义变量。这些守卫会对每一次正常的组件安装报红。
+ *
+ * ⚠️ 退休的是「设计系统归谁管」这类簿记，**不是安全检查**。同一个文件里关于
+ * 确认后果、角色守卫、密钥遮罩的测试全部保留——它们靠读源码文本工作，不需要
+ * 能渲染 .tsx 的测试运行器，和换不换 UI 框架无关。
+ */
+
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -664,21 +679,6 @@ const PROBE_SHEET = [
   "th, td { padding: 4px; border-bottom: 1px solid red; }",
   "}",
 ].join("\n");
-
-
-/* ── The stylesheet agrees with this file ────────────────────────────── */
-
-test("globals.css :root declares exactly the dark tokens", () => {
-  const declared = customProperties(blockBody(stripComments(globalsCss), ":root {"));
-  assert.deepEqual(declared, rootTokenValues("dark"));
-});
-
-test("globals.css light theme re-declares exactly the themed tokens", () => {
-  const declared = customProperties(
-    blockBody(stripComments(globalsCss), ':root[data-theme="light"] {'),
-  );
-  assert.deepEqual(declared, themeOverrideValues("light"));
-});
 
 /* ── Contrast: the ink against the accent it is painted on ──────────── */
 
@@ -2277,77 +2277,6 @@ test("there is a form recipe for every form element this console renders", () =>
   }
 });
 
-/**
- * The migrated list is criterion ①, so it cannot be opt-in.
- *
- * Seventeen files were on it and there are thirty-eight `.tsx` under `app/`
- * and `components/`. A page migrated without being added was checked by
- * nothing, while the list it was missing from is the thing the goal's first
- * criterion is measured against. Both directions are asserted here: every file
- * is on exactly one list, and a file on the unmigrated side has to still be
- * using the old stylesheet.
- */
-test("every .tsx is on exactly one side of the migration ledger", () => {
-  const tsxUnder = (dir: string): string[] => {
-    const out: string[] = [];
-    for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
-      const relative = `${dir}/${entry.name}`;
-      if (entry.isDirectory()) out.push(...tsxUnder(relative));
-      else if (entry.name.endsWith(".tsx")) out.push(relative);
-    }
-    return out;
-  };
-
-  const found = [...tsxUnder("app"), ...tsxUnder("components")].sort();
-  const listed = [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES].sort();
-  assert.deepEqual(
-    listed,
-    found,
-    "a .tsx is on both lists, on neither, or has been renamed — an unlisted file is unchecked",
-  );
-
-  // Nought to go, and this is the end of the ratchet rather than a step on
-  // it. There is no second stylesheet left for a file to be rendered by, so a
-  // name appearing here would be a claim that something outside the design
-  // system is painting a page — which is the thing criterion ① says is
-  // finished. Pinned exactly, not bounded.
-  assert.deepEqual(
-    [...UNMIGRATED_SOURCES],
-    [],
-    `the unmigrated list is not empty: ${[...UNMIGRATED_SOURCES].join(", ")}`,
-  );
-});
-
-/* ── The primitives are sealed ───────────────────────────────────────────
- *
- * This card's job was to make `components/ui/*` something the seven page
- * migrations consume rather than edit. The tests above make a new `.tsx` be
- * *classified*; none of them make a new primitive be *covered*. A component
- * added to the migrated list that reads its classes from a recipe passes every
- * one of them and is still a component no test knows the name of — so deleting
- * its export, or leaving the recipe it was built for unreferenced, is silent.
- * That is C2/C3 from the pattern review, one level up.
- */
-
-test("every file under components/ui is registered as a primitive", () => {
-  const found = readdirSync(join(root, "components", "ui"))
-    .filter((name) => name.endsWith(".tsx"))
-    .map((name) => `components/ui/${name}`)
-    .sort();
-  assert.deepEqual(
-    Object.keys(UI_PRIMITIVES).sort(),
-    found,
-    "a primitive was added or removed without UI_PRIMITIVES being told: it is unchecked",
-  );
-
-  for (const relative of found) {
-    assert.ok(
-      (MIGRATED_SOURCES as readonly string[]).includes(relative),
-      `${relative} is a shared component drawn by the old stylesheet`,
-    );
-  }
-});
-
 test("every primitive still exports what it says, drawn by the recipes it names", () => {
   const recipes = new Set(recipeNames());
   const table = TOKENS as unknown as Record<string, unknown>;
@@ -2556,63 +2485,6 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
   // is empty would not.
   const empty = MIGRATED_SOURCES.filter((relative) => readSource(relative).trim().length === 0);
   assert.deepEqual(empty, [], "a listed file is empty, so every check that reads it passes on nothing");
-});
-
-/**
- * Replacing five scales left seven live, and they were the drifting ones.
- *
- * `max-w-md leading-7 opacity-75 z-50` used to produce perfectly good CSS from
- * Tailwind's defaults, so the design system's central claim — a class can only
- * come from a scale in `lib/tokens.ts` — held for colour, spacing, type,
- * radius and shadow and for nothing else. Seven page cards each picking their
- * own `max-w-*` is exactly the drift this was built to stop.
- *
- * Note `extend`: a scale moved under it keeps the entire default alive again,
- * which is a one-word change that undoes this quietly.
- */
-test("the drift-prone Tailwind scales are replaced rather than extended", () => {
-  const theme = tailwindConfig.theme as Record<string, unknown>;
-  const extend = (theme.extend ?? {}) as Record<string, unknown>;
-  const replaced: Record<string, unknown> = {
-    colors: TAILWIND_COLORS,
-    spacing: TAILWIND_SPACING,
-    fontSize: TAILWIND_FONT_SIZE,
-    borderRadius: TAILWIND_BORDER_RADIUS,
-    boxShadow: TAILWIND_BOX_SHADOW,
-    fontFamily: TAILWIND_FONT_FAMILY,
-    maxWidth: TAILWIND_MAX_WIDTH,
-    lineHeight: TAILWIND_LINE_HEIGHT,
-    letterSpacing: TAILWIND_LETTER_SPACING,
-    opacity: TAILWIND_OPACITY,
-    zIndex: TAILWIND_Z_INDEX,
-    width: TAILWIND_WIDTH,
-    gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
-    minHeight: TAILWIND_MIN_HEIGHT,
-    maxHeight: TAILWIND_MAX_HEIGHT,
-    borderWidth: TAILWIND_BORDER_WIDTH,
-    ringWidth: TAILWIND_RING_WIDTH,
-    ringOffsetWidth: TAILWIND_RING_OFFSET_WIDTH,
-    inset: TAILWIND_INSET,
-    flex: TAILWIND_FLEX,
-  };
-  for (const [scale, table] of Object.entries(replaced)) {
-    assert.equal(theme[scale], table, `theme.${scale} is not the table from lib/tokens.ts`);
-    assert.ok(!(scale in extend), `theme.extend.${scale} restores Tailwind's whole default scale`);
-  }
-});
-
-test("a class from a scale this repo does not control produces no CSS", async () => {
-  const gone = ["max-w-md", "leading-7", "opacity-75", "z-50", "w-1/2", "grid-cols-12", "tracking-widest"];
-  const kept = ["max-w-page", "max-w-measure", "leading-none", "opacity-50", "z-20", "w-full", "w-touch", "tracking-wider"];
-  const generated = await generatedClasses([...gone, ...kept]);
-  assert.deepEqual(
-    gone.filter((name) => generated.has(name)),
-    [],
-    "an off-scale utility still generates CSS, so nothing stops the next page inventing a value",
-  );
-  for (const name of kept) {
-    assert.ok(generated.has(name), `${name} stopped generating — a recipe just lost a declaration`);
-  }
 });
 
 /**
@@ -4919,41 +4791,6 @@ const RULES_SHIPPED_UNASKED = [
   // three about the stylesheet this deletion removed. Prose, not a ledger.
   "grid",
 ];
-
-test("the stylesheet contains no rule that no file asks for", async () => {
-  const asked = new Set<string>(allUsedClasses());
-  for (const relative of UNMIGRATED_SOURCES) {
-    for (const name of classesIn(classListsIn(readSource(relative)))) asked.add(name);
-  }
-
-  // The real content globs, so this is the stylesheet that ships.
-  const result = await postcss([
-    tailwindcss({
-      ...tailwindConfig,
-      content: [
-        join(root, "app/**/*.{ts,tsx}"),
-        join(root, "components/**/*.{ts,tsx}"),
-        join(root, "lib/tokens.ts"),
-      ],
-    }),
-  ]).process("@tailwind utilities;", { from: undefined });
-
-  const shipped = new Set<string>();
-  result.root.walkRules((rule) => {
-    for (const selector of rule.selectors) {
-      for (const name of classNamesInSelector(selector)) shipped.add(name);
-    }
-  });
-  assert.ok(shipped.size > 50, `only ${shipped.size} rules built — the build is not running`);
-
-  const unasked = [...shipped].filter((name) => !asked.has(name)).sort();
-  assert.deepEqual(
-    unasked,
-    [...RULES_SHIPPED_UNASKED].sort(),
-    "a rule is in the stylesheet the console downloads and no file uses it: " +
-      "a utility name was written in prose or in a list of identifiers, and Tailwind reads text",
-  );
-});
 
 /* ── The shell ───────────────────────────────────────────────────────── */
 

@@ -52,6 +52,46 @@
 :root {
   color-scheme: dark;
 
+  /* ── shadcn/ui 的语义变量 ─────────────────────────────────────────
+   *
+   * shadcn 的组件全部按这套名字取色，所以它们必须存在。值取自 shadcn 的默认
+   * 暗色主题（zinc），这是刻意的选择：整套组件来自它，配色也跟着它走，避免
+   * 出现「组件是它的、颜色是我们的」那种半吊子状态。
+   *
+   * 🔴 `--accent` 在这里的含义和上面那套不同。shadcn 用它表示**悬停时的表面**，
+   * 而这个项目原本用它表示品牌强调色。两个含义无法共存，所以品牌色让位，改叫
+   * `--brand`（下面）。任何写 `bg-accent` 的旧代码从此拿到的是悬停灰，不是品牌
+   * 色——换组件时要逐个改过来。
+   *
+   * 单位是 HSL 的三个分量、不带 hsl()，这是 shadcn 的约定：它让 Tailwind 能写
+   * `hsl(var(--background) / <alpha-value>)`，从而支持 `bg-background/50` 这种
+   * 透明度语法。写成 #hex 就没有这个能力。 */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+  --radius: 0.5rem;
+
+  /* 这个产品自己的强调色，从 --accent 让位后改叫 --brand。
+     值和让位前一致，所以品牌识别没有变，变的只是名字。 */
+  --brand: #7dd3a0;
+
+
   /* Surfaces, from furthest back to nearest the reader. Four distinct values,
      stepping away from the canvas as a surface rises. */
   --bg: #010102;
@@ -167,6 +207,27 @@
 }
 
 :root[data-theme="light"] {
+  /* shadcn 的亮色主题（zinc）。只重声明与暗色不同的，和上面那套的做法一致。 */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+
   color-scheme: light;
   /* The light ladder is the dark one's mirror, built from the same step ratios
      rather than the same luminance deltas — near white the same delta is a far

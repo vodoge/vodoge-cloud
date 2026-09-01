@@ -2515,7 +2515,16 @@ const CAPTURED_FROM = {
   // `lib/tokens.ts` and the message catalogues: a guard entry for adopting and
   // unmanaging a module, and the sentences those two put in front of an
   // operator. Neither is drawn on the install screens.
-  chrome: "9e3b8e793e0a7efb66a27e275e3433b936b1337968a70a979811d687d5477ed1",
+    // 重新盖章于前端重建第 1 阶段（docs/frontend-rebuild/）。
+  //
+  // 变的是 globals.css：加进了 shadcn/ui 要求的一整套语义变量，Tailwind 的
+  // 透明度刻度也恢复成完整的。**外观此刻没有变**——组件还没换，页面仍然用
+  // 旧的 token 渲染，所以那两张安装截图现在依然是准的。
+  //
+  // ⚠️ 第 3、4 阶段换掉组件之后外观会真的变，**那时候必须重拍截图**。守着这件
+  // 事的其余守卫已经退休，没有东西会再提醒——安装弹窗展示的是给用户看的东西，
+  // 展示一个不存在的界面比没有截图更糟。
+  chrome: "b74411feb9e7185b40a74c8c08b9b2336a56266c76033a9687b91a83f5aa04de",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

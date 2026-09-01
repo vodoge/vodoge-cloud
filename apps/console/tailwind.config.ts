@@ -21,6 +21,9 @@ import {
   TAILWIND_WIDTH,
   TAILWIND_Z_INDEX,
 } from "./lib/tokens.ts";
+// 静态导入而不是 require：`tokens.test.ts` 以 ESM 导入这个配置，
+// 而 ESM 作用域里没有 require。
+import animate from "tailwindcss-animate";
 
 /**
  * The Tailwind theme is generated, not written.
@@ -64,6 +67,77 @@ import {
  * second, disagreeing switch. `lib/tokens.test.ts` rejects `dark:` in migrated
  * files for that reason.
  */
+/**
+ * shadcn/ui 要求的颜色名。
+ *
+ * 组件全部按这套名字取色，所以它们必须在 theme 里存在。写成
+ * `hsl(var(--x) / <alpha-value>)` 而不是 `var(--x)`：CSS 变量里存的是不带
+ * hsl() 的三个分量，Tailwind 在这里补上函数和 alpha 通道，这就是
+ * `bg-background/50`、`border-border/40` 这类透明度语法能工作的原因。
+ *
+ * 🔴 `accent` 在这里是 shadcn 的含义——**悬停时的表面**，不是品牌强调色。
+ * 这个项目原本的品牌色让位改叫 `brand`。任何还写着 `bg-accent` 的旧代码，
+ * 现在拿到的是悬停灰；换组件时要逐个改过来。
+ */
+/**
+ * 整条透明度刻度。
+ *
+ * 🔴 shadcn 的组件用它——`bg-primary/10`、`bg-black/80`、`border-border/40`
+ * 都在它生成的代码里。这个项目原本把刻度**替换**成四档（0/50/90/100），而
+ * Tailwind 对刻度外的值**不报错，只是静默不生成那条规则**：类名照样写在
+ * HTML 上，样式表里没有它，颜色悄悄变成完全不透明。
+ *
+ * 实测确认过这个行为：同一次构建里 `text-foreground/50` 能编出来，
+ * `bg-primary/10` 编不出来，差别只在数字在不在那四档里。
+ *
+ * 写死而不是从 `tailwindcss/defaultTheme` 导入：那个路径在 Node 的 ESM 加载器
+ * 下解析不了，而 `tokens.test.ts` 正是以 ESM 导入这个配置的。
+ */
+const FULL_OPACITY = {
+  "0": "0", "5": "0.05", "10": "0.1", "15": "0.15", "20": "0.2", "25": "0.25",
+  "30": "0.3", "35": "0.35", "40": "0.4", "45": "0.45", "50": "0.5",
+  "55": "0.55", "60": "0.6", "65": "0.65", "70": "0.7", "75": "0.75",
+  "80": "0.8", "85": "0.85", "90": "0.9", "95": "0.95", "100": "1",
+} as const;
+
+const SHADCN_COLORS = {
+  background: "hsl(var(--background) / <alpha-value>)",
+  foreground: "hsl(var(--foreground) / <alpha-value>)",
+  card: {
+    DEFAULT: "hsl(var(--card) / <alpha-value>)",
+    foreground: "hsl(var(--card-foreground) / <alpha-value>)",
+  },
+  popover: {
+    DEFAULT: "hsl(var(--popover) / <alpha-value>)",
+    foreground: "hsl(var(--popover-foreground) / <alpha-value>)",
+  },
+  primary: {
+    DEFAULT: "hsl(var(--primary) / <alpha-value>)",
+    foreground: "hsl(var(--primary-foreground) / <alpha-value>)",
+  },
+  secondary: {
+    DEFAULT: "hsl(var(--secondary) / <alpha-value>)",
+    foreground: "hsl(var(--secondary-foreground) / <alpha-value>)",
+  },
+  muted: {
+    DEFAULT: "hsl(var(--muted) / <alpha-value>)",
+    foreground: "hsl(var(--muted-foreground) / <alpha-value>)",
+  },
+  accent: {
+    DEFAULT: "hsl(var(--accent) / <alpha-value>)",
+    foreground: "hsl(var(--accent-foreground) / <alpha-value>)",
+  },
+  destructive: {
+    DEFAULT: "hsl(var(--destructive) / <alpha-value>)",
+    foreground: "hsl(var(--destructive-foreground) / <alpha-value>)",
+  },
+  border: "hsl(var(--border) / <alpha-value>)",
+  input: "hsl(var(--input) / <alpha-value>)",
+  ring: "hsl(var(--ring) / <alpha-value>)",
+  /** 这个产品自己的强调色，从 accent 让位之后的名字。 */
+  brand: "var(--brand)",
+} as const;
+
 export default {
   content: [
     "./app/**/*.{ts,tsx}",
@@ -81,7 +155,7 @@ export default {
     preflight: false,
   },
   theme: {
-    colors: TAILWIND_COLORS,
+    colors: { ...TAILWIND_COLORS, ...SHADCN_COLORS },
     spacing: TAILWIND_SPACING,
     fontSize: TAILWIND_FONT_SIZE,
     borderRadius: TAILWIND_BORDER_RADIUS,
@@ -90,7 +164,16 @@ export default {
     maxWidth: TAILWIND_MAX_WIDTH,
     lineHeight: TAILWIND_LINE_HEIGHT,
     letterSpacing: TAILWIND_LETTER_SPACING,
-    opacity: TAILWIND_OPACITY,
+    // 🔴 shadcn 的组件用整条透明度刻度——bg-primary/10、bg-black/80、
+    // border-border/40 都在它生成的代码里。这个项目原本把刻度**替换**成了
+    // 四档（0/50/90/100），而 Tailwind 对刻度外的值不会报错，只是**静默不
+    // 生成那条规则**：类名照样写在 HTML 上，样式表里没有它，颜色悄悄变成
+    // 完全不透明。
+    //
+    // 实测：text-foreground/50 能编出来，bg-primary/10 编不出来——差别只在
+    // 数字在不在那四档里。所以这里恢复 Tailwind 的默认刻度，并保留原有的
+    // 四档（值相同，是默认刻度的子集）。
+    opacity: FULL_OPACITY,
     zIndex: TAILWIND_Z_INDEX,
     width: TAILWIND_WIDTH,
     gridTemplateColumns: TAILWIND_GRID_TEMPLATE_COLUMNS,
@@ -124,5 +207,7 @@ export default {
       ringOffsetColor: { DEFAULT: "var(--bg)" },
     },
   },
-  plugins: [],
+  // shadcn 的组件用 `data-state` 驱动进出场动画，这个插件提供它们要的
+  // `animate-in` / `fade-in-0` / `zoom-in-95` 这类工具类。
+  plugins: [animate],
 } satisfies Config;
