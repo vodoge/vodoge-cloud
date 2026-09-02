@@ -195,7 +195,7 @@ export function CardDisclosure({
  * A row of stat cards. `flex`, never `grid` — see LEGACY_UTILITY_COLLISIONS.
  */
 export function StatRow({ className, ...props }: DivProps) {
-  return <div className={cn(STAT.row, className)} {...props} />;
+  return <div className={cn("flex flex-col gap-4 sm:flex-row", className)} {...props} />;
 }
 
 /**
@@ -223,10 +223,26 @@ export function StatCard({
   tone?: StatTone;
 }) {
   return (
-    <section className={cn(STAT.root, className)} {...props}>
-      <span className={STAT.label}>{label}</span>
-      <span className={cn(STAT.value, tone ? STAT.tone[tone] : undefined)}>{value}</span>
-      {hint ? <span className={STAT.hint}>{hint}</span> : null}
+    <section
+      className={cn("flex flex-1 flex-col gap-1 rounded-lg border border-border bg-surface p-4 shadow", className)}
+      {...props}
+    >
+      <span className="font-mono text-xs font-medium uppercase tracking-eyebrow text-muted-foreground">
+        {label}
+      </span>
+      {/* 🔴 `STAT.tone` 是这批配方里唯一**没有**内联的东西，而且是刻意的：它不是
+          样式而是语义——「哪个词算好、哪个算坏」。docs/frontend-rebuild/
+          cloud-shadcn.md 把这一类明确划进「tokens.ts 删干净之后仍然留下」的那部
+          分，而且 `StatTone` 这个类型就是从这个对象推出来的。 */}
+      <span
+        className={cn(
+          "font-mono text-2xl font-medium leading-none tracking-tight tabular-nums text-foreground",
+          tone ? STAT.tone[tone] : undefined,
+        )}
+      >
+        {value}
+      </span>
+      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </section>
   );
 }
