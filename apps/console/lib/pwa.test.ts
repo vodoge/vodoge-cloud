@@ -1950,6 +1950,51 @@ test("each screenshot starts at the top of the document, not part way down it", 
   }
 });
 
+/**
+ * 重拍的方法是一个能跑的工具，不是一段会烂掉的说明。
+ *
+ * 🔴 **这条存在是因为这一族守卫的失败信息只会说「重拍」，不会说「怎么拍」。**
+ * 而怎么拍有两条是必须的，两条都是拍错一次之后才知道的：灰度抗锯齿，以及从
+ * y=0 开始裁。把它们写成注释，下一个人会照着注释拍，然后在注释和工具分家的那天
+ * 拍出一张过不了的图，并且以为是守卫错了。
+ *
+ * 所以这里检查的是**工具**：那两条开关真的在命令行参数里，裁切真的从零开始，
+ * 尺寸真的是从 manifest 读的而不是又写死一遍。
+ */
+test("the screenshot recipe is a tool, and the tool still does what the recipe says", () => {
+  const capture = readFileSync(join(root, "scripts/screenshots/capture.mjs"), "utf8");
+
+  assert.match(
+    capture,
+    /"--disable-lcd-text"/,
+    "the capture no longer disables subpixel antialiasing, so glyph edges will produce colours " +
+      "the retired-colour guard cannot explain — it was written after exactly that failure",
+  );
+  assert.match(
+    capture,
+    /clip: \{ x: 0, y: 0/,
+    "the capture no longer clips from the top of the document, so a scrolled frame would pass " +
+      "every size and palette check and fail only the top-profile one",
+  );
+  assert.match(
+    capture,
+    /consoleManifest\(\)\.screenshots/,
+    "the capture stopped reading its sizes from the manifest — two places to remember a size is " +
+      "how a frame ends up being scaled by the browser to a size it is not",
+  );
+  assert.ok(
+    !/\b(?:780|1688|1280x800)\b/.test(capture.replace(/\/\*[\s\S]*?\*\//g, "")),
+    "a screenshot size is typed into the capture script as well as declared in the manifest",
+  );
+
+  // 桩网关是它的另一半，而那一半有一个静默失败模式值得钉住：租户来自请求头，
+  // 转发时写的 host 必须和它声明的 slug 一致，否则 middleware 去问网关要的是
+  // 另一个租户，页面会回到登录页——而登录页也能拍出一张尺寸和配色都对的图。
+  const stub = readFileSync(join(root, "scripts/screenshots/stub-gateway.mjs"), "utf8");
+  assert.match(stub, /\$\{TENANT\.slug\}\.vodoge\.com/, "the stub forwards a host it did not derive from its own tenant");
+  assert.match(stub, /vodoge_session=/, "the stub stopped setting a session cookie, so it would capture the login page");
+});
+
 test("the manifest still asks for a standalone window with the app's own colours", () => {
   const m = consoleManifest();
   assert.equal(m.display, "standalone");
@@ -2611,23 +2656,10 @@ const CAPTURED_FROM = {
   // 东西」——手机帧底部那条五格导航栏在树里已经没有对应组件。现在两张都是这棵树
   // 真正渲染出来的画面。
   //
-  // **怎么拍的，写下来是因为下一次还得这么拍：**
-  //
-  //   1. 起一个桩网关（scratchpad/stub-gateway.mjs，不在仓库里）。它同时是反向
-  //      代理：自己应答 /v1/*，其余转发给 next 并注入租户头
-  //      （x-vodoge-tenant-id / -slug / -region / -status）和会话 cookie——租户
-  //      不是从 host 解析的，是网关注入的，所以直连 next 只会看到登录页。
-  //   2. `npm run build`，然后 `node .next/standalone/server.js`。⚠️ 静态资源要
-  //      `cp -r .next/static/. .next/standalone/.next/static/`，那个结尾的 `/.`
-  //      不能省——docs/execution-plan.md 记着省掉它会生成 static/static，页面不
-  //      报错但不上 CSS。而且必须在拷完之后再启动服务。
-  //   3. Playwright + Chromium，视口 390x844 @2x 和 1280x800 @1x，
-  //      colorScheme: "dark"，clip 从 y=0 开始。
-  //   4. 🔴 **必须带 `--disable-lcd-text`。** Chromium 默认次像素抗锯齿，R/G/B
-  //      按不同比例插值，字缘会出现像 #090919 这种单通道抬高的颜色；而下面那条
-  //      「退休的颜色藏不住」的抗锯齿模型是三通道共用一个比例的灰度混合，解释不
-  //      了它们。第一次拍完就是被这条抓出来的。
-  //
+  // **怎么拍的写在工具里，不在这里。** `scripts/screenshots/capture.mjs` 的头部
+  // 是那份说明，`stub-gateway.mjs` 是它需要的第二个进程。散文和工具分家是这个
+  // 仓库反复吃过亏的形状，所以下面那条 `the screenshot recipe is a tool` 把两者
+  // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
   chrome: "944adb5675c19ae54493d5023c49763aebaf182909d36aab9d7e7406b092b4a9",
