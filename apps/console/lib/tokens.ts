@@ -16,10 +16,18 @@
  * same string kept inside a `.tsx` is unreachable. That is the whole reason
  * for the split, and it is why `components/ui/*.tsx` hold no class literals.
  *
- * The edge panel (a single self-contained HTML file in a different repository,
- * with no build step and no npm) copies the names and values below by hand.
- * That is the only way the two surfaces can share a visual language, so
- * **renaming a token here is a change to another repository too.**
+ * ⚠️ **This file used to say that renaming a token here changed another
+ * repository too.** That was true while the edge panel (a single
+ * self-contained HTML file in a different repo, no build step, no npm) copied
+ * these names and values by hand, and `scripts/check-token-parity.cjs` held
+ * the two in step in CI.
+ *
+ * That guard was retired and deleted on 2026-09-02, because each surface is
+ * being rebuilt on its own framework — this console on shadcn/ui, the panel on
+ * Leptos + Thaw. **The two visual languages have already diverged**: this
+ * console's canvas is `#09090b`, the panel's is still `#010102`, and the panel
+ * still declares sixteen tokens that no longer exist here. Renaming a token
+ * here is now a local change. See `docs/frontend-rebuild/README.md`.
  */
 
 /* ── Tokens ──────────────────────────────────────────────────────────────

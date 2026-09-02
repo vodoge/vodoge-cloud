@@ -23,9 +23,12 @@ import { Input as ShadcnInput } from "@/components/ui/input";
  * writes its classes at its own call site. Wiring the two together is a
  * separate decision from this one.
  *
- * The recipe `FORM.textarea` still has to exist in `lib/tokens.ts` whatever
- * happens here: `tokens.test.ts` asserts a recipe for every form element the
- * console renders, and reads that object to do it.
+ * ⚠️ This used to add that the recipe `FORM.textarea` had to keep existing in
+ * `lib/tokens.ts` because `tokens.test.ts` asserted a recipe for every form
+ * element the console renders. **Both are gone**: the recipe and the guard that
+ * read it were deleted together, because a guard reading a deleted object stops
+ * measuring anything and stays green. What replaced it reads these `.tsx`
+ * sources directly.
  *
  * The class strings used to live in `lib/tokens.ts` and are written out below
  * now. What guarded them survives the move: every `.tsx` under `app/` and

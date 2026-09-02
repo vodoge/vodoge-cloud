@@ -2662,7 +2662,7 @@ const CAPTURED_FROM = {
   // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
-  chrome: "944adb5675c19ae54493d5023c49763aebaf182909d36aab9d7e7406b092b4a9",
+  chrome: "e63a0b09b0016168c766808cb8a9b63ec0268ac71225696cd5567abe74ebef94",
   shots: {
     "/screenshot-mobile.png": "6a881b3757d8c775628a2ec120af31ebc13aa4a5cda4359e223fb0d3ba1cf4d8",
     "/screenshot-wide.png": "967c4caba4413ea598f3f6b680cff6355a5165dd10f08a47ac9ac834db574b50",
