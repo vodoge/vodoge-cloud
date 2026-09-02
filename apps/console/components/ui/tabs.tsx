@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { cn } from "@/lib/cn";
-import { TABS } from "@/lib/tokens";
 
 /**
  * Tabs.
@@ -28,7 +27,14 @@ import { TABS } from "@/lib/tokens";
  */
 
 export function TabList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div role="tablist" className={cn(TABS.list, className)} {...props} />;
+  return <div
+      role="tablist"
+      className={cn(
+        "flex flex-wrap items-center gap-x-4 border-0 border-b border-solid border-border",
+        className,
+      )}
+      {...props}
+    />;
 }
 
 export type TabProps = {
@@ -45,7 +51,11 @@ export type TabProps = {
 };
 
 export function Tab({ href, current, className, children, ...props }: TabProps) {
-  const classes = cn(TABS.tab, current ? TABS.tabCurrent : undefined, className);
+  const classes = cn(
+    "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-1 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground",
+    current ? "border-brand-edge text-foreground" : undefined,
+    className,
+  );
   if (href !== undefined) {
     const { disabled, ...anchorProps } = props;
     return (
@@ -63,5 +73,5 @@ export function Tab({ href, current, className, children, ...props }: TabProps) 
 
 /** What the selected tab shows. Separate so the padding is not repeated. */
 export function TabPanel({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div role="tabpanel" className={cn(TABS.panel, className)} {...props} />;
+  return <div role="tabpanel" className={cn("pt-4", className)} {...props} />;
 }
