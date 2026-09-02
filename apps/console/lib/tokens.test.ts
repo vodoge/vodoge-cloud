@@ -911,7 +911,8 @@ const WASHES = ["brand-wash", "ok-wash"] as const;
  *
  * One stacked entry is real and the description of it used to be wrong twice
  * over. `components/conversation.tsx:377` does put a `bg-ok-wash` delivery
- * badge inside `INBOX.messageOut`, so a badge inside a bubble is a genuine
+ * badge inside the outbound bubble in `components/conversation.tsx`, so a
+ * badge inside a bubble is a genuine
  * nesting — but T001 took the hue out of `--brand-wash`, so **it is a green
  * pill on a NEUTRAL bubble, not "a green pill on a green bubble"**, and that
  * is a lighter backdrop than the phrase implies.
@@ -1276,7 +1277,8 @@ test("the status four are pinned as hexes and the accent is four identities", ()
  *
  * ⚠️ **The stacked entries are a deliberate superset and were not narrowed to
  * make this pass.** The literal red site today is a `bg-bad-wash text-bad`
- * badge inside `INBOX.messageOut` (`bg-brand-wash`), which composites to
+ * badge inside the outbound bubble (`bg-brand-wash`,
+ * `components/conversation.tsx`), which composites to
  * #413030 and is easier than #284f3e. Trimming the set to the sites that exist
  * this month is the move that produced the defect in the first place, one
  * level further out, so the superset stands and the colours were moved to meet

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/form";
 import type { ThreadMessage } from "@/lib/catalog";
 import { cn } from "@/lib/cn";
 import { interpolate } from "@/lib/i18n";
-import { INBOX, toneForDeliveryStatus } from "@/lib/tokens";
+import { toneForDeliveryStatus } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -144,7 +144,7 @@ export function Conversation({
         };
 
   return (
-    <div className={INBOX.stack}>
+    <div className="flex flex-col gap-4">
       {writable ? (
         <ButtonRow>
           <ContactName
@@ -167,16 +167,16 @@ export function Conversation({
       ) : (
         // Where the controls were. An empty space above a conversation reads
         // as a page that failed to finish loading.
-        <p className={INBOX.note}>{labels.readOnly}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.readOnly}</p>
       )}
 
-      <ol className={INBOX.list}>
+      <ol className="m-0 flex list-none flex-col gap-3 p-0">
         {messages.map((message) => (
           <li
             key={message.id}
             className={cn(
-              INBOX.message,
-              message.direction === "inbound" ? INBOX.messageIn : INBOX.messageOut,
+              "max-w-measure rounded-lg border border-solid border-border p-3",
+              message.direction === "inbound" ? "self-start rounded-bl bg-surface" : "self-end rounded-br bg-brand-wash",
             )}
           >
             {message.encoding === "8bit" ? (
@@ -185,14 +185,14 @@ export function Conversation({
               // broken decoder, which is how four real decoding faults
               // stayed hidden for weeks.
               <>
-                <p className={cn(INBOX.body, INBOX.metaTime)}>{message.body}</p>
-                <p className={INBOX.binaryNote}>{labels["encoding.8bit"]}</p>
+                <p className={cn("m-0 whitespace-pre-wrap break-all", "font-mono text-xs tabular-nums text-muted-foreground")}>{message.body}</p>
+                <p className="m-0 mt-1 text-xs italic text-muted-foreground">{labels["encoding.8bit"]}</p>
               </>
             ) : (
-              <p className={INBOX.body}>{message.body}</p>
+              <p className="m-0 whitespace-pre-wrap break-all">{message.body}</p>
             )}
-            <div className={INBOX.meta}>
-              <span className={INBOX.metaTime}>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
                 {new Date(message.receivedAt).toISOString().replace("T", " ").slice(5, 16)}
               </span>
               {message.direction === "outbound" ? (
@@ -380,14 +380,14 @@ function DeliveryBadge({ message, labels }: { message: ThreadMessage; labels: La
       {/* When the network says it handed the message over. This is the
           discharge time from the report, not when the report reached us. */}
       {message.status === "delivered" && message.deliveredAt ? (
-        <span className={INBOX.metaTime}>
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
           {" "}
           {new Date(message.deliveredAt).toISOString().replace("T", " ").slice(5, 16)}
         </span>
       ) : null}
       {/* Why it failed is the half that says what to do about it. */}
       {message.failureReason ? (
-        <span className={INBOX.metaDetail}> — {message.failureReason}</span>
+        <span className="text-muted-foreground"> — {message.failureReason}</span>
       ) : null}
     </span>
   );

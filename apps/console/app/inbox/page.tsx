@@ -31,7 +31,6 @@ import {
 } from "@/lib/session";
 import { blockedSendModules } from "@/lib/sms-safety";
 import { gatewayBaseUrl } from "@/lib/tenant";
-import { INBOX } from "@/lib/tokens";
 
 /**
  * The inbox: send a message, name a number, open a conversation.
@@ -170,7 +169,7 @@ export default async function InboxPage() {
               }}
             />
           ) : (
-            <p className={INBOX.note}>{t("role.readOnlyInbox", locale)}</p>
+            <p className="m-0 text-sm text-muted-foreground">{t("role.readOnlyInbox", locale)}</p>
           )}
         </Card>
 
@@ -216,7 +215,7 @@ export default async function InboxPage() {
                             {thread.unread}
                           </Badge>
                         ) : (
-                          <span className={INBOX.lastRead}>—</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -255,19 +254,19 @@ export default async function InboxPage() {
                         {thread.name || thread.peer}
                       </Link>
                       {thread.name ? (
-                        <div className={INBOX.peerUnder}>{thread.peer}</div>
+                        <div className="font-mono text-xs tabular-nums text-muted-foreground">{thread.peer}</div>
                       ) : null}
                     </TableCell>
-                    <TableCell className={INBOX.lastBody}>
+                    <TableCell className="break-all">
                       {/* Which way the last message went is what says
                           whether this conversation is waiting on you. */}
-                      <span className={INBOX.lastDirection}>
+                      <span className="text-muted-foreground">
                         {thread.lastInbound ? "← " : "→ "}
                       </span>
                       {/* Unread is emphasised rather than badged alone: the
                           body is what the operator is scanning, and a count
                           in another column does not make it stand out. */}
-                      <span className={thread.unread > 0 ? INBOX.lastUnread : INBOX.lastRead}>
+                      <span className={thread.unread > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}>
                         {thread.lastBody}
                       </span>
                     </TableCell>
@@ -275,7 +274,7 @@ export default async function InboxPage() {
                       {/* A `<span>` rather than the cell itself: `display:
                           flex` on a `<td>` takes it out of the table layout
                           and the browser puts an anonymous cell back. */}
-                      <span className={INBOX.countCell}>
+                      <span className="flex flex-wrap items-center gap-2">
                         {thread.messages}
                         {thread.unread > 0 ? (
                           <Badge tone="warn" dot={false}>

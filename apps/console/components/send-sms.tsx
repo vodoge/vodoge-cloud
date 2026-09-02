@@ -7,7 +7,6 @@ import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialo
 import { Field, Form, FormError, FormHint, Input, Select } from "@/components/ui/form";
 import { interpolate } from "@/lib/i18n";
 import { sendHold } from "@/lib/sms-safety";
-import { INBOX } from "@/lib/tokens";
 
 /**
  * The one control in this console that spends money on the operator's behalf.
@@ -182,13 +181,13 @@ export function SendSmsForm({
         {/* The refusal, in the place the choice was made, with the reason and
             the correction on screen rather than behind the button. */}
         {hold === "blocked-module" ? (
-          <div className={INBOX.blocked}>
-            <span className={INBOX.blockedTitle}>
+          <div className="m-0 flex flex-col gap-2 rounded border border-solid border-bad bg-bad-wash p-3 text-sm text-destructive">
+            <span className="font-semibold">
               <Badge tone="bad">{labels.blockedBadge}</Badge> {labels.blockedTitle}
             </span>
-            <p className={INBOX.blockedBody}>{labels.blockedDevice}</p>
+            <p className="m-0">{labels.blockedDevice}</p>
             {blocked.map((module) => (
-              <p key={module.imei} className={INBOX.blockedBody}>
+              <p key={module.imei} className="m-0">
                 {module.why} {module.cost}
               </p>
             ))}
@@ -200,9 +199,9 @@ export function SendSmsForm({
             colour because it is a different claim: that one is settled, this
             one is "nobody could find out". */}
         {hold === "modules-unknown" ? (
-          <div className={INBOX.hold}>
-            <span className={INBOX.blockedTitle}>{labels.modemsUnknownTitle}</span>
-            <p className={INBOX.blockedBody}>{labels.modemsUnknown}</p>
+          <div className="m-0 flex flex-col gap-2 rounded border border-solid border-warn bg-warn-wash p-3 text-sm text-warn">
+            <span className="font-semibold">{labels.modemsUnknownTitle}</span>
+            <p className="m-0">{labels.modemsUnknown}</p>
           </div>
         ) : null}
 

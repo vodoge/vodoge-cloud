@@ -631,7 +631,8 @@ function washedBackdrops(theme: string, depth: number): { name: string; hex: str
  * `SHELL.navLinkCurrent` is `bg-brand-wash … text-fg-accent`. A chip is a
  * self-contained tinted thing, and a chip can be put inside another tinted
  * thing: `components/conversation.tsx:377` renders a `Badge` inside
- * `INBOX.messageOut`, which is `bg-brand-wash`. **Two layers is a real
+ * the outbound bubble in `components/conversation.tsx`, which is
+ * `bg-brand-wash`. **Two layers is a real
  * constraint for a chip**, and `lib/tokens.test.ts` sweeps it as such.
  *
  * ⚠️ **Where the second layer stops being observed and starts being
@@ -782,8 +783,8 @@ test("every colour painted as type is either a chip or ladder text", () => {
  * another chip. **Ladder text cannot.** It is body copy and metadata —
  * timestamps, column headings, hints — and the thing that creates a second
  * wash is a *badge*, which contains a status word and never contains metadata.
- * In `components/conversation.tsx` this is visible directly: `INBOX.metaTime`
- * and `INBOX.binaryNote` are **siblings of the `Badge`, not children of it**,
+ * In `components/conversation.tsx` this is visible directly: the timestamp and
+ * the 8-bit note are **siblings of the `Badge`, not children of it**,
  * so they sit on the one `brand-wash` of the bubble and no deeper. Two layers
  * is a real constraint for a chip and an **unreachable** superset for ladder
  * text.

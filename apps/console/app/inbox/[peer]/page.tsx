@@ -15,7 +15,6 @@ import {
 } from "@/lib/session";
 import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { INBOX } from "@/lib/tokens";
 
 /**
  * One conversation, and the three ways to change it.
@@ -62,16 +61,16 @@ export default async function ThreadPage({
     <>
       <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <Link href="/inbox" className={INBOX.backLink}>
+          <Link href="/inbox" className="text-sm text-muted-foreground no-underline hover:text-foreground">
             ← {t("inbox.title", locale)}
           </Link>
           {/* The name leads when there is one, with the number kept below:
               an operator checking which SIM answered still needs the digits,
               and a heading that replaced them would hide the one field that
               is unambiguous. */}
-          <h1 className={cn("m-0 text-xl font-semibold tracking-tight text-foreground", name ? undefined : INBOX.titleMono)}>{name || peer}</h1>
+          <h1 className={cn("m-0 text-xl font-semibold tracking-tight text-foreground", name ? undefined : "font-mono")}>{name || peer}</h1>
           <p className="m-0 mt-1 text-sm text-muted-foreground">
-            {name ? <span className={INBOX.peerUnder}>{peer} · </span> : null}
+            {name ? <span className="font-mono text-xs tabular-nums text-muted-foreground">{peer} · </span> : null}
             {messages.length} {t("inbox.messages", locale)}
           </p>
         </div>
