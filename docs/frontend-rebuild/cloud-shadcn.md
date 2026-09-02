@@ -126,27 +126,81 @@ s5 1.5rem→6    s6 2rem→8     s7 3rem→12
 
 text-fg → text-foreground        text-fg-muted → text-muted-foreground
 text-bad → text-destructive      text-fg-accent → text-brand
+border-line → border-border      text-fg-faint → text-muted-foreground
+bg-surface-raised → bg-muted
 ```
+
+⚠️ **`text-fg-accent → text-brand` 这一条不要无条件套用。** `--brand` 只在暗色
+里声明过，亮色主题没有覆盖，所以亮色下它是 #7dd3a0 on #ffffff = **1.80:1**，
+而它替换掉的 `--fg-accent` 亮色下是 19.17:1。导航当前项（`SHELL.navLinkCurrent`、
+`BOTTOM_NAV.cellCurrent`、`sheetLinkCurrent`）因此走的是 `text-foreground`：
+`--fg-accent` 的定义注释本来就写着它等于 `--fg`，这样既保值又保意图。
+
+没有确认等价物的一律**原样保留，不猜**：`bg-surface`、`bg-surface-hover`、
+`border-line-strong`、`bg-accent-wash`、`bg-bad-wash`、`from-accent`、
+`to-accent-strong`、`text-accent-ink`、`bg-bg`、`accent-accent`、
+`focus:border-accent-edge`、`w-rail`、`max-w-page`、`max-h-panel`、
+`min-h-touch`、`min-w-touch`、`min-h-dvh`、`rounded-pill`、`tracking-eyebrow`。
+`tailwind.config.ts` 的 `colors` 是 `{...TAILWIND_COLORS, ...SHADCN_COLORS}`
+合并的，这些名字仍然产出 CSS——它们属于「仍然有效」而不是「已改名」。
 
 ### 进度
 
-- ✅ **PAGE**（154 处）→ 0，`import { PAGE }` 已从 22 个文件清掉
-- ⬜ TABLE 56
-- ⬜ SHELL 35
-- ⬜ FORM 21
-- ⬜ CARD 18 / BOTTOM_NAV 11 / STAT 6 / LOG 3 / CONFIRM 2 / BUTTON 1
+原计划这一节只跟踪十个配方。**动手时清点发现还有八个同类的没进过这张表**，
+所以下面分成两半：上半是原表（已清零），下半是补上的。
 
-顺序：TABLE → SHELL → FORM。FORM 放最后，因为换成 shadcn 的 `Form` 那套要动
-状态管理（react-hook-form）。
+| 配方 | 起点 | 现在 |
+| --- | --- | --- |
+| PAGE | 154 | ✅ 0 |
+| TABLE | 56 | ✅ 0 |
+| SHELL | 34 | ✅ 0 |
+| FORM | 21 | ✅ 0（余 1 处注释引用，见下） |
+| CARD | 18 | ✅ 0 |
+| BOTTOM_NAV | 11 | ✅ 0 |
+| STAT | 6 | ✅ 1（`STAT.tone`，刻意保留，见下） |
+| LOG | 3 | ✅ 0 |
+| CONFIRM | 2 | ✅ 0 |
+| BUTTON | 1 | ✅ 0（那 1 处本来就只是注释） |
+
+**原表之外，同类且未开始的（73 处）：**
+
+| 配方 | 调用点 | 在哪 |
+| --- | --- | --- |
+| INBOX | 32 | inbox 两页、conversation、send-sms |
+| PWA | 12 | connection-status、pwa |
+| CENTERED | 8 | login、not-a-tenant、not-found |
+| SEGMENTED | 8 | journal、locale-switch |
+| JOURNAL | 6 | journal |
+| TABS | 4 | ui/tabs |
+| BUTTON_ROW | 2 | ui/button-row |
+| OUTPUT | 1 | ui/output |
+
+`SAFE_AREA`（7 处）和 `NAV_MORE`（2 处）**不在这份清单里**，而且不该进来：前者
+是内联样式（`env(safe-area-inset-*)` 写不成类），后者是导航数据。
+
+### 哪些是刻意留下的
+
+- **`STAT.tone`** —— `{ok, warn, bad}` 到状态色的映射。它不是样式而是语义，
+  正好属于下面说的「tokens.ts 删干净之后仍然留下」那一类；而且 `StatTone` 这个
+  类型就是 `keyof typeof STAT.tone` 推出来的。
+- **`FORM.textarea`** —— 没有调用点了，但 `tokens.test.ts` 有一条守卫断言
+  「控制台渲染的每个表单元素都要有配方」，它读的就是 FORM 对象。
+- 两处注释引用（`FORM.textarea`、`BUTTON.variant.risk`），说明的正是上面两件事。
 
 全部做完之后 `lib/tokens.ts` 基本可以删掉，只留状态色和 `toneForState` 这类
 **真语义**——那些不是样式，是「哪个词算好、哪个算坏」。
 
-### 当前红的测试（3 条，进行中）
+🔴 **删它的时候有两件事要一起处理**，否则会互相卡住：一是上面那条读 FORM 对象
+的守卫（单删配方它会红）；二是 `lib/tokens.ts` 是 Tailwind 的 **content 文件**，
+没人用的配方照样把规则编进出货的样式表（单留着就一直出货死规则）。
 
-- `usbnet switch` / `settings page` —— 都是「文件里不许出现裸类名」这条断言的
-  残余，属于要退休的那类，还没清完
-- PWA 截图摘要 —— 见下
+### 测试状态
+
+全绿：`npm run typecheck` 通过，`npm test` 349 条全过。
+
+（这一节原本记着「当前红的测试 3 条」——`usbnet switch` / `settings page` /
+PWA 截图摘要。前两条已经不红，第三条每次盖章后也是绿的；记录留在这里是因为
+**它绿不代表截图是对的**，见下。）
 
 ## ⚠️ PWA 安装截图已经过期
 
@@ -155,3 +209,52 @@ text-bad → text-destructive      text-fg-accent → text-brand
 
 拍摄需要浏览器、特定视口和一个已登录的会话。守着这件事的其余守卫已经退休，
 **不会再有东西提醒**——`lib/pwa.test.ts` 里 `chrome` 那行上面的注释就是提醒本身。
+
+这一天四次盖章里，**三次是「看得见但拍不了」**（SHELL、BOTTOM_NAV、STAT），
+只有 CARD 是逐条核过、确认画面里真的看不见。三笔欠账是叠在一起的。
+`lib/pwa.test.ts` 里的注释把这两类分开记着——前者是判断，后者是欠账。
+
+## 🔴 换主题带进来的三个缺陷（配方内联时量出来的，都还没修）
+
+README 里写着「退休 13 条对比度守卫」这个取舍被明确接受过，代价是「配色改错只能
+靠肉眼发现」。下面三条就是那个代价，都是在做内联时顺手量出来的，**不属于内联本身
+的范围，没有在那几个提交里改**。
+
+**一、`--accent` 在同一个 `:root` 里声明了两次，后一次赢。**
+shadcn 块写 `--accent: 240 3.7% 15.9%`（HSL 三元组），旧调色板块在同一个规则里
+更靠后的位置写 `--accent: #f5f5f5`（hex）。而 `tailwind.config.ts` 的 `colors`
+里 `accent` 走的是 shadcn 的包装 `hsl(var(--accent) / <alpha-value>)`，于是编出
+`hsl(#f5f5f5 / 1)` —— 非法，整条声明在计算值阶段作废。
+
+后果：`button.tsx` 的 `outline` 和 `ghost` 变体**没有悬停背景**、
+`dropdown-menu.tsx` 四处、`select.tsx` 的选中项高亮全是死的；`SHELL.brandMark`
+的渐变 from 停失效，`background-image` 算成 `none`，那个近黑色的「V」落在近黑
+背景上——**header 里的品牌角标现在是看不见的**。（对照：`screenshot-wide.png`
+里它还有浅色渐变底，说明是接 shadcn 主题时引入的。）
+
+⚠️ 现有那条「每个用到的类必须产出 CSS」的守卫**抓不到这一类**：这些类确实产出了
+CSS 规则，坏的是变量的运行时取值。
+
+**二、`text-destructive` 在默认的暗色主题下是 2.08:1。**
+`--destructive` 暗色 `0 62.8% 30.6%` = #7f1d1d，那是个**填充色**——shadcn 自己
+的组件是 `bg-destructive text-destructive-foreground` 这样成对用的。这个控制台
+额外把它当**前景**用了：
+
+```
+暗色 #7f1d1d on --bg #010102 ............ 2.08:1
+暗色 #7f1d1d on --surface #0d0d0d ....... 1.94:1
+亮色 #ef4444 on #ffffff ................. 3.76:1
+对照，它替换掉的 --bad：暗色 11.45:1 / 亮色 7.90:1
+```
+
+`button.tsx` 的 `risk` 变体首当其冲——它的 docstring 说自己是给「让模组离开总线、
+或者不可撤销」的操作用的，而那行字现在在暗色下约 2:1。
+
+**三、`text-brand` 在亮色主题下是 1.80:1。** `--brand: #7dd3a0` 只在暗色声明过，
+亮色没有覆盖。已落地的两处是 `rules/page.tsx` 的链接和 `devices/page.tsx` 打开
+设备的主链接。详见上面映射表下的那条 ⚠️。
+
+三条同一个根因：**shadcn 的默认主题被整体采纳，但有三个 token 现在被用在它们没
+有被调过的角色上**。README 接受的那个取舍是「推导重来」，不是「出货 2:1 的文字」。
+修法都在主题层（globals.css / tailwind.config.ts），不在调用点，所以没有夹带进
+配方内联的提交里。
