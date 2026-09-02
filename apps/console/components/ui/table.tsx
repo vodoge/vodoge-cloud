@@ -1,7 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/cn"
-import { TABLE, tableCellClass } from "@/lib/tokens"
+import { tableCellClass } from "@/lib/tokens"
 
 const Table = React.forwardRef<
   HTMLTableElement,
@@ -64,7 +64,7 @@ const TableRow = React.forwardRef<
     ref={ref}
     className={cn(
       "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
-      head && TABLE.headRow,
+      head && "border-b border-border",
       className
     )}
     {...props}
@@ -80,7 +80,7 @@ const TableHead = React.forwardRef<
     ref={ref}
     className={cn(
       "h-8 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-      secondary && TABLE.cellSecondary,
+      secondary && "hidden sm:table-cell",
       className
     )}
     {...props}
@@ -108,9 +108,9 @@ const TableCell = React.forwardRef<
     className={cn(
       "px-2 py-1.5 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
       tableCellClass({ mono, faint }),
-      secondary && TABLE.cellSecondary,
-      wrap && TABLE.cellWrap,
-      nowrap && TABLE.cellNowrap,
+      secondary && "hidden sm:table-cell",
+      wrap && "break-all",
+      nowrap && "whitespace-nowrap",
       className
     )}
     {...props}
@@ -164,8 +164,8 @@ export function SpecTable({
   ...props
 }: React.TableHTMLAttributes<HTMLTableElement> & { wrapperClassName?: string }) {
   return (
-    <div className={cn(TABLE.wrapper, wrapperClassName)}>
-      <table className={cn(TABLE.spec, className)} {...props} />
+    <div className={cn("w-full overflow-x-auto", wrapperClassName)}>
+      <table className={cn("w-full border-collapse text-sm", className)} {...props} />
     </div>
   );
 }
@@ -183,11 +183,11 @@ export function SpecRow({
   children: React.ReactNode;
 }) {
   return (
-    <tr className={cn(TABLE.specRow, className)} {...props}>
-      <th scope="row" className={TABLE.specTerm}>
+    <tr className={cn("border-b border-border last:border-0", className)} {...props}>
+      <th scope="row" className="whitespace-nowrap px-4 py-2 text-left align-top font-mono text-xs font-medium uppercase tracking-eyebrow text-muted-foreground">
         {term}
       </th>
-      <td className={cn(TABLE.specDetail, mono ? TABLE.cellMono : undefined)}>{children}</td>
+      <td className={cn("w-full px-4 py-2 align-top text-sm text-foreground", mono ? "font-mono text-xs tabular-nums" : undefined)}>{children}</td>
     </tr>
   );
 }

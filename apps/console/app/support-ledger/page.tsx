@@ -13,7 +13,6 @@ import { mayWrite } from "@/lib/session";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { TABLE } from "@/lib/tokens";
 import { LedgerAdmin } from "@/components/support-ledger";
 
 /**
@@ -151,7 +150,7 @@ export default async function SupportLedgerPage() {
  */
 function Support({ value, locale }: { value: string | null; locale: Locale }) {
   if (value === null) {
-    return <span className={TABLE.cellFaint}>{t("ledger.unmeasured", locale)}</span>;
+    return <span className="text-muted-foreground">{t("ledger.unmeasured", locale)}</span>;
   }
   if (value === "supported") {
     return <Badge tone="ok">{t("ledger.supported", locale)}</Badge>;

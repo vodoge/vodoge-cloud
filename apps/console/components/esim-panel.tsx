@@ -39,7 +39,6 @@ import {
 import { t, type Locale } from "@/lib/i18n";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
-  TABLE,
   deviceCommandGuard,
   esimSwitchVerdict,
   toneForProfileState,
@@ -439,7 +438,7 @@ export function EsimPanel({
                       <TableRow key={profile.iccid}>
                         <TableCell mono>{profile.iccid}</TableCell>
                         <TableCell>
-                          {profile.nickname ?? <span className={TABLE.cellFaint}>—</span>}
+                          {profile.nickname ?? <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell>
                           <Badge tone={toneForProfileState(profile.state)}>{profile.state}</Badge>
@@ -648,7 +647,7 @@ export function EsimPanel({
                       </SpecRow>
                     ))}
                     <SpecRow term={t("esim.readAt", locale)} mono>
-                      <span className={TABLE.cellFaint}>
+                      <span className="text-muted-foreground">
                         {completedAt
                           ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
                           : "—"}
@@ -922,7 +921,7 @@ function SwitchVerdict({
         : t("esim.switchUnverified", locale);
   return (
     <div className="flex flex-col gap-4">
-      <div className={TABLE.cellInline}>
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone={tone}>{t("esim.verifySwitch", locale)}</Badge>
         <span className="font-mono text-xs tabular-nums">
           {t("esim.switchAsked", locale, { iccid: verdict.targetIccid })}
@@ -981,7 +980,7 @@ function AuthenticationSection({
             </SpecRow>
           ))}
           <SpecRow term={t("esim.authAt", locale)} mono>
-            <span className={TABLE.cellFaint}>
+            <span className="text-muted-foreground">
               {completedAt
                 ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
                 : "—"}
@@ -1009,7 +1008,7 @@ function AuthenticationSection({
           {authentication.trustAnchors.map((anchor) => (
             <SpecRow key={anchor.label} term={anchor.label} mono>
               {anchor.keyId}
-              <span className={TABLE.cellFaint}> {anchor.notAfter}</span>
+              <span className="text-muted-foreground"> {anchor.notAfter}</span>
             </SpecRow>
           ))}
         </TableBody>
@@ -1183,7 +1182,7 @@ function DownloadSection({
             </SpecRow>
           ))}
           <SpecRow term={t("esim.authAt", locale)} mono>
-            <span className={TABLE.cellFaint}>
+            <span className="text-muted-foreground">
               {completedAt
                 ? new Date(completedAt).toISOString().replace("T", " ").slice(0, 19)
                 : "—"}

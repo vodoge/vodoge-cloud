@@ -49,7 +49,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { CARD, DEVICE_TABS, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
+import { CARD, DEVICE_TABS, deviceTab, deviceTabHref } from "@/lib/tokens";
 
 /**
  * One device, and everything that can be done to it.
@@ -315,7 +315,7 @@ function OverviewPanel({
               {modems.map((modem) => (
                 <TableRow key={modem.id}>
                   <TableCell mono>
-                    <span className={TABLE.cellInline}>
+                    <span className="flex flex-wrap items-center gap-2">
                       {modem.imei}
                       {/* Present but out of reach: the edge found it on its
                           AT port and QMI is unreachable, so it can be seen
@@ -497,14 +497,14 @@ function DiagnosticsPanel({
                   is shown last: it answers "which box is this" rather than
                   "how is it doing". */}
               <SpecRow term={t("device.hostMachine", locale)} mono>
-                <span className={TABLE.cellFaint}>
+                <span className="text-muted-foreground">
                   {[device.hostname, device.cpuModel, device.kernel]
                     .filter((part) => part)
                     .join(" · ") || "—"}
                 </span>
               </SpecRow>
               <SpecRow term={t("device.hostReportedAt", locale)} mono>
-                <span className={TABLE.cellFaint}>
+                <span className="text-muted-foreground">
                   {new Date(device.hostReportedAt).toISOString().replace("T", " ").slice(0, 19)}
                 </span>
               </SpecRow>
@@ -641,9 +641,9 @@ function MatrixKey({
   origin: string | null;
   locale: Locale;
 }) {
-  if (!carrier) return <span className={TABLE.cellFaint}>—</span>;
+  if (!carrier) return <span className="text-muted-foreground">—</span>;
   return (
-    <span className={TABLE.cellInline}>
+    <span className="flex flex-wrap items-center gap-2">
       <span>
         {family} · {carrier}
       </span>
@@ -671,12 +671,12 @@ function ProxyBindings({
   locale: Locale;
 }) {
   if (instances.length === 0) {
-    return <span className={TABLE.cellFaint}>{t("modems.proxyNone", locale)}</span>;
+    return <span className="text-muted-foreground">{t("modems.proxyNone", locale)}</span>;
   }
   return (
     <>
       {instances.map((instance) => (
-        <span key={instance.id} className={TABLE.cellInline}>
+        <span key={instance.id} className="flex flex-wrap items-center gap-2">
           <span>
             {instance.name} · {instance.protocol}:{instance.listenPort}
           </span>
@@ -710,16 +710,16 @@ function ModemQuality({
   sinr: number | null;
 }) {
   if (rsrp === null && rsrq === null && sinr === null) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return (
     <span>
       {rsrp === null ? "—" : `${rsrp}`}
-      <span className={TABLE.cellFaint}> / </span>
+      <span className="text-muted-foreground"> / </span>
       {rsrq === null ? "—" : `${rsrq}`}
-      <span className={TABLE.cellFaint}> / </span>
+      <span className="text-muted-foreground"> / </span>
       {sinr === null ? "—" : `${sinr}`}
-      <span className={TABLE.cellFaint}> dB</span>
+      <span className="text-muted-foreground"> dB</span>
     </span>
   );
 }
@@ -732,12 +732,12 @@ function ModemQuality({
  */
 function HostMemory({ used, total }: { used: number | null; total: number | null }) {
   if (used === null || total === null || total === 0) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return (
     <span>
       {formatBytes(used)} / {formatBytes(total)}
-      <span className={TABLE.cellFaint}> ({Math.round((used / total) * 100)}%)</span>
+      <span className="text-muted-foreground"> ({Math.round((used / total) * 100)}%)</span>
     </span>
   );
 }
@@ -752,11 +752,11 @@ function HostMemory({ used, total }: { used: number | null; total: number | null
  */
 function HostThroughput({ rx, tx }: { rx: number | null; tx: number | null }) {
   if (rx === null || tx === null) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return (
     <span>
-      ↓ {formatBytes(rx)}/s<span className={TABLE.cellFaint}> · </span>↑ {formatBytes(tx)}/s
+      ↓ {formatBytes(rx)}/s<span className="text-muted-foreground"> · </span>↑ {formatBytes(tx)}/s
     </span>
   );
 }
@@ -912,31 +912,31 @@ function ApnContexts({
   locale: Locale;
 }) {
   if (contexts === null) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   if (contexts.length === 0) {
-    return <span className={TABLE.cellFaint}>{t("modems.apnNone", locale)}</span>;
+    return <span className="text-muted-foreground">{t("modems.apnNone", locale)}</span>;
   }
   return (
     <>
       {contexts.map((context) => (
-        <span key={context.cid} className={TABLE.cellInline}>
+        <span key={context.cid} className="flex flex-wrap items-center gap-2">
           {context.cid}: {context.apn || t("modems.apnUnnamed", locale)}
           {context.pdpType ? ` (${context.pdpType})` : ""}
           {context.username ? (
-            <span className={TABLE.cellFaint}> · {context.username}</span>
+            <span className="text-muted-foreground"> · {context.username}</span>
           ) : null}
           {/* `none` is the common case and saying it on every row is noise;
               an unread method is not, because it is the one state where the
               console does not know whether a password is wanted. */}
           {context.auth && context.auth !== "none" ? (
-            <span className={TABLE.cellFaint}> · {AUTH_NAMES[context.auth] ?? context.auth}</span>
+            <span className="text-muted-foreground"> · {AUTH_NAMES[context.auth] ?? context.auth}</span>
           ) : null}
           {context.auth === null ? (
-            <span className={TABLE.cellFaint}> · {t("modems.apnAuthUnread", locale)}</span>
+            <span className="text-muted-foreground"> · {t("modems.apnAuthUnread", locale)}</span>
           ) : null}
           {context.hasPassword ? (
-            <span className={TABLE.cellFaint}> · {t("modems.apnPasswordSet", locale)}</span>
+            <span className="text-muted-foreground"> · {t("modems.apnPasswordSet", locale)}</span>
           ) : null}
           {context.source === "configured" ? (
             <Badge tone="info">{t("modems.apnConfigured", locale)}</Badge>

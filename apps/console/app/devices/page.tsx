@@ -30,7 +30,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { CARD_POLICY_CONFIRMATIONS, TABLE, type CardPolicyGuard } from "@/lib/tokens";
+import { CARD_POLICY_CONFIRMATIONS, type CardPolicyGuard } from "@/lib/tokens";
 
 /**
  * The fleet, its modules, and the policies that follow a SIM between them.
@@ -170,13 +170,13 @@ export default async function DevicesPage({
                       <Badge tone={alertTone(alert.level)}>{alert.level}</Badge>
                     </TableCell>
                     <TableCell mono>
-                      <span className={TABLE.cellInline}>
+                      <span className="flex flex-wrap items-center gap-2">
                         {alert.code}
                         {/* How many were held back since this code was last
                             announced. The number that says "still happening"
                             rather than "happened again". */}
                         {typeof alert.context.repeats === "number" ? (
-                          <span className={TABLE.cellFaint}>
+                          <span className="text-muted-foreground">
                             ×{alert.context.repeats + 1}
                           </span>
                         ) : null}
@@ -232,7 +232,7 @@ export default async function DevicesPage({
                         box, so it is the one column that survives every
                         breakpoint. */}
                     <TableCell>
-                      <Link className={TABLE.cellLink} href={`/devices/${device.id}`}>
+                      <Link className="font-medium text-brand hover:underline" href={`/devices/${device.id}`}>
                         {device.name}
                       </Link>
                     </TableCell>
@@ -260,7 +260,7 @@ export default async function DevicesPage({
                           {device.queueRecords}
                         </Badge>
                       ) : (
-                        <span className={TABLE.cellFaint}>0</span>
+                        <span className="text-muted-foreground">0</span>
                       )}
                     </TableCell>
                     {/* The one fact about the egress path the box cannot
@@ -335,7 +335,7 @@ export default async function DevicesPage({
                 {orderModems(matchingModems(modems, needle), order).map((modem) => (
                   <TableRow key={modem.id}>
                     <TableCell mono>
-                      <span className={TABLE.cellInline}>
+                      <span className="flex flex-wrap items-center gap-2">
                         {modem.imei}
                         {/* Visible but not drivable. Before the edge enumerated
                             AT ports as a second path, a module in this state
@@ -373,7 +373,7 @@ export default async function DevicesPage({
                           exactly what the Club profile on this bench is.
                           A transport is a category rather than a state, so it
                           takes no dot. */}
-                      <span className={TABLE.cellInline}>
+                      <span className="flex flex-wrap items-center gap-2">
                         <Badge tone="neutral" dot={false}>
                           ↓ {modem.smsMt ?? "—"}
                         </Badge>
@@ -487,16 +487,16 @@ function ModemQuality({
   sinr: number | null;
 }) {
   if (rsrp === null && rsrq === null && sinr === null) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return (
     <span>
       {rsrp === null ? "—" : `${rsrp}`}
-      <span className={TABLE.cellFaint}> / </span>
+      <span className="text-muted-foreground"> / </span>
       {rsrq === null ? "—" : `${rsrq}`}
-      <span className={TABLE.cellFaint}> / </span>
+      <span className="text-muted-foreground"> / </span>
       {sinr === null ? "—" : `${sinr}`}
-      <span className={TABLE.cellFaint}> dB</span>
+      <span className="text-muted-foreground"> dB</span>
     </span>
   );
 }
@@ -510,7 +510,7 @@ function ModemQuality({
  */
 function HostMemory({ used, total }: { used: number | null; total: number | null }) {
   if (used === null || total === null || total === 0) {
-    return <span className={TABLE.cellFaint}>—</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   return <span>{Math.round((used / total) * 100)}%</span>;
 }

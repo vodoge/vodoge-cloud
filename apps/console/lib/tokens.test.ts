@@ -2301,11 +2301,18 @@ test("there is one empty state in this console, and one file draws it", () => {
  * working, and nothing else here would notice.
  */
 test("the two table width props are wired to the recipes and to a page", () => {
+  // 配方内联进组件之后，断言直接对着组件源码。守的东西没变，其中第一条是
+  // 真技术事实而不是取值偏好：**overflow-wrap 不降低 min-content，break-all 降**
+  // ——一列不肯变窄，整张表就会被它撑成一条竖带。
   const table = codeOnly(readSource("components/ui/table.tsx"));
-  assert.ok(table.includes("TABLE.cellWrap"), "the wrap prop no longer reaches its recipe");
-  assert.ok(table.includes("TABLE.cellNowrap"), "the nowrap prop no longer reaches its recipe");
-  assert.equal(TABLE.cellWrap, "break-all", "overflow-wrap does not lower min-content; this must");
-  assert.equal(TABLE.cellNowrap, "whitespace-nowrap");
+  assert.ok(
+    table.includes('"break-all"'),
+    "the wrap prop no longer reaches break-all; overflow-wrap does not lower min-content",
+  );
+  assert.ok(
+    table.includes('"whitespace-nowrap"'),
+    "the nowrap prop no longer reaches whitespace-nowrap",
+  );
 
   const passes = (prop: string, relative: string) =>
     new RegExp(`<Table(?:Header)?Cell\\b[^>]*\\b${prop}\\b`).test(codeOnly(readSource(relative)));

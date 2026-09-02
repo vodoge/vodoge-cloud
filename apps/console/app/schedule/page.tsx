@@ -12,7 +12,6 @@ import { fetchSchedules, type ScheduleRow } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { TABLE } from "@/lib/tokens";
 
 /**
  * Read-only on purpose, for now.
@@ -171,11 +170,11 @@ export default async function SchedulePage() {
                           label={t(`schedule.status.${row.lastStatus}`, locale)}
                         />
                         {row.lastDetail ? (
-                          <span className={TABLE.cellNote}>{row.lastDetail}</span>
+                          <span className="mt-1 block font-mono text-xs text-muted-foreground">{row.lastDetail}</span>
                         ) : null}
                       </>
                     ) : (
-                      <span className={TABLE.cellFaint}>{t("schedule.never", locale)}</span>
+                      <span className="text-muted-foreground">{t("schedule.never", locale)}</span>
                     )}
                   </TableCell>
                   <TableCell>

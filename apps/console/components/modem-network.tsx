@@ -1,7 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
-import { TABLE } from "@/lib/tokens";
 
 /**
  * Which network a module belongs to, and which one it is actually on.
@@ -27,7 +26,7 @@ export function ModemNetwork({
   serving: string | null;
   locale: Locale;
 }) {
-  if (!home && !serving) return <span className={TABLE.cellFaint}>—</span>;
+  if (!home && !serving) return <span className="text-muted-foreground">—</span>;
   const identity = home ?? serving!;
   const territory = territoryName(identity);
   // Decorative: the territory name beside it already says the same thing, and
@@ -36,11 +35,11 @@ export function ModemNetwork({
   const flag = territoryFlag(identity);
   const roaming = home !== null && serving !== null && isRoaming(home, serving);
   return (
-    <span className={TABLE.cellInline}>
+    <span className="flex flex-wrap items-center gap-2">
       <span>
         {flag ? <span aria-hidden="true">{flag} </span> : null}
         {operatorName(identity)}
-        {territory ? <span className={TABLE.cellFaint}> · {territory}</span> : null}
+        {territory ? <span className="text-muted-foreground"> · {territory}</span> : null}
       </span>
       {roaming ? (
         <Badge tone="warn">
