@@ -2,7 +2,6 @@ import { LoginForm } from "@/components/login-form";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { safeNext } from "@/lib/session";
-import { CENTERED } from "@/lib/tokens";
 
 export default async function LoginPage({
   searchParams,
@@ -13,9 +12,9 @@ export default async function LoginPage({
   const params = await searchParams;
 
   return (
-    <div className={CENTERED.root}>
-      <div className={CENTERED.card}>
-        <div className={CENTERED.brand}>
+    <div className="flex flex-1 flex-col items-center justify-center p-6">
+      <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-surface p-8 shadow-lg">
+        <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
           <span
             className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
             aria-hidden="true"
@@ -39,7 +38,7 @@ export default async function LoginPage({
             unavailable: t("login.unavailable", locale),
           }}
         />
-        <p className={CENTERED.hint}>{t("login.stub", locale)}</p>
+        <p className="m-0 text-sm text-muted-foreground">{t("login.stub", locale)}</p>
       </div>
     </div>
   );
