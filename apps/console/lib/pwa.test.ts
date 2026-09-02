@@ -2209,7 +2209,8 @@ test("the two affordances cannot land on the same edge of the screen", () => {
  * a fixed phone bar and a desktop rail, and the radius scale went from 3/4/6
  * to 8/10/14. Neither touched a colour. 52 tests stayed green over two frames
  * showing chrome that no longer exists — the phone frame shows a page with no
- * bottom bar, taken when `components/mobile-nav.tsx` was not yet a file.
+ * bottom bar, taken before the phone bar existed — and now again after it was
+ * removed, which is the second reason these frames are stale.
  *
  * The two guards below supply the missing term, and they fail differently on
  * purpose:
@@ -2547,6 +2548,14 @@ const CAPTURED_FROM = {
   //
   // 也就是说：**四次里有三次欠着重拍**，而它们叠在一起。
   //
+  // 🔴🔴 **采用 shadcn Sidebar 之后，这已经不是「过期」而是「画的是不存在的东西」。**
+  // screenshot-mobile.png 底部那条五格导航栏**在这棵树里已经没有对应的组件**：
+  // components/mobile-nav.tsx 和 nav-more.tsx 被删除，手机导航改成 header 里的
+  // 触发器加一个抽屉。安装弹窗现在向用户展示一个他装完之后找不到的控件。
+  //
+  // 这条比前面四笔都严重，而且**不能靠盯着代码判断「看不看得见」来处置**——
+  // 它就是看得见的。仍然拍不了：要浏览器、特定视口和已登录会话。
+  //
   // 🔴 **第四笔，性质和前三笔都不同：这次动的是调色板本身，不是用了哪个类。**
   // 换主题带进来的四个对比度缺陷一并修掉了，其中三个改的是变量的值：
   //   --destructive       0 62.8% 30.6% → 358 100% 83.1%（= --bad，暗色 2.08→10.92）
@@ -2555,7 +2564,7 @@ const CAPTURED_FROM = {
   // 前两个在两帧里到处都是（次级文字、统计卡标签、导航），所以这一次连「哪些
   // 像素动了」都不必推断——大面积都动了。仍然拍不了：要浏览器、特定视口和一个
   // 已登录的会话，本机没有网关也没有数据库。
-  chrome: "128995c0bd2c409a3b8125a3603b030751cd088901c6d8d2f00d06a6d3bb9993",
+  chrome: "9ddc02e4e173f0cc616dbf9a2818a48ca5d3fc6f13c650226a618f29b7698296",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
@@ -2577,9 +2586,9 @@ test("the chrome closure is derived from the roots and reaches every file that d
     "app/globals.css",
     "app/layout.tsx",
     "app/page.tsx",
-    "components/mobile-nav.tsx",
     "components/shell.tsx",
     "components/sidebar.tsx",
+    "components/ui/sidebar.tsx",
     "components/ui/card.tsx",
     "components/ui/table.tsx",
     "lib/tokens.ts",
@@ -2645,61 +2654,6 @@ test("the install screenshots were captured from the chrome this tree renders", 
 
 const shotFor = (factor: string) =>
   consoleManifest().screenshots.find((s) => s.form_factor === factor);
-
-test("the phone screenshot shows the bottom bar this console mounts", () => {
-  const bar = ALL_TOKENS.BOTTOM_NAV.bar;
-  const cls = bar.split(/\s+/);
-  assert.ok(
-    ["fixed", "inset-x-0", "bottom-0", "border-t", "md:hidden"].every((c) => cls.includes(c)) &&
-      cls.includes("border-line"),
-    `BOTTOM_NAV.bar is no longer a phone-only full-bleed bottom bar closed by a --line rule ` +
-      `(${bar}). Rewrite the pixel assertion below to match what it is now — do not delete it.`,
-  );
-
-  const shot = shotFor("narrow");
-  assert.ok(shot, "the manifest declares no narrow screenshot");
-  const image = pngPixels(readPublic(shot.src.slice(1)));
-  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
-  const line = pack(...rgbOf(COLOR_TOKENS.line.dark));
-  const canvasInRow = (y: number) => {
-    let n = 0;
-    for (let x = 0; x < image.width; x++) if (near(image.at(x, y), canvas, 2)) n++;
-    return n;
-  };
-
-  // An element that is full-bleed and pinned to the bottom means the last row
-  // of the frame cannot show page canvas. Deliberately dpr-free: it asks
-  // whether the bar is there, not how tall it came out, so it cannot false-red
-  // on a capture taken at a different device pixel ratio.
-  const last = image.height - 1;
-  const bleed = canvasInRow(last);
-  assert.equal(
-    bleed,
-    0,
-    `${shot.src}: the bottom row shows ${bleed} pixels of page canvas at its edges, so nothing ` +
-      `is pinned over it — but this console mounts a full-bleed bottom bar at every width below ` +
-      `md. This frame was captured before the bar existed. Recapture it.`,
-  );
-
-  // And the band has to be closed by the bar's own rule. This is what tells it
-  // apart from the offline banner, which is also fixed inset-x-0 bottom-0 but
-  // rules in --bad: a frame captured with the banner up would satisfy the
-  // check above for the wrong reason.
-  let band = 0;
-  while (band < image.height && canvasInRow(last - band) === 0) band++;
-  const top = last - band + 1;
-  let ruled = 0;
-  for (let x = 0; x < image.width; x++) {
-    const p = image.at(x, top);
-    if (pack(p[0], p[1], p[2]) === line) ruled++;
-  }
-  assert.ok(
-    ruled >= image.width * 0.99,
-    `${shot.src}: the ${band}-row full-bleed band at the bottom opens with ${ruled}/${image.width} ` +
-      `pixels of --line, so it is not the nav bar's rule. Something else is pinned there.`,
-  );
-});
-
 test("the desktop screenshot shows the rail this console mounts", () => {
   const rail = ALL_TOKENS.SHELL.rail;
   const cls = rail.split(/\s+/);

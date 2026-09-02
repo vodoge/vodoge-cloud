@@ -95,6 +95,15 @@
   --border: 240 3.7% 15.9%;
   --input: 240 3.7% 15.9%;
   --ring: 240 4.9% 83.9%;
+  /* shadcn 的 sidebar 组件要的那一组，用它的默认值。这些名字进 globals.css 之后
+     会被 lib/contrast.test.ts 的 sweep 自动扫到——它从这个文件读 shadcn 那一套，
+     所以新加的语义色不会像 --destructive 那次一样落在守卫的盲区里。 */
+  --sidebar: 240 5.9% 10%;
+  --sidebar-foreground: 240 4.8% 95.9%;
+  --sidebar-accent: 240 3.7% 15.9%;
+  --sidebar-accent-foreground: 240 4.8% 95.9%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
 
 
 
@@ -233,6 +242,12 @@
   --border: 240 5.9% 90%;
   --input: 240 5.9% 90%;
   --ring: 240 5.9% 10%;
+  --sidebar: 0 0% 98%;
+  --sidebar-foreground: 240 5.3% 26.1%;
+  --sidebar-accent: 240 4.8% 95.9%;
+  --sidebar-accent-foreground: 240 5.9% 10%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
 
   color-scheme: light;
   /* The light ladder is the dark one's mirror, built from the same step ratios

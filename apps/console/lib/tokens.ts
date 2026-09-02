@@ -3548,7 +3548,6 @@ export const MIGRATED_SOURCES = [
   "components/locale-switch.tsx",
   "components/login-form.tsx",
   "components/modem-network.tsx",
-  "components/mobile-nav.tsx",
   "components/proxy-manager.tsx",
   "components/pwa.tsx",
   "components/send-sms.tsx",

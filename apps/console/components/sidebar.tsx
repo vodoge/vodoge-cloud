@@ -1,94 +1,115 @@
 import Link from "next/link";
-import { cn } from "@/lib/cn";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 import { t, type Locale } from "@/lib/i18n";
 import { NAV_GROUPS, navState } from "@/lib/tokens";
 
 /**
- * The desktop navigation rail.
+ * The navigation rail, drawn with shadcn's `Sidebar`.
  *
- * 🔴 **One of two renderers of `NAV_GROUPS`, and it names no destination of
- * its own.** `components/mobile-nav.tsx` is the other. Everything either of
- * them draws — the hrefs, the labels, the glyphs, and which four the phone
- * puts on its bar — is read out of that one array, so a destination added,
- * renamed or removed moves both at once. `lib/tokens.test.ts` enforces it the
- * only way it can for a file it cannot render: it reads the source of both and
- * fails if either contains a route or a message key of its own. That is what
- * stops this from becoming two lists that agree until the first time somebody
- * edits one.
+ * 🔴 **One of ONE renderers of `NAV_GROUPS` now.** There used to be two —
+ * this and `components/mobile-nav.tsx` — because the phone needed a different
+ * arrangement of the same ten destinations, and a pair of tests existed to
+ * stop them drifting into two lists. shadcn's `Sidebar` collapses that: above
+ * `md` it is this rail, below it the same markup is drawn inside a `Sheet` by
+ * the library. One renderer cannot disagree with itself, so the guard that
+ * held the two in step retired with the second renderer.
  *
- * A server component. `locale` and `pathname` arrive as props the server
- * resolved, which is the defect this console has shipped twice: a nav that
- * reads either after hydration serves every reader the default language in the
- * HTML, and the check that reads this page runs no JavaScript at all.
+ * ⚠️ **What was given up, so that reversing this is a decision and not a
+ * discovery.** The phone used to navigate from a bar pinned to the bottom of
+ * the screen: five cells at 78px, thumb-reachable, with the other five behind
+ * an overflow sheet. It is now a trigger in the header and a drawer. The bar
+ * was measured (390px, a 44px touch target, `bottomNavCellWidth()` computing
+ * both budgets) and it was not replaced because it was wrong — it was replaced
+ * because it was hand-written, and a bar plus its gutter held 90px of an 844px
+ * screen permanently, which is 10.7% of the phone given to navigation rather
+ * than to data.
  *
- * Below `md` this rail is `display: none` and the phone bar is what draws
- * instead. Exactly one of the two is ever on screen.
+ * 🔴 **Still a server component, and that is load-bearing.** `Sidebar` itself
+ * is `"use client"`, but everything below is passed to it as children, so
+ * `t(item.key, locale)` runs on the server and the served HTML carries the
+ * operator's language. A nav that resolves its own locale after hydration
+ * serves every reader the default language in the HTML, and the check that
+ * reads this page runs no JavaScript at all — this console has shipped that
+ * defect twice.
+ *
+ * The nav data stays in `lib/tokens.ts` rather than being written as markup
+ * here: a `.tsx` cannot be read by a test in this app, so a nav written as
+ * markup is a nav nothing can check.
  */
-export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string }) {
+export function AppSidebar({
+  locale,
+  pathname,
+  appName,
+}: {
+  locale: Locale;
+  pathname: string;
+  appName: string;
+}) {
   return (
-    <aside className="hidden w-rail shrink-0 flex-col border-r border-border bg-surface md:flex">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-base font-semibold tracking-tight text-foreground">
-        <span
-          className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
-          aria-hidden="true"
-        >
-          V
-        </span>
-        {t("app.name", locale)}
-      </div>
-
-      <nav
-        className="flex flex-1 flex-col gap-3 overflow-y-auto p-2"
-        aria-label={t("nav.label", locale)}
-      >
-        {NAV_GROUPS.map((group) => (
-          <div
-            key={group.label ?? group.items[0].href}
-            className="flex flex-col gap-1 border-t border-line-strong pt-3 first:border-t-0 first:pt-0"
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <div className="flex items-center gap-2 px-2 py-1.5 text-base font-semibold tracking-tight">
+          <span
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
+            aria-hidden="true"
           >
-            {group.label ? (
-              <span className="px-1 font-mono text-xs font-medium uppercase tracking-eyebrow text-muted-foreground">
-                {t(group.label, locale)}
-              </span>
-            ) : null}
-            {group.items.map((item) => {
-              const state = navState(pathname, item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  // Only an exact match is the current page. A device detail
-                  // page is inside the devices section, not the devices page.
-                  aria-current={state === "page" ? "page" : undefined}
-                  className={cn(
-                    "flex min-h-touch items-center gap-2 rounded px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground",
-                    state ? "bg-brand-wash font-semibold text-foreground" : undefined,
-                  )}
-                >
-                  <NavIcon d={item.icon} />
-                  {t(item.key, locale)}
-                </Link>
-              );
-            })}
-          </div>
+            V
+          </span>
+          <span className="truncate group-data-[collapsible=icon]:hidden">{appName}</span>
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        {NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label ?? group.items[0].href}>
+            {group.label ? <SidebarGroupLabel>{t(group.label, locale)}</SidebarGroupLabel> : null}
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const state = navState(pathname, item.href);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={state !== null}
+                        tooltip={t(item.key, locale)}
+                      >
+                        {/* Only an exact match is the current page. A device
+                            detail page is inside the devices section, not the
+                            devices page. */}
+                        <Link href={item.href} aria-current={state === "page" ? "page" : undefined}>
+                          <NavIcon d={item.icon} />
+                          <span>{t(item.key, locale)}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
         ))}
-      </nav>
-    </aside>
+      </SidebarContent>
+    </Sidebar>
   );
 }
 
 /**
  * One navigation glyph, drawn from the path data on the nav entry.
  *
- * It lives here rather than in a file of its own because every `.tsx` under
- * `app/` and `components/` has to be on the ledger in `lib/tokens.ts`, and a
- * third file for six lines of markup is a third thing to keep registered. It
- * is imported by `components/mobile-nav.tsx` rather than the other way round
- * so that nothing imports in a circle: the shell draws this, this draws
- * nothing, and the phone bar draws this too.
- *
- * It carries its own class rather than taking one, so the two renderers cannot
- * end up drawing the same glyph at two sizes.
+ * It carries no size of its own any more: `SidebarMenuButton` sizes the icon
+ * it is given (`[&>svg]:size-4`), which is the library deciding a thing this
+ * file used to decide.
  *
  * `aria-hidden` because the word beside it already says where the link goes.
  * An accessible name here would make every entry announce itself twice.
@@ -96,7 +117,6 @@ export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string
 export function NavIcon({ d }: { d: string }) {
   return (
     <svg
-      className="size-4 shrink-0"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

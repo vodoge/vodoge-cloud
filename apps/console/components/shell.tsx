@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { LocaleSwitch } from "@/components/locale-switch";
-import { Sidebar } from "@/components/sidebar";
 import { SignOutButton } from "@/components/sign-out";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Separator } from "@/components/ui/separator";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { t, type Locale } from "@/lib/i18n";
 import type { Tenant } from "@/lib/tenant";
 import { SAFE_AREA } from "@/lib/tokens";
@@ -39,79 +39,63 @@ import { SAFE_AREA } from "@/lib/tokens";
 export function Shell({
   tenant,
   locale,
-  pathname,
+  pathname: _pathname,
   children,
 }: {
   tenant: Tenant;
   locale: Locale;
+  /** Consumed by `AppSidebar`, which `app/layout.tsx` draws beside this. */
   pathname: string;
   children: React.ReactNode;
 }) {
   const regionLabel = tenant.region === "cn" ? t("region.cn", locale) : t("region.intl", locale);
 
   return (
-    <div className="flex w-full flex-1">
-      <Sidebar locale={locale} pathname={pathname} />
+    <SidebarInset>
+      <header className="sticky top-0 z-20 flex shrink-0 items-center border-b border-border bg-surface">
+        {/* The inline style is the safe-area inset; see SAFE_AREA. */}
+        <div
+          className="mx-auto flex w-full max-w-page flex-wrap items-center gap-2 px-3 py-2 sm:px-6"
+          style={SAFE_AREA.headerTop}
+        >
+          {/* 🔴 The one control that opens the navigation, at every width.
+              The rail collapses to icons on a wide screen and to a drawer on a
+              phone, and this is the trigger for both — the library decides
+              which, from its own breakpoint, so this file no longer holds a
+              second arrangement of the same ten destinations. */}
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-1 h-4" />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 border-b border-border bg-surface">
-          {/* The inline style is the safe-area inset; see SAFE_AREA. */}
-          <div
-            className="mx-auto flex w-full max-w-page flex-wrap items-center gap-3 px-3 py-2 sm:px-6"
-            style={SAFE_AREA.headerTop}
-          >
-            {/* Withdraws at `md`, where the rail's own head carries the name.
-                One brand on screen at every width, not two at some of them. */}
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-base font-semibold tracking-tight text-foreground md:hidden"
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <span
+              className="inline-flex items-center gap-2 rounded-pill border border-border bg-surface-hover px-3 py-1 text-xs text-muted-foreground"
+              title={tenant.tenant_id}
             >
-              <span
-                className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
-                aria-hidden="true"
-              >
-                V
-              </span>
-              {/* The word leaves the layout below `sm` so the bar stays one
-                  row, but stays in the accessibility tree — the mark next to
-                  it is aria-hidden, so hiding the text outright would leave
-                  this link with no accessible name. `sr-only` takes it out of
-                  the layout and leaves it in the accessibility tree; `hidden`
-                  would take it out of both. */}
-              <span className="sr-only sm:not-sr-only">{t("app.name", locale)}</span>
-            </Link>
-
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <span
-                className="inline-flex items-center gap-2 rounded-pill border border-border bg-surface-hover px-3 py-1 text-xs text-muted-foreground"
-                title={tenant.tenant_id}
-              >
-                <strong className="font-semibold text-foreground">{tenant.slug}</strong>
-                <span className="hidden text-muted-foreground sm:inline">{regionLabel}</span>
-              </span>
-              <ThemeToggle
-                labels={{
-                  toggle: t("theme.toggle", locale),
-                  dark: t("theme.dark", locale),
-                  light: t("theme.light", locale),
-                }}
-              />
-              <LocaleSwitch
-                locale={locale}
-                labels={{
-                  language: t("header.language", locale),
-                  zh: t("header.langZh", locale),
-                  en: t("header.langEn", locale),
-                }}
-              />
-              <SignOutButton label={t("nav.logout", locale)} />
-            </div>
+              <strong className="font-semibold text-foreground">{tenant.slug}</strong>
+              <span className="hidden text-muted-foreground sm:inline">{regionLabel}</span>
+            </span>
+            <ThemeToggle
+              labels={{
+                toggle: t("theme.toggle", locale),
+                dark: t("theme.dark", locale),
+                light: t("theme.light", locale),
+              }}
+            />
+            <LocaleSwitch
+              locale={locale}
+              labels={{
+                language: t("header.language", locale),
+                zh: t("header.langZh", locale),
+                en: t("header.langEn", locale),
+              }}
+            />
+            <SignOutButton label={t("nav.logout", locale)} />
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main className="mx-auto w-full max-w-page flex-1 px-3 py-4 sm:px-6 sm:py-6">{children}</main>
-      </div>
-    </div>
+      <main className="mx-auto w-full max-w-page flex-1 px-3 py-4 sm:px-6 sm:py-6">{children}</main>
+    </SidebarInset>
   );
 }
 

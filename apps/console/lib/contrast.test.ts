@@ -136,9 +136,9 @@ const ROLES: readonly (readonly [string, RegExp])[] = [
   // `--muted-foreground` 是正文与次级正文，画在表面上；其余 `*-foreground` 是墨，
   // 只画在自己那块填充上。名字长得一样，角色完全不同——把 muted-foreground 判成墨
   // 会让它退出这个 sweep，而它正是四个缺陷里被漏掉最久的那个。
-  ["text", /^(fg(-|$)|foreground$|muted-foreground$)/],
-  ["surface", /^(bg|surface)(-|$)|^(background|card|popover|muted|secondary)$/],
-  ["line", /^line(-|$)|^(border|input|ring)$/],
+  ["text", /^(fg(-|$)|foreground$|muted-foreground$|sidebar-foreground$|sidebar-accent-foreground$)/],
+  ["surface", /^(bg|surface)(-|$)|^(background|card|popover|muted|secondary|sidebar|sidebar-accent)$/],
+  ["line", /^line(-|$)|^(border|input|ring|sidebar-border|sidebar-ring)$/],
   ["wash", /-wash$/],
   ["ink", /-ink$|-foreground$/],
   ["fill", /^(brand|ok|warn|bad|info)(-|$)|^(primary|destructive|accent)$/],
@@ -415,7 +415,9 @@ test("the sweep covers every colour used as type, not a hand-written subset", ()
       name === "fg" ||
       name.startsWith("fg-") ||
       name === "foreground" ||
-      name === "muted-foreground",
+      name === "muted-foreground" ||
+      name === "sidebar-foreground" ||
+      name === "sidebar-accent-foreground",
   );
   // 墨有两种拼法，因为有两套调色板：本项目写 `--bad-ink`，shadcn 写
   // `--destructive-foreground`。两者都是「画在自己那块填充上」，都由
@@ -436,7 +438,7 @@ test("the sweep covers every colour used as type, not a hand-written subset", ()
       name === "bg" ||
       name === "surface" ||
       name.startsWith("surface-") ||
-      ["background", "card", "popover", "muted", "secondary"].includes(name),
+      ["background", "card", "popover", "muted", "secondary", "sidebar", "sidebar-accent"].includes(name),
   );
   assert.deepEqual(SURFACES, surfacesByPrefix);
 

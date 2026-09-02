@@ -2,9 +2,10 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { headers } from "next/headers";
 import { ConnectionStatus } from "@/components/connection-status";
-import { MobileNav } from "@/components/mobile-nav";
 import { InstallPrompt, ServiceWorker } from "@/components/pwa";
+import { AppSidebar } from "@/components/sidebar";
 import { Shell, SourceFooter } from "@/components/shell";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { htmlLang, t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { TENANT_HEADER } from "@/lib/tenant";
@@ -221,9 +222,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <div className="flex min-h-dvh flex-col">
           {tenant && signedIn ? (
             <>
-              <Shell tenant={tenant} locale={locale} pathname={pathname}>
-                {children}
-              </Shell>
+              {/* 🔴 The provider is `"use client"`; everything under it is
+                  passed as children and therefore still rendered on the
+                  server, so the HTML carries the operator's language. A nav
+                  that resolved its own locale after hydration would serve
+                  every reader the default one — shipped twice, checked by a
+                  fetch that runs no JavaScript at all. */}
+              <SidebarProvider>
+                <AppSidebar
+                  locale={locale}
+                  pathname={pathname}
+                  appName={t("app.name", locale)}
+                />
+                <Shell tenant={tenant} locale={locale} pathname={pathname}>
+                  {children}
+                </Shell>
+              </SidebarProvider>
               {/* A sibling of the shell rather than part of it: the banner is
                   this card's, the shell is T007's, and they have to be able to
                   change without touching each other. */}
@@ -240,17 +254,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             children
           )}
           <SourceFooter locale={locale} />
-          {/* 🔴 After the footer, and that is the whole reason it is drawn
-              here rather than inside the shell. The bar is `position: fixed`,
-              so it covers whatever the document ends with — and what this
-              document ends with is the source links, the one thing on the page
-              addressed to people who are not signed in. `MobileNav` draws a
-              gutter of its own height as its last element, which only clears
-              the footer if it comes after it.
-
-              Gated with the shell for the ordinary reason: it links to pages
-              that bounce a reader without a session straight back to /login. */}
-          {tenant && signedIn ? <MobileNav locale={locale} pathname={pathname} /> : null}
         </div>
       </body>
     </html>

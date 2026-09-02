@@ -2373,10 +2373,16 @@ test("every .tsx in the console is on the checked side of the ledger", () => {
   // device detail page. The names had already drifted while the bodies had
   // not, which is what that looks like just before the next change lands in
   // only one of them.
+  //
+  // 48 since the phone bar: `components/mobile-nav.tsx` and
+  // `components/nav-more.tsx` were deleted when the console adopted shadcn's
+  // `Sidebar`, which draws the same markup in a `Sheet` below its own
+  // breakpoint. Two files out, one in (`components/ui/sidebar.tsx` is library
+  // code and is on the ledger like the rest of `components/ui/`).
   assert.equal(
     MIGRATED_SOURCES.length,
-    49,
-    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 49 — ` +
+    48,
+    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 48 — ` +
       "if that is right, say so here; the ledger test next door proves the list matches the directory",
   );
 
@@ -4764,22 +4770,24 @@ test("the renderers being scanned are derived from the tree, not typed out", () 
   // by returning nothing — and every loop below would then pass on nothing,
   // which is the shape this whole change exists to remove.
   const api = navApi();
-  for (const required of ["NAV_GROUPS", "navItems", "bottomNavItems", "overflowNavItems"]) {
+  for (const required of ["NAV_GROUPS", "navItems"]) {
     assert.ok(api.includes(required), `the nav API derivation lost ${required}: the scans below are empty`);
   }
 
   const found = navRenderers();
-  for (const known of ["components/sidebar.tsx", "components/mobile-nav.tsx"]) {
-    assert.ok(
-      found.includes(known),
-      `${known} draws the navigation and the derivation did not find it, so nothing is being scanned`,
-    );
-  }
+  assert.ok(
+    found.includes("components/sidebar.tsx"),
+    "components/sidebar.tsx draws the navigation and the derivation did not find it, so nothing is being scanned",
+  );
 
-  // The two names above are a floor, not a jurisdiction: a third renderer
-  // joins `found` without anyone editing this file. What is pinned here is
-  // that using a nav symbol and importing it are the same thing — a file that
-  // names one without importing it has declared a second one of its own.
+  // ⚠️ 这里原本要求找到**两个**渲染器：这个和 components/mobile-nav.tsx。手机的
+  // 那一个随 shadcn Sidebar 一起没了——库自己在断点以下把同一份标记画进 Sheet，
+  // 所以现在只有一个渲染器。`bottomNavItems` / `overflowNavItems` 也从这条非空
+  // 对照里去掉了，它们不再存在。
+  //
+  // 这个名字是下限而不是管辖范围：第三个渲染器会自己进 `found`，不必编辑这里。
+  // 这里钉住的是「用了导航符号和 import 它是同一回事」——一个文件只提名字不
+  // import，就是自己又声明了一份。
   for (const relative of found) {
     assert.match(
       codeOnly(readSource(relative)),
@@ -4789,7 +4797,7 @@ test("the renderers being scanned are derived from the tree, not typed out", () 
   }
 });
 
-test("neither nav renderer writes down a destination of its own", () => {
+test("the nav renderer writes down no destination of its own", () => {
   // Everything that identifies a destination: where it goes, what it is
   // called at both lengths, and what it is drawn as. Derived from the array,
   // so a new field on `NavItem` is covered the day it is added.
@@ -4800,12 +4808,10 @@ test("neither nav renderer writes down a destination of its own", () => {
     owned.add(item.shortKey);
     owned.add(item.icon);
   }
-  for (const value of Object.values(NAV_MORE)) owned.add(value);
-
   // A positive control on the fixture itself: if this set were empty, or the
   // literals were being read from the wrong place, every assertion below
   // would pass on nothing.
-  assert.equal(owned.size, 4 * navItems().length + 3, "the set of owned strings is not what it should be");
+  assert.equal(owned.size, 4 * navItems().length, "the set of owned strings is not what it should be");
 
   for (const relative of navRenderers()) {
     const written = scan(readSource(relative))
@@ -4821,16 +4827,14 @@ test("neither nav renderer writes down a destination of its own", () => {
   }
 });
 
-test("both nav renderers read the one array, and read it live", () => {
+test("the nav renderer reads the one array, and reads it live", () => {
   const sidebar = codeOnly(readSource("components/sidebar.tsx"));
-  const mobile = codeOnly(readSource("components/mobile-nav.tsx"));
 
-  // The rail keeps the groups; the phone bar splits the flattened list. Both
-  // start at `NAV_GROUPS` — the two functions below are defined in terms of
-  // it, which the assertions in "the bar and the sheet" prove.
+  // ⚠️ 这条原本叫「两个渲染器」，断言手机那一个在迭代 bottomNavItems() 和
+  // overflowNavItems()。那两个派生和画它们的文件一起没了：shadcn 的 Sidebar 在
+  // 断点以下把同一份标记画进 Sheet，所以十个目的地只有一种排布了。**这不是覆盖
+  // 损失，是被守的对象变少了**——两份清单会不会分家，在只有一份清单时不成立。
   assert.match(sidebar, /NAV_GROUPS\.map\(/, "the rail is not iterating the groups");
-  assert.match(mobile, /bottomNavItems\(\)\.map\(/, "the bar is not iterating the derived four");
-  assert.match(mobile, /overflowNavItems\(\)\.map\(/, "the sheet is not iterating the derived rest");
 
   // `codeOnly` keeps literals and drops comments, so naming the array in a
   // comment does not satisfy any of the above. Both files must also actually
@@ -4843,278 +4847,6 @@ test("both nav renderers read the one array, and read it live", () => {
     );
   }
 });
-
-test("the bar and the sheet are the ten destinations split, never copied", () => {
-  const all = navItems().map((item) => item.href);
-  const bar = bottomNavItems().map((item) => item.href);
-  const sheet = overflowNavItems().map((item) => item.href);
-
-  // The operator's four, in the operator's order — which is deliberately not
-  // the order the groups flatten to. `/journal` is in Fleet, between
-  // `/devices` and `/audit`; on the bar it comes after `/inbox`.
-  assert.deepEqual(bar, ["/", "/devices", "/inbox", "/journal"]);
-  assert.deepEqual(
-    bottomNavItems().map((item) => item.bottomSlot),
-    [1, 2, 3, 4],
-    "the slots are not 1..4 in order: a repeat or a gap makes the bar's order arbitrary",
-  );
-
-  // 🔴 The sheet is the complement, and this is the assertion that says so.
-  // Six is what it happens to be today; the point is that it is *the rest*.
-  assert.deepEqual(
-    [...bar, ...sheet].sort(),
-    [...all].sort(),
-    "a destination is on neither renderer, or on both — the phone can reach nine pages or twice one",
-  );
-  assert.equal(new Set([...bar, ...sheet]).size, all.length, "a destination is drawn in both places");
-  assert.equal(sheet.length, 7);
-  assert.equal(
-    all.length,
-    11,
-    "eleven destinations since the support ledger joined Fleet. The bar still " +
-      "carries four and the overflow carries the rest, which is the whole point " +
-      "of the split: a destination is added to the sheet, never to the bar.",
-  );
-});
-
-test("five cells, because ten would be below the target size the operator signed off", () => {
-  const touch = Number.parseFloat(SIZE_TOKENS.touch);
-  assert.equal(touch, 44);
-
-  // 390px is the narrowest phone this console is checked on.
-  assert.equal(bottomNavCellCount(), 5, "four destinations and the overflow trigger");
-  assert.equal(bottomNavCellWidth(390), 78);
-  assert.ok(
-    bottomNavCellWidth(390) >= touch,
-    `a cell is ${bottomNavCellWidth(390)}px, under the ${touch}px target`,
-  );
-
-  // 🔴 The negative arm, and the reason the design is what it is: laying all
-  // ten out at once is what fails. Without this, the assertion above would
-  // still pass on a bar with one cell on it, and the arithmetic that settled
-  // this design would be recorded nowhere a change could disturb it.
-  // Eleven at once is narrower still than the ten this was settled on. Not
-  // rounded: the function returns the real quotient, and pinning the rounded
-  // figure would let a change of one destination pass unnoticed.
-  assert.ok(
-    Math.abs(bottomNavCellWidth(390, navItems().length) - 390 / 11) < 0.001,
-    `laying all ${navItems().length} out gives ${bottomNavCellWidth(390, navItems().length)}px`,
-  );
-  assert.ok(
-    bottomNavCellWidth(390, navItems().length) < touch,
-    "ten cells now fit, so the reason four were chosen no longer holds — recheck with the operator",
-  );
-});
-
-/**
- * The other half of the 44px promise, and the half nothing was watching.
- *
- * `SIZE_TOKENS.touch` reaches this row as a minimum *height*. Nothing pinned a
- * cell's width, and a cell's width is not a constant: with a zero basis and no
- * explicit minimum, a flex item's automatic minimum size is its content's, so
- * the longest label in the row decides what the other cells are left with. The
- * four links win that argument every time, because their labels are words and
- * the overflow trigger's is two characters.
- *
- * 🔴 **Measured, not reasoned.** Replacing the ten short labels with
- * `Netzwerkeinstellungen` — twenty-one letters, the ordinary German compound
- * for "network settings", nothing exotic — put the row at 390x844 at
- *
- *     128.77  132.63  128.77  128.77   24.00
- *
- * which is three separate failures out of one label. The overflow trigger, the
- * only way to the other six destinations, was 24px wide. That trigger and the
- * fourth link were both entirely off the right-hand edge, the row's ink running
- * 153px past the viewport. And the bar grew from 45px to 58.19px while its
- * gutter stayed at 45, which dropped the source footer 13.33px underneath it —
- * the very occlusion the gutter exists to prevent.
- *
- * ⚠️ **None of the three can be reproduced in either language shipped today.**
- * The narrowest cell zh or en can make is 71.59. This is a defect that arrives
- * with the next translation, which is the case `NavItem.shortKey` exists to
- * prepare for.
- *
- * 🔴 **A floor alone would not have been enough, and the near miss is worth
- * keeping.** With all five labels German the narrowest cell measures 128.77 —
- * comfortably over 44, and still 257px off the right-hand edge of a 390px
- * screen. A width check that only asks "is every cell at least a touch target"
- * returns green on that layout. What closes it is that an explicit minimum
- * width *replaces* the automatic one instead of adding to it, so the label
- * loses the power to push at all; the test next door keeps the label inside
- * the cell that replacement leaves it.
- *
- * That replacement is also the answer to where the room comes from. Nothing is
- * taken from the other four cells that they were entitled to: what they give
- * up is their claim to be as wide as their longest word, which was never a
- * claim about touchability. Measured after, at 390: zh and en are unchanged to
- * the hundredth of a pixel at 79.59 / 79.61 / 79.59 / 79.61 / 71.59, and the
- * German label now lands on those same five numbers. The arrangement holds
- * down to a 220px viewport, below which five touch targets no longer fit on a
- * screen at all.
- *
- * The membership of the row is derived rather than listed: a cell is a recipe
- * that takes a share of the row, and nothing else in this object grows. A
- * sixth cell is covered without this test being edited.
- */
-test("a cell of the phone bar has a floor on its width, from the token that gives it its height", async () => {
-  // `as const` makes every value a literal type, so a type predicate widening
-  // them back to `string` is rejected. The runtime filter is kept — a non-string
-  // creeping into this object should drop out here rather than be stringified.
-  const recipes = Object.entries(BOTTOM_NAV).flatMap(([name, value]) =>
-    typeof value === "string" ? [[name, value] as [string, string]] : [],
-  );
-  const split = (recipe: string) => recipe.split(/\s+/).filter(Boolean);
-
-  const cells = recipes.filter(([, recipe]) => split(recipe).includes("flex-1"));
-  // An extractor that had stopped finding anything would leave the loop below
-  // empty, and an empty loop passes.
-  assert.ok(
-    cells.length >= 2,
-    `only ${cells.length} recipe(s) take a share of the row: the four links and the overflow trigger ` +
-      "are two recipes between them, so this has stopped reading the bar",
-  );
-
-  const widthFloors = new Set<string>();
-  for (const [name, recipe] of cells) {
-    const floor = split(recipe).find((part) => part.startsWith("min-w-"));
-    assert.ok(
-      floor,
-      `BOTTOM_NAV.${name} takes a share of the row with nothing under its width: its cell becomes ` +
-        `whatever the longest label in the row leaves over, measured at 24.00px against a ` +
-        `${SIZE_TOKENS.touch} target`,
-    );
-    widthFloors.add(floor.slice("min-w-".length));
-  }
-
-  // One token rather than two numbers kept in step. Both sets are read off the
-  // recipes, so a floor written as a length of its own arrives here as a second
-  // entry instead of quietly drifting away from the height.
-  const heightFloors = new Set(
-    recipes
-      .flatMap(([, recipe]) => split(recipe).filter((part) => part.startsWith("min-h-")))
-      .map((part) => part.slice("min-h-".length)),
-  );
-  assert.deepEqual(
-    [...widthFloors].sort(),
-    ["touch"],
-    `the row's cells are floored at ${[...widthFloors].join(", ")} rather than at the target size`,
-  );
-  assert.deepEqual(
-    [...heightFloors].sort(),
-    ["touch"],
-    `the bar's heights are floored at ${[...heightFloors].join(", ")}, so the width floor no longer names the same token`,
-  );
-  assert.equal(SIZE_TOKENS.touch, "44px");
-
-  // The utility has to exist, or the floor is a class that styles nothing. The
-  // negative arm is on the same axis on purpose: an axis that accepted an
-  // invented length would let a future cell be floored at something that is not
-  // the token, which is the drift this whole file is built to refuse.
-  const generated = await generatedClasses(["min-w-touch", "min-w-13px"]);
-  assert.ok(generated.has("min-w-touch"), "the width floor generates no rule, so nothing is floored");
-  assert.ok(
-    !generated.has("min-w-13px"),
-    "the minimum-width axis accepts a length of its own: a cell can be floored off the scale",
-  );
-});
-
-/**
- * What keeps the label inside the cell the floor gives it.
- *
- * With the cell's width settled, a label longer than the cell has to go
- * somewhere, and the two places it can go are both defects. Left to spill, it
- * paints across its neighbours. Left to wrap, it makes the row taller — and the
- * bar's gutter is a separate element pinned at one touch target, so a bar that
- * grows is a bar that stops matching the gutter holding the source footer clear
- * of it. That is not hypothetical: it is the 45 → 58.19px growth measured above,
- * and the 13.33px of footer it buried.
- *
- * So every label the bar draws goes inside an element that clips. Measured
- * after: with the German label in place, every cell reports `scrollWidth`
- * equal to `clientWidth` — no ink outside any cell — and the bar stays 45px
- * against a 45px gutter at every width from 220 to 767.
- *
- * ⚠️ **The sheet's links deliberately do not get this.** They are full-width
- * rows with a whole viewport to lay a word out in, and clipping them would
- * truncate labels that fit. The subject here is the bar's cells only.
- */
-test("a label on the phone bar is clipped rather than allowed to widen its cell", async () => {
-  // 两个文件一起读：条目还在 mobile-nav.tsx，溢出触发器搬到了 nav-more.tsx。
-  // 少读一个，这条断言就在数一半的格子，而它的全部意义是「格子数 == 被裁切的
-  // 标签数」——半份数据也能相等，那才是最糟的通过方式。
-  const tags = [
-    ...openingTags(readSource("components/mobile-nav.tsx")),
-    ...openingTags(readSource("components/nav-more.tsx")),
-  ];
-
-  // 配方内联之后按类列表认，而不是按配方名。**这里原来那条「子串误数」的坑没有
-  // 消失，只是换了形状**：以前是 `BOTTOM_NAV.cell` 被 `cellCurrent` / `cellLabel`
-  // 当子串数进去，现在是 `min-h-touch` 这类类名同时出现在格子、缓冲块和面板链接
-  // 上。所以认的是**组合**而不是单个类：格子 = flex-col + justify-center +
-  // text-xs + min-h-touch 四个同时成立。面板里的链接没有 flex-col 也不是 text-xs，
-  // 缓冲块没有 flex-col——两者都不会被误数。
-  const classesOf = (tag: { text: string }) => new Set(classesIn(classListsIn(tag.text)));
-  const isCell = (tag: { text: string }) => {
-    const names = classesOf(tag);
-    return ["min-h-touch", "flex-col", "justify-center", "text-xs"].every((n) => names.has(n));
-  };
-  const cells = tags.filter(isCell);
-  const labels = tags.filter((tag) => classesOf(tag).has("truncate"));
-
-  assert.ok(
-    cells.length >= 2,
-    `${cells.length} element(s) carry a cell recipe: the links and the overflow trigger are two ` +
-      "between them, so this has stopped reading the component",
-  );
-  assert.equal(
-    labels.length,
-    cells.length,
-    `${cells.length} cell(s) on the bar and ${labels.length} clipped label(s): a cell whose label is ` +
-      "drawn bare will spill across its neighbours, or wrap and take the bar out of step with the " +
-      "gutter that holds the source footer clear of it",
-  );
-
-  // What "clips" has to mean, asked of the real build rather than of the class
-  // name — a recipe that clipped by some other spelling should pass, and one
-  // that stopped clipping must not.
-  const propertiesOf = async (recipe: string) => {
-    const result = await postcss([
-      tailwindcss({ ...tailwindConfig, content: [{ raw: recipe, extension: "html" }] }),
-    ]).process("@tailwind utilities;", { from: undefined });
-    const properties = new Set<string>();
-    result.root.walkRules((rule) => {
-      rule.walkDecls((declaration) => {
-        properties.add(declaration.prop);
-      });
-    });
-    return properties;
-  };
-
-  // 🔴 问的是**组件真正写着的那串类**，不是 tokens.ts 里的配方。内联之后从配方
-  // 对象读会一直绿着却什么也没守——它量的是没人用的字符串。
-  const labelClasses = [...classesOf(labels[0])].join(" ");
-  const clipping = await propertiesOf(labelClasses);
-  for (const property of ["overflow", "text-overflow", "white-space", "max-width"]) {
-    assert.ok(
-      clipping.has(property),
-      `the bar's label sets no ${property}: it is ${JSON.stringify(labelClasses)}, which ` +
-        "does not contain a label that outgrows its cell",
-    );
-  }
-
-  // The negative arm. Without it the reading above would pass just as well if
-  // `propertiesOf` returned every property in Tailwind. 用格子自己那串类做对照：
-  // 它是活代码，而裁切是标签的职责不是格子的。
-  const cellClasses = [...classesOf(cells[0])].join(" ");
-  const notClipping = await propertiesOf(cellClasses);
-  for (const property of ["text-overflow", "white-space"]) {
-    assert.ok(
-      !notClipping.has(property),
-      `reading the cell's own classes reports ${property}, so the reading above decides nothing`,
-    );
-  }
-});
-
 /**
  * Two things are pinned to the bottom corner, and they must not share a layer.
  *
@@ -5167,10 +4899,16 @@ test("nothing pinned to the bottom corner shares a layer with anything else ther
 
   // An extractor that had stopped finding anything would leave every loop
   // below empty, and an empty loop passes.
+  //
+  // ⚠️ **这个下限从 2 降到 1，而降下限一向是弱化守卫的标准动作，所以理由要写死。**
+  // 底角原本有两个占用者：手机栏和离线横幅。手机栏随 shadcn Sidebar 的采用被删除
+  // 了，所以 2 已经不可能达到。**下限本身没有失去意义**——它守的是「提取器还在
+  // 工作」，而不是「有几个占用者」：如果扫描 fixed+bottom-0 的那段代码坏掉，
+  // 它会返回 0 而这条会红。
   assert.ok(
-    corner.length >= 2,
-    `only ${corner.length} recipe(s) pin themselves to the bottom corner, so a check that they do ` +
-      "not collide decides nothing — the phone bar and the connection banner are both there",
+    corner.length >= 1,
+    `no element pins itself to the bottom corner, so a check that they do not collide decides ` +
+      "nothing — the connection banner is there, so this is the extractor breaking, not the layout",
   );
 
   const layers = corner.map(({ path, recipe }) => {
@@ -5197,88 +4935,19 @@ test("nothing pinned to the bottom corner shares a layer with anything else ther
     holder.set(layer, path);
   }
 
-  const bar = layers.find((entry) => entry.path === "components/mobile-nav.tsx <nav>");
   const banner = layers.find((entry) => entry.path === "components/connection-status.tsx <div>");
-  assert.ok(bar, "the phone bar is no longer pinned to the bottom corner; this check has lost its subject");
   assert.ok(
     banner,
     "the connection banner is no longer pinned to the bottom corner; this check has lost its subject",
   );
-  assert.ok(
-    banner.layer > bar.layer,
-    `the connection banner is on layer ${banner.layer} and the phone bar on ${bar.layer}, so the ` +
-      "bar covers the alert. A banner nobody can see is worse than a nav briefly covered: measured " +
-      "at 390x844 the bar was the topmost element over every word of the banner, including reload",
-  );
-});
-
-/**
- * The footer's clearance under the phone bar is a fact about the order two
- * components are drawn in, and nothing else in the suite looks at it.
- *
- * `MobileNav` draws a `position: fixed` bar and then a gutter of the bar's own
- * height as its last element. That gutter holds the source footer out from
- * under the bar only if the whole component is drawn *after* the footer — a
- * decision recorded nowhere but the order of two lines in `app/layout.tsx`.
- *
- * ⚠️ **The reason to guard it is silence, not a near miss.** As shipped there
- * is room to spare, and the design is exact rather than lucky: bar and gutter
- * both measure 45px, and the footer's text stops 18px above the top of the
- * bar. Nothing is covered today. What is missing is any way to be told when
- * that stops being true. Measured in a browser at 390x844, scrolled to the
- * bottom with the scroll itself confirmed: moving the bar and its gutter ahead
- * of the footer buries the footer under the whole 45px, and deleting the
- * gutter does exactly the same. Neither failure throws, neither changes a
- * class, and on a page too short to scroll neither is visible at all.
- *
- * 🔴 **This reads source order, which is not rendered geometry.** Two server
- * components with nothing reordering them in between make the two coincide,
- * and that is the whole of the warrant. What it cannot see is a change that
- * keeps the order and still moves the boxes — that needs a browser, and those
- * measurements are in `docs/goals/vodoge-shape-nav/notes/T007-loose-ends.md`.
- */
-test("the phone bar is drawn after the source footer, and its gutter last of all", () => {
-  // `code`, not the raw text: comments are blanked, so naming either component
-  // in a comment cannot satisfy this. Both files do name them in comments —
-  // `app/layout.tsx` immediately above the very line being checked, and
-  // `components/mobile-nav.tsx` names the gutter in the comment above it.
-  const { code: layout } = scan(readSource("app/layout.tsx"));
-
-  const footers = [...layout.matchAll(/<SourceFooter\b/g)];
-  const bars = [...layout.matchAll(/<MobileNav\b/g)];
-  assert.equal(
-    footers.length,
-    1,
-    `the layout draws the source footer ${footers.length} times, not once, so an order check on it decides nothing`,
-  );
-  assert.equal(
-    bars.length,
-    1,
-    `the layout draws the phone bar ${bars.length} times, not once, so an order check on it decides nothing`,
-  );
-  assert.ok(
-    (footers[0].index as number) < (bars[0].index as number),
-    "app/layout.tsx draws <MobileNav> before <SourceFooter>: the fixed bar then covers the source " +
-      "footer, which is the one thing on the page addressed to people who are not signed in",
-  );
-
-  // The other half of the same guarantee, failing in exactly the same way and
-  // just as quietly: the gutter has to be the last thing the component draws.
-  const { code: nav } = scan(readSource("components/mobile-nav.tsx"));
-  const closes = [...nav.matchAll(/<\/nav>/g)];
-  // 缓冲块按它独有的类认：整个文件里只有它是 border-transparent（栏是
-  // border-border，格子不画边框）。
-  const gutters = [...nav.matchAll(/\bborder-transparent\b/g)];
-  assert.equal(closes.length, 1, `components/mobile-nav.tsx closes a nav ${closes.length} times, not once`);
-  assert.equal(
-    gutters.length,
-    1,
-    `components/mobile-nav.tsx draws the gutter ${gutters.length} times, not once — with none of them the footer has nothing holding it clear of the bar`,
-  );
-  assert.ok(
-    (closes[0].index as number) < (gutters[0].index as number),
-    "the gutter is drawn inside the fixed bar rather than after it, so it takes up no room in the document and holds nothing clear",
-  );
+  // ⚠️ 这里原本还有一条：横幅的图层必须高于手机栏，否则栏会盖住告警。手机栏
+  // 随 shadcn Sidebar 的采用被删掉了（库在断点以下画 Sheet），底角现在只有横幅
+  // 一个占用者，那条判断没有了两个主体。
+  //
+  // 🔴 上面的碰撞检查**留着而且不是空转**：它现在是一条绊线——第二个东西再钉到
+  // 底角时，它必须挑一个没人占的图层，否则谁盖谁就由 app/layout.tsx 恰好的绘制
+  // 顺序决定，而那个顺序没有任何 class 记录、读代码的人也看不出来。当初正是这件
+  // 事让 reload 按钮按不下去（390x844 实测，栏是每一个字上方的最顶层元素）。
 });
 
 test("every nav label exists in both catalogues at both lengths", () => {
@@ -5312,59 +4981,6 @@ test("every nav label exists in both catalogues at both lengths", () => {
     }
   }
 });
-
-test("the phone bar and its gutter both carry the inset no class can express", () => {
-  // Same shape as the header's check next door, and for the same reason: a
-  // bar with `position: fixed` sits outside the padding box `app/globals.css`
-  // puts the inset on, so without this it renders under the home indicator.
-  // Asserted on the elements, not merely somewhere in the file — the header's
-  // version of this check was once satisfied by a comment.
-  const tags = openingTags(readSource("components/mobile-nav.tsx"));
-  // 配方内联之后：栏按元素名认（这个文件只有一个 <nav>），缓冲块按它独有的
-  // border-transparent 认。两者都仍然是「断言在元素上」，而不是「文件里有这个名字」。
-  const subjects: [string, (tag: { name: string; text: string }) => boolean][] = [
-    ["the bar", (tag) => tag.name === "nav"],
-    ["the gutter", (tag) => /\bborder-transparent\b/.test(tag.text)],
-  ];
-  for (const [what, matches] of subjects) {
-    const tag = tags.find(matches);
-    assert.ok(tag, `${what} is gone`);
-    assert.match(
-      tag.text,
-      /style=\{SAFE_AREA\.fixedBottom\}/,
-      `the inset is not applied to ${what}`,
-    );
-  }
-  assert.match(SAFE_AREA.fixedBottom.paddingBottom, /env\(safe-area-inset-bottom\)/);
-});
-
-test("the overflow trigger says it opens something, and does not sink when pressed", () => {
-  // 触发器搬到了 components/nav-more.tsx：那段 `<details>` 换成了 Radix 的
-  // Sheet，客户端边界因此收在这一个组件里，而不是爬到整棵导航树上。
-  const trigger = openingTags(readSource("components/nav-more.tsx")).find(
-    (tag) => tag.name === "SheetTrigger",
-  );
-  assert.ok(trigger, "the overflow trigger is gone");
-  // 以前断言它是 `<summary>`，理由是「`<details>` 才让面板在无脚本时可用」。
-  // 那条性质是这次刻意换掉的：换来的是现成的动画、焦点陷阱、Escape 和滚动锁。
-  // 仍然要守的是**它是个触发器而不是链接**——下面两条断言就是这个。
-  assert.equal(trigger.name, "SheetTrigger", "the trigger is no longer the sheet's own");
-  assert.match(trigger.text, /aria-haspopup=/, "nothing says this opens rather than navigates");
-
-  // 🔴 A control that opens a sheet should stay still while the sheet moves.
-  // The reference console spells that as a variant with square brackets in
-  // it, which this system rejects everywhere, so it is expressed by the
-  // trigger having a recipe of its own that never picked the press up.
-  assert.ok(
-    !classesIn(classListsIn(trigger.text)).some((name) => name.includes("translate-y")),
-    "the overflow trigger sinks when pressed, and the thing it opens moves with it",
-  );
-  // The positive control: the press is real, and is what is being kept away
-  // from this one control. Without this the assertion above would pass in a
-  // console that had no press anywhere.
-  assert.ok(BUTTON.base.includes("active:translate-y-px"), "there is no press to be guarded against");
-});
-
 test("every nav glyph is path data, and none of it spells a class", async () => {
   const icons = [...navItems().map((item) => item.icon), NAV_MORE.icon];
   assert.equal(icons.length, 12, "eleven destinations and the overflow trigger");
