@@ -44,7 +44,6 @@ import { operatorName } from "@/lib/plmn";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
   AT_COMMAND_GUARDS,
-  CARD,
   LOG,
   atCommandGuard,
   deviceCommandGuard,
@@ -1378,11 +1377,11 @@ function ApnEditor({
  * The danger zone.
  *
  * 🔴 A red border was the obvious way to draw this box and, when this was
- * written, it would not have rendered: `CARD.root` asked for a border width
+ * written, it would not have rendered: the card root asked for a border width
  * and computed to `none 0px` on that build, which was
  * `BORDER_WIDTH_WITHOUT_A_STYLE` and was precisely the defect this card was
  * sent here to fix elsewhere in this file. **That reason is gone** — the
- * reset in `app/globals.css` now carries the border style `CARD.root` was
+ * reset in `app/globals.css` now carries the border style the card root was
  * missing, and a red border here would draw today. The zone is still a wash
  * behind its header and a red heading, both of which are properties the
  * build really sets and were measured rather than assumed; the render was
@@ -1405,8 +1404,8 @@ function DangerZone({
 }) {
   return (
     <Card>
-      <CardHeader className={CARD.dangerHeader}>
-        <CardTitle className={CARD.dangerTitle}>{labels.danger}</CardTitle>
+      <CardHeader className="bg-bad-wash">
+        <CardTitle className="text-destructive">{labels.danger}</CardTitle>
         <CardNote>{labels.dangerNote}</CardNote>
       </CardHeader>
       <CardContent>

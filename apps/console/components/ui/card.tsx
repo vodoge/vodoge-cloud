@@ -1,7 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/cn"
-import { CARD, STAT, type StatTone } from "@/lib/tokens"
+import { STAT, type StatTone } from "@/lib/tokens"
 
 const Card = React.forwardRef<
   HTMLDivElement,
@@ -90,7 +90,7 @@ type DivProps = React.HTMLAttributes<HTMLDivElement>
 const CardNote = CardDescription
 
 export function CardActions({ className, ...props }: DivProps) {
-  return <div className={cn(CARD.actions, className)} {...props} />;
+  return <div className={cn("ml-auto flex gap-2", className)} {...props} />;
 }
 
 /**
@@ -179,10 +179,12 @@ export function CardDisclosure({
   children: React.ReactNode;
 }) {
   return (
-    <details className={cn(CARD.root, className)} {...props}>
-      <summary className={CARD.disclosureSummary}>
-        <span className={CARD.title}>{title}</span>
-        {hint ? <span className={CARD.disclosureMarker}>{hint}</span> : null}
+    <details className={cn("overflow-hidden rounded-lg border border-border bg-surface shadow", className)} {...props}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
+        <span className="m-0 text-sm font-semibold text-foreground">{title}</span>
+        {hint ? (
+          <span className="ml-auto text-xs font-normal text-muted-foreground">{hint}</span>
+        ) : null}
       </summary>
       <CardContent>{children}</CardContent>
     </details>
@@ -236,9 +238,12 @@ export function CardEmpty({
   ...props
 }: DivProps & { title: string; description?: string }) {
   return (
-    <div className={cn(CARD.empty, className)} {...props}>
-      <span className={CARD.emptyTitle}>{title}</span>
-      {description ? <span className={CARD.emptyDescription}>{description}</span> : null}
+    <div
+      className={cn("flex flex-col items-center gap-2 px-6 py-12 text-center text-muted-foreground", className)}
+      {...props}
+    >
+      <span className="font-semibold text-foreground">{title}</span>
+      {description ? <span className="max-w-measure text-sm">{description}</span> : null}
     </div>
   );
 }

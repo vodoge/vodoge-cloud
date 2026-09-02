@@ -9,7 +9,6 @@ import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialo
 import { Field, Form, FormError, FormHint, InlineField, Input } from "@/components/ui/form";
 import { SecretInput } from "@/components/ui/secret-input";
 import {
-  CARD,
   FORM,
   groupSettingsFields,
   settingsDocument,
@@ -151,7 +150,7 @@ export function SettingsForm({
   return (
     <>
       <Form onSubmit={askSave}>
-        <div className={CARD.stack}>
+        <div className="flex flex-col gap-3">
           {groups.map((group) =>
             group.name === null ? (
               <FieldList

@@ -49,7 +49,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { CARD, DEVICE_TABS, deviceTab, deviceTabHref } from "@/lib/tokens";
+import { DEVICE_TABS, deviceTab, deviceTabHref } from "@/lib/tokens";
 
 /**
  * One device, and everything that can be done to it.
@@ -386,12 +386,12 @@ function OverviewPanel({
  * reason: the danger zone is a wash behind the header and a red title, and
  * `CardPanel` has nowhere to put a class on its header. **A red border was
  * the first answer and, when this was written, it would not have
- * rendered** — `CARD.root` asked for a border width and computed to
+ * rendered** — the card root asked for a border width and computed to
  * `none 0px` on that build, which was the whole of
  * `BORDER_WIDTH_WITHOUT_A_STYLE`, and shipping markup that reviewed as a
  * warning and painted nothing was the exact defect this card was sent to fix
  * on the USB-net button. **That reason is gone**: the reset in
- * `app/globals.css` now carries the style `CARD.root` was missing, and a red
+ * `app/globals.css` now carries the style the card root was missing, and a red
  * border would draw today. `CardPanel`'s header still takes no class of its
  * own, though, so the composed parts are still what this needs regardless.
  *
@@ -424,8 +424,8 @@ function ConsolePanel({
       />
 
       <CardShell>
-        <CardHeader className={CARD.dangerHeader}>
-          <CardTitle className={CARD.dangerTitle}>{t("device.admin", locale)}</CardTitle>
+        <CardHeader className="bg-bad-wash">
+          <CardTitle className="text-destructive">{t("device.admin", locale)}</CardTitle>
           <CardNote>{t("device.adminNote", locale)}</CardNote>
         </CardHeader>
         <CardContent>

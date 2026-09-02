@@ -2256,14 +2256,12 @@ test("there is a form recipe for every form element this console renders", () =>
  *    worth catching, and still caught here by name.
  */
 test("there is one empty state in this console, and one file draws it", () => {
-  const drawing: string[] = [];
   const naming: string[] = [];
   const handDrawn: string[] = [];
 
   for (const relative of [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES]) {
     const source = readSource(relative);
     const code = codeOnly(source);
-    if (/\bCARD\.empty[A-Za-z]*\b/.test(code)) drawing.push(relative);
     if (/export\s+(?:function|const)\s+\w*Empty\w*\b/.test(code)) naming.push(relative);
     const names = classesIn(classListsIn(source));
     if (names.some((name) => name === "empty" || name.startsWith("empty-"))) {
@@ -2271,11 +2269,17 @@ test("there is one empty state in this console, and one file draws it", () => {
     }
   }
 
-  assert.deepEqual(
-    drawing.sort(),
-    ["components/ui/card.tsx"],
-    "a second file is drawing an empty state of its own out of the recipe",
-  );
+  // ⚠️ **claim 1 在这里退休了，而它是三条里唯一有覆盖损失的一条。** 它数的是
+  // 「有几个文件读 `CARD.empty*`」，靠的前提是「类只能来自配方」——配方内联之
+  // 后这个前提不成立，检测手段跟着失效。
+  //
+  // 🔴 损失说清楚：claim 2 抓的是「第二个**导出的** Empty 名字」，claim 3 抓的
+  // 是「照着旧样式表手写 `.empty` 标记」。两者都抓不到「某个页面把空状态的工具
+  // 类原地抄一份、既不导出名字也不用旧类名」。这一种现在没有东西拦。
+  //
+  // 没有用类名组合去替代，是故意的：空状态的类列表里没有一个是它独有的
+  // （`flex flex-col items-center gap-2 px-6 py-12 text-center`），照这个去匹配
+  // 会既漏又误报，而一条会误报的守卫比没有守卫更快被人关掉。
   assert.deepEqual(
     naming.sort(),
     ["components/ui/card.tsx"],
@@ -7422,10 +7426,24 @@ test("nothing that was guarded before this card is unguarded after it", () => {
  * to generate CSS.
  */
 test("the danger zone says so without a border, and the buttons in it are red", async () => {
-  const classes = [CARD.dangerHeader, CARD.dangerTitle, LOG.entry]
-    .join(" ")
-    .split(/\s+/)
-    .filter(Boolean);
+  const zone = bodyOfFunction(readSource(CONSOLE_SOURCE), "DangerZone");
+  assert.ok(zone, "the danger zone is gone");
+
+  // 🔴 配方内联之后，这两个类列表**必须**从区块源码里取而不是从 tokens.ts 的
+  // 配方对象里取。原来那样写在内联后会一直绿着：它检查的是 CARD.dangerHeader /
+  // CARD.dangerTitle 里的值，而区块已经不读那两个值了——守卫会认真检查一组没人
+  // 用的类，同时对区块真正用的那组一无所知。这正是这条守卫要防的那种「看着对、
+  // 其实什么也没守」。
+  const zoneTags = openingTags(zone as string);
+  const zoneHeader = zoneTags.find((tag) => tag.name === "CardHeader");
+  const zoneTitle = zoneTags.find((tag) => tag.name === "CardTitle");
+  assert.ok(zoneHeader && zoneTitle, "the danger zone lost its header or its title");
+
+  const classes = classesIn([
+    ...classListsIn(zoneHeader.text),
+    ...classListsIn(zoneTitle.text),
+    LOG.entry,
+  ]);
   const generated = await generatedClasses([...classes, "p-s4"]);
   assert.deepEqual(
     classes.filter((name) => !generated.has(name)),
@@ -7437,9 +7455,7 @@ test("the danger zone says so without a border, and the buttons in it are red", 
     "a red outline behind a row of red buttons reads as one block of noise",
   );
 
-  const zone = bodyOfFunction(readSource(CONSOLE_SOURCE), "DangerZone");
-  assert.ok(zone, "the danger zone is gone");
-  assert.match(zone as string, /CARD\.dangerHeader/, "the zone no longer reads as one");
+  assert.match(zone as string, /\bbg-bad-wash\b/, "the zone no longer reads as one");
   assert.match(zone as string, /DISRUPTIVE\.map/, "the seven are drawn from somewhere else now");
   assert.match(
     zone as string,
@@ -7457,7 +7473,7 @@ test("the danger zone says so without a border, and the buttons in it are red", 
   // And the page puts the device's removal in the same zone rather than under
   // the first table an operator sees.
   const page = codeOnly(readSource(DEVICE_PAGE));
-  assert.match(page, /CARD\.dangerHeader/, "removing a device is outside the danger zone again");
+  assert.match(page, /\bbg-bad-wash\b/, "removing a device is outside the danger zone again");
   assert.match(page, /<DeviceAdmin\b/, "the admin controls are not rendered at all");
 });
 

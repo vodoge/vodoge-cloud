@@ -15,7 +15,6 @@ import {
 import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import {
-  CARD,
   NOTIFICATION_FIELDS,
   DEVICE_FIELDS,
   SECURITY_FIELDS,
@@ -236,7 +235,7 @@ function ReadOnlyFields({
   const words = { on: labels.valueOn as string, off: labels.valueOff as string };
 
   return (
-    <div className={CARD.stack}>
+    <div className="flex flex-col gap-3">
       {groupSettingsFields(fields).map((group) =>
         group.name === null ? (
           <SpecTable key="flat">

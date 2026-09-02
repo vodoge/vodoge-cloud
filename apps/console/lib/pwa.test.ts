@@ -2530,7 +2530,13 @@ const CAPTURED_FROM = {
   // #a1a1aa），而 **screenshot-wide.png 正对着左侧导航栏**，那几个分组标签就在
   // 画面里。所以这次盖章走的**不是**上面那条「改动看不出来」的分支——是看得出
   // 来、但拍摄条件仍然不具备。两者不该记成同一件事：前者是判断，后者是欠账。
-  chrome: "ead37d086100e7579d3e13b4c8255b29a2179b96c0a294c883e075a35dc09902",
+  //
+  // CARD 配方内联（同日）走的**是**「改动看不出来」那条分支，和上面 SHELL 那次
+  // 相反，理由逐条核过：首页只画 CardActions 和 CardEmpty 两个受影响部件，
+  // CardActions 的唯一改动是 gap-s2→gap-2（两者都是 0.5rem，像素完全相同），
+  // CardEmpty 在有数据时根本不画，而两帧都有数据。CardDisclosure / CARD.stack /
+  // 危险区那几处不在首页上。
+  chrome: "97491fc6b46b20357be5bf65b229592952dffc8348a7a86d178614ef87f70227",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
