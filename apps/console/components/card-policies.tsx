@@ -22,7 +22,6 @@ import {
 import {
   cardPolicyGuardFor,
   cardPolicyPatch,
-  FORM,
   type CardPolicyEdit,
   type CardPolicyGuard,
 } from "@/lib/tokens";
@@ -221,7 +220,7 @@ export function CardPolicies({
       {error ? <FormError>{error}</FormError> : null}
 
       {policies.length === 0 ? (
-        <p className={FORM.hint}>{labels.none}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.none}</p>
       ) : (
         <Table>
           <TableHeader>
@@ -350,7 +349,7 @@ export function CardPolicies({
           </InlineForm>
         ) : null
       ) : (
-        <p className={FORM.hint}>{labels.readOnly}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.readOnly}</p>
       )}
 
       {pending !== null && asked !== null ? (

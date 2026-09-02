@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FORM } from "@/lib/tokens";
 
 type Labels = {
   email: string;
@@ -50,11 +49,11 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
   }
 
   return (
-    <form onSubmit={onSubmit} className={FORM.root}>
-      <label className={FORM.label}>
+    <form onSubmit={onSubmit} className="flex flex-col gap-3">
+      <label className="flex flex-col gap-1 text-sm font-medium text-muted-foreground">
         {labels.email}
         <input
-          className={FORM.input}
+          className="min-h-touch w-full rounded border border-line-strong bg-bg px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent-edge disabled:opacity-50"
           name="email"
           type="email"
           autoComplete="username"
@@ -62,12 +61,12 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
           disabled={pending}
         />
       </label>
-      <label className={FORM.label}>
+      <label className="flex flex-col gap-1 text-sm font-medium text-muted-foreground">
         {labels.password}
         {/* `type="password"`, never a reveal toggle: this field is the only
             thing between a stranger on the same screen and the fleet. */}
         <input
-          className={FORM.input}
+          className="min-h-touch w-full rounded border border-line-strong bg-bg px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent-edge disabled:opacity-50"
           name="password"
           type="password"
           autoComplete="current-password"
@@ -75,7 +74,7 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
           disabled={pending}
         />
       </label>
-      {error ? <p className={FORM.error}>{error}</p> : null}
+      {error ? <p className="m-0 text-sm text-destructive">{error}</p> : null}
       <Button type="submit" disabled={pending}>
         {pending ? labels.working : labels.submit}
       </Button>

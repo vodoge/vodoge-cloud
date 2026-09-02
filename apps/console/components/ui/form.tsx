@@ -1,6 +1,5 @@
 import { cn } from "@/lib/cn";
 import { Input as ShadcnInput } from "@/components/ui/input";
-import { FORM } from "@/lib/tokens";
 
 /**
  * Form parts.
@@ -13,19 +12,32 @@ import { FORM } from "@/lib/tokens";
  * renders one of those elements without a class, so these are not a
  * convenience; they are the only way to render a form in a migrated page.
  *
- * There is deliberately no `Textarea`. This console contains zero `<textarea>`
- * elements: the SMS body is an `<input>` (`send-sms.tsx:51`), and the one place
- * that carries multi-line meaning — the "one per line" list field in
- * `settings-form.tsx:170` — is a single-line input whose change would be a
- * change of behaviour, which the settings card forbids. `FORM.textarea` stays
- * as a recipe because the guard requires one for every element the legacy layer
- * styles bare; a component for it would be a control with no caller.
+ * ⚠️ **The note that stood here about `<textarea>` had gone stale twice over,
+ * and it is corrected rather than carried.** It said this console contains
+ * zero of them and that there is deliberately no `Textarea`. Both are now
+ * false: the "one per line" list field at `settings-form.tsx:367` did become a
+ * real `<textarea>` — it used to carry "one per line" as the placeholder of a
+ * *single-line* box, so the one thing it told the operator to do was the one
+ * thing it would not let them do — and `components/ui/textarea.tsx` exists
+ * from the shadcn install. That component has no callers; the one textarea
+ * writes its classes at its own call site. Wiring the two together is a
+ * separate decision from this one.
  *
- * Class strings live in `lib/tokens.ts`. See the note in `button.tsx`.
+ * The recipe `FORM.textarea` still has to exist in `lib/tokens.ts` whatever
+ * happens here: `tokens.test.ts` asserts a recipe for every form element the
+ * console renders, and reads that object to do it.
+ *
+ * The class strings used to live in `lib/tokens.ts` and are written out below
+ * now. What guarded them survives the move: every `.tsx` under `app/` and
+ * `components/` is on `MIGRATED_SOURCES`, so `lib/tokens.test.ts` reads this
+ * source and puts every class in it to the real Tailwind build. (The pointer
+ * that stood here at `button.tsx` is dropped: that file inlined its own
+ * strings into `cva` when it moved to shadcn, so there is no note there to
+ * see.)
  */
 
 export function Form({ className, ...props }: React.FormHTMLAttributes<HTMLFormElement>) {
-  return <form className={cn(FORM.root, className)} {...props} />;
+  return <form className={cn("flex flex-col gap-3", className)} {...props} />;
 }
 
 /**
@@ -33,7 +45,7 @@ export function Form({ className, ...props }: React.FormHTMLAttributes<HTMLFormE
  * room. Sixteen of these in the console, five in `device-console.tsx` alone.
  */
 export function InlineForm({ className, ...props }: React.FormHTMLAttributes<HTMLFormElement>) {
-  return <form className={cn(FORM.inline, className)} {...props} />;
+  return <form className={cn("flex flex-wrap items-end gap-3", className)} {...props} />;
 }
 
 /**
@@ -56,7 +68,14 @@ export function Field({
   inline?: boolean;
 }) {
   return (
-    <label className={cn(FORM.label, inline ? FORM.inlineField : undefined, className)} {...props}>
+    <label
+      className={cn(
+        "flex flex-col gap-1 text-sm font-medium text-muted-foreground",
+        inline ? "w-full sm:w-auto sm:flex-1" : undefined,
+        className,
+      )}
+      {...props}
+    >
       <span>{label}</span>
       {children}
     </label>
@@ -78,7 +97,7 @@ export function InlineField({
   ...props
 }: Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> & { label: React.ReactNode }) {
   return (
-    <label className={cn(FORM.inlineLabel, className)}>
+    <label className={cn("flex items-center gap-2 text-sm font-medium text-foreground", className)}>
       <Checkbox {...props} />
       <span>{label}</span>
     </label>
@@ -91,7 +110,11 @@ export function Checkbox({
 }: Omit<React.InputHTMLAttributes<HTMLInputElement>, "type">) {
   // 保持原生 input[type=checkbox]。shadcn 的 Checkbox 是 Radix 的按钮，不是
   // 真正的 input——它不会随 form 提交，而这两处调用都在受控表单里。
-  return <input type="checkbox" className={cn(FORM.checkbox, className)} {...props} />;
+  return <input
+      type="checkbox"
+      className={cn("size-4 min-h-4 shrink-0 cursor-pointer accent-accent disabled:opacity-50", className)}
+      {...props}
+    />;
 }
 
 /**
@@ -122,7 +145,7 @@ export function Select({
         // shadcn 输入框的外观，逐字取自 components/ui/input.tsx，让原生
         // select 和它旁边的 input 看起来是一套。
         "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
-        compact ? FORM.selectCompact : undefined,
+        compact ? "min-h-8 w-auto px-2 text-xs" : undefined,
         className,
       )}
       {...props}
@@ -132,10 +155,10 @@ export function Select({
 
 /** A load or save failure, in the place the control that failed is. */
 export function FormError({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn(FORM.error, className)} {...props} />;
+  return <p className={cn("m-0 text-sm text-destructive", className)} {...props} />;
 }
 
 /** Not a failure: a note about what a control will do. */
 export function FormHint({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn(FORM.hint, className)} {...props} />;
+  return <p className={cn("m-0 text-sm text-muted-foreground", className)} {...props} />;
 }

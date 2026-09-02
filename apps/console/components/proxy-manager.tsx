@@ -19,7 +19,6 @@ import {
 import type { CountryRuleRow, ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
 import { cn } from "@/lib/cn";
 import { interpolate } from "@/lib/i18n";
-import { FORM } from "@/lib/tokens";
 
 /**
  * Every user-visible string this component draws, named.
@@ -783,7 +782,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
     <div className="flex flex-col gap-4">
       {/* A row of controls rather than a form: there is no submit here, and a
           form would turn Return in the host field into an export. */}
-      <div className={FORM.inline}>
+      <div className="flex flex-wrap items-end gap-3">
         <Field inline label={labels.exportHost}>
           <Input
             value={host}

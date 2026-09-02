@@ -4237,7 +4237,15 @@ test("the one field that means several lines is drawn as several lines", () => {
     (tag) => tag.name === "textarea",
   );
   assert.equal(areas.length, 1, "the list field went back to a single line");
-  assert.match(areas[0].text, /className=\{FORM\.textarea\}/, "the recipe is not the one used");
+  // 配方内联之后断言直接对着元素源码。守的东西没变，而且它不是审美：`@layer
+  // legacy` 还在给裸 <textarea> 上样式而 preflight 是关的，所以一个没有类的框
+  // 今天看着对，是因为错的理由——它会在那层被删掉的当天裸掉。`resize-y` 是这
+  // 个字段当初被做成多行框时加上的那一个类。
+  assert.match(
+    areas[0].text,
+    /className="[^"]*\bresize-y\b[^"]*"/,
+    "the box is no longer the styled, growable multi-line one this field was made into",
+  );
   assert.match(
     areas[0].text,
     /rows=\{\d+\}/,
@@ -4255,13 +4263,15 @@ test("the one field that means several lines is drawn as several lines", () => {
     "a placeholder is being asked to explain a control again",
   );
 
-  const consumers = [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES].filter((relative) =>
-    /FORM\.textarea/.test(codeOnly(readSource(relative))),
-  );
-  assert.ok(
-    consumers.includes("components/settings-form.tsx"),
-    "FORM.textarea is back to having no consumer, and a recipe nothing uses is a dead rule",
-  );
+  // ⚠️ 这里原本还有一条断言：`FORM.textarea` 必须有消费者，理由是「一条没人用
+  // 的配方就是一条死规则」。配方内联之后消费者归零是**预期结果而不是回归**，
+  // 所以它随「类名必须住在 lib/tokens.ts」那一批一起退休。
+  //
+  // 🔴 但它担心的那件事没有跟着消失，只是换了地方：`lib/tokens.ts` 是 Tailwind
+  // 的 content 文件，没人用的配方照样把规则编进出货的样式表。现在保着这个配方
+  // 存在的是上面那条 `there is a form recipe for every form element this console
+  // renders`——它读的是 FORM 对象，不是调用点。第 4 阶段收尾删 tokens.ts 时，
+  // 这两件事要一起处理，否则删掉配方会让那条守卫红，而留着它会一直出货死规则。
 });
 
 /**

@@ -244,7 +244,7 @@ function FieldList({
   change: (path: string) => (next: unknown) => void;
 }) {
   return (
-    <div className={FORM.root}>
+    <div className="flex flex-col gap-3">
       {group.fields.map((field) => (
         <FieldInput
           key={field.path}
@@ -365,7 +365,7 @@ function FieldInput({
     return (
       <Field label={label}>
         <textarea
-          className={FORM.textarea}
+          className="w-full resize-y rounded border border-line-strong bg-bg p-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-accent-edge disabled:opacity-50"
           rows={3}
           value={String(value ?? "")}
           placeholder={hint}
