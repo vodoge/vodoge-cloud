@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/table";
 import type { JournalEvent } from "@/lib/catalog";
 import { cn } from "@/lib/cn";
-import { JOURNAL, SEGMENTED } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -59,7 +58,8 @@ const PAYLOAD_COLUMNS = 4;
  *   assumed: at 390px the table came out 1311px wide inside a 311px card with
  *   `Output` in the cell, against 1409px for the `.output` it replaced. A
  *   scroll container's min-content size is not zero for the box sizing the
- *   cell around it. `JOURNAL.payload` makes the envelope wrap, which takes the
+ *   cell around it. The payload block wraps (`whitespace-pre-wrap break-all`),
+ *   which takes the
  *   table to the width of the card; `Output` keeps the vertical ceiling and
  *   the scroll that goes with it.
  */
@@ -103,12 +103,16 @@ export function Journal({
   }
 
   return (
-    <div className={JOURNAL.stack}>
-      <div className={SEGMENTED.root} role="group" aria-label={labels.filter}>
+    <div className="flex flex-col gap-4">
+      <div
+        className="inline-flex items-center gap-px rounded border border-border bg-surface-hover p-px"
+        role="group"
+        aria-label={labels.filter}
+      >
         <button
           type="button"
           aria-pressed={kind === ""}
-          className={cn(SEGMENTED.option, kind === "" ? SEGMENTED.optionSelected : undefined)}
+          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", kind === "" ? "bg-surface text-foreground shadow" : undefined)}
           onClick={() => setKind("")}
         >
           {labels.all}
@@ -119,8 +123,8 @@ export function Journal({
             type="button"
             aria-pressed={kind === candidate}
             className={cn(
-              SEGMENTED.option,
-              kind === candidate ? SEGMENTED.optionSelected : undefined,
+              "inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
+              kind === candidate ? "bg-surface text-foreground shadow" : undefined,
             )}
             onClick={() => setKind(candidate)}
           >
@@ -147,7 +151,7 @@ export function Journal({
             const expanded = open === key;
             return (
               <Fragment key={key}>
-                <TableRow className={expanded ? JOURNAL.rowOpen : undefined}>
+                <TableRow className={expanded ? "border-b-0 bg-surface-hover" : undefined}>
                   <TableCell mono faint>
                     {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
                   </TableCell>
@@ -176,9 +180,9 @@ export function Journal({
                     measured at 79px — a JSON block the width of a thumbnail.
                     Spanning the row gives it the card. */}
                 {expanded ? (
-                  <TableRow className={JOURNAL.payloadRow}>
+                  <TableRow className="bg-surface-hover">
                     <TableCell colSpan={PAYLOAD_COLUMNS} wrap>
-                      <Output className={JOURNAL.payload}>
+                      <Output className="whitespace-pre-wrap break-all">
                         {payloads[key] === undefined
                           ? labels.loading
                           : JSON.stringify(payloads[key], null, 2)}
@@ -195,7 +199,7 @@ export function Journal({
       {/* Only reachable through the filter: the page renders its own empty
           state when nothing arrived at all, so this is "the filter matched
           nothing", which is a different sentence about a different cause. */}
-      {shown.length === 0 ? <p className={JOURNAL.filteredOut}>{labels.none}</p> : null}
+      {shown.length === 0 ? <p className="m-0 text-sm text-muted-foreground">{labels.none}</p> : null}
     </div>
   );
 }

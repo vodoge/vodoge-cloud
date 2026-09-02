@@ -2549,7 +2549,7 @@ const CAPTURED_FROM = {
   // 前两个在两帧里到处都是（次级文字、统计卡标签、导航），所以这一次连「哪些
   // 像素动了」都不必推断——大面积都动了。仍然拍不了：要浏览器、特定视口和一个
   // 已登录的会话，本机没有网关也没有数据库。
-  chrome: "aed47a2de88be9c1cf2d9d8acbc8e4c2a07da42c6b6c6f392d202d762a90089e",
+  chrome: "ef21ba2d9a21ab4d9e459949898a787f9d09ca3d01f0af31d67a44f5f9898696",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

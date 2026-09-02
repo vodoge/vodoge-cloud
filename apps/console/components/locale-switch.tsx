@@ -2,7 +2,6 @@
 
 import { cn } from "@/lib/cn";
 import { LOCALE_COOKIE, htmlLang, type Locale } from "@/lib/locale";
-import { SEGMENTED } from "@/lib/tokens";
 
 /**
  * A segmented pair rather than two standalone buttons.
@@ -51,13 +50,17 @@ export function LocaleSwitch({
   }
 
   return (
-    <div className={SEGMENTED.root} role="group" aria-label={labels.language}>
+    <div
+      className="inline-flex items-center gap-px rounded border border-border bg-surface-hover p-px"
+      role="group"
+      aria-label={labels.language}
+    >
       {(["zh", "en"] as const).map((option) => (
         <button
           key={option}
           type="button"
           aria-pressed={locale === option}
-          className={cn(SEGMENTED.option, locale === option ? SEGMENTED.optionSelected : undefined)}
+          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", locale === option ? "bg-surface text-foreground shadow" : undefined)}
           onClick={() => setLocale(option)}
         >
           {option === "zh" ? labels.zh : labels.en}

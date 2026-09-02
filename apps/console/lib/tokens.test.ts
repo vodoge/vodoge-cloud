@@ -2343,9 +2343,12 @@ test("the journal's payload row spans every column the table has", () => {
   assert.ok(headers > 0, "the journal stopped rendering a header row: this test is measuring air");
   assert.equal(declared, headers, "the payload row and the table disagree about how wide it is");
   assert.match(code, /colSpan=\{PAYLOAD_COLUMNS\}/, "the payload is back inside one column");
+  // 配方内联之后断言直接对着元素。守的东西没变，而且和 TABLE 那条一样含着一个
+  // **真技术事实**：必须是 break-all 而不是 overflow-wrap——overflow-wrap 不降低
+  // min-content，而表格单元格正是按 min-content 定宽的。
   assert.match(
     code,
-    /<Output\s+className=\{JOURNAL\.payload\}/,
+    /<Output\s+className="[^"]*\bbreak-all\b/,
     "the payload lost the class that lets the table fit the card; measured, it went 311px -> 1112px",
   );
 });
