@@ -53,7 +53,7 @@ export type TabProps = {
 export function Tab({ href, current, className, children, ...props }: TabProps) {
   const classes = cn(
     "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-1 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground",
-    current ? "border-brand-edge text-foreground" : undefined,
+    current ? "border-ring text-foreground" : undefined,
     className,
   );
   if (href !== undefined) {

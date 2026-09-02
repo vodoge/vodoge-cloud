@@ -107,7 +107,7 @@ export function ConfirmDialog({
     >
       <AlertDialogContent
         className={cn(
-          "relative flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-surface p-6 shadow-lg",
+          "relative flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-card p-6 shadow-lg",
           className,
         )}
       >

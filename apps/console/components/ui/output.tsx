@@ -17,7 +17,7 @@ import { cn } from "@/lib/cn";
 export function Output({ className, ...props }: React.HTMLAttributes<HTMLPreElement>) {
   return <pre
       className={cn(
-        "m-0 mt-2 max-h-panel overflow-auto rounded bg-bg p-3 font-mono text-xs text-foreground",
+        "m-0 mt-2 max-h-panel overflow-auto rounded bg-background p-3 font-mono text-xs text-foreground",
         className,
       )}
       {...props}

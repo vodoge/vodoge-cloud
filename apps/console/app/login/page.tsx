@@ -13,10 +13,10 @@ export default async function LoginPage({
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center p-6">
-      <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-surface p-8 shadow-lg">
+      <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-card p-8 shadow-lg">
         <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
           <span
-            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-primary to-primary/80 text-xs font-bold text-primary-foreground"
             aria-hidden="true"
           >
             V

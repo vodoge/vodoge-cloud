@@ -232,7 +232,7 @@ export default async function DevicesPage({
                         box, so it is the one column that survives every
                         breakpoint. */}
                     <TableCell>
-                      <Link className="font-medium text-brand underline" href={`/devices/${device.id}`}>
+                      <Link className="font-medium text-primary underline" href={`/devices/${device.id}`}>
                         {device.name}
                       </Link>
                     </TableCell>

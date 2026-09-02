@@ -51,7 +51,7 @@ export function LocaleSwitch({
 
   return (
     <div
-      className="inline-flex items-center gap-px rounded border border-border bg-surface-hover p-px"
+      className="inline-flex items-center gap-px rounded border border-border bg-accent p-px"
       role="group"
       aria-label={labels.language}
     >
@@ -60,7 +60,7 @@ export function LocaleSwitch({
           key={option}
           type="button"
           aria-pressed={locale === option}
-          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", locale === option ? "bg-surface text-foreground shadow" : undefined)}
+          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", locale === option ? "bg-card text-foreground shadow" : undefined)}
           onClick={() => setLocale(option)}
         >
           {option === "zh" ? labels.zh : labels.en}

@@ -364,7 +364,7 @@ function FieldInput({
     return (
       <Field label={label}>
         <textarea
-          className="w-full resize-y rounded border border-line-strong bg-bg p-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand-edge disabled:opacity-50"
+          className="w-full resize-y rounded border border-border bg-background p-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring disabled:opacity-50"
           rows={3}
           value={String(value ?? "")}
           placeholder={hint}

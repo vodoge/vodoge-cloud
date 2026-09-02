@@ -105,14 +105,14 @@ export function Journal({
   return (
     <div className="flex flex-col gap-4">
       <div
-        className="inline-flex items-center gap-px rounded border border-border bg-surface-hover p-px"
+        className="inline-flex items-center gap-px rounded border border-border bg-accent p-px"
         role="group"
         aria-label={labels.filter}
       >
         <button
           type="button"
           aria-pressed={kind === ""}
-          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", kind === "" ? "bg-surface text-foreground shadow" : undefined)}
+          className={cn("inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground", kind === "" ? "bg-card text-foreground shadow" : undefined)}
           onClick={() => setKind("")}
         >
           {labels.all}
@@ -124,7 +124,7 @@ export function Journal({
             aria-pressed={kind === candidate}
             className={cn(
               "inline-flex min-h-touch cursor-pointer items-center rounded border-0 bg-transparent px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
-              kind === candidate ? "bg-surface text-foreground shadow" : undefined,
+              kind === candidate ? "bg-card text-foreground shadow" : undefined,
             )}
             onClick={() => setKind(candidate)}
           >
@@ -151,7 +151,7 @@ export function Journal({
             const expanded = open === key;
             return (
               <Fragment key={key}>
-                <TableRow className={expanded ? "border-b-0 bg-surface-hover" : undefined}>
+                <TableRow className={expanded ? "border-b-0 bg-accent" : undefined}>
                   <TableCell mono faint>
                     {new Date(event.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
                   </TableCell>
@@ -180,7 +180,7 @@ export function Journal({
                     measured at 79px — a JSON block the width of a thumbnail.
                     Spanning the row gives it the card. */}
                 {expanded ? (
-                  <TableRow className="bg-surface-hover">
+                  <TableRow className="bg-accent">
                     <TableCell colSpan={PAYLOAD_COLUMNS} wrap>
                       <Output className="whitespace-pre-wrap break-all">
                         {payloads[key] === undefined

@@ -60,7 +60,7 @@ export function AppSidebar({
       <SidebarHeader>
         <div className="flex items-center gap-2 px-2 py-1.5 text-base font-semibold tracking-tight">
           <span
-            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-primary to-primary/80 text-xs font-bold text-primary-foreground"
             aria-hidden="true"
           >
             V

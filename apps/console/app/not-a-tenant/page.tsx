@@ -11,7 +11,7 @@ export default async function NotATenantPage() {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center p-6">
-      <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-surface p-8 shadow-lg">
+      <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-card p-8 shadow-lg">
         <div>
           <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("apex.title", locale)}</h1>
           <p className="m-0 mt-1 text-sm text-muted-foreground">

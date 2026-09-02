@@ -53,7 +53,7 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
       <label className="flex flex-col gap-1 text-sm font-medium text-muted-foreground">
         {labels.email}
         <input
-          className="min-h-touch w-full rounded border border-line-strong bg-bg px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand-edge disabled:opacity-50"
+          className="min-h-touch w-full rounded border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring disabled:opacity-50"
           name="email"
           type="email"
           autoComplete="username"
@@ -66,7 +66,7 @@ export function LoginForm({ next, labels }: { next: string; labels: Labels }) {
         {/* `type="password"`, never a reveal toggle: this field is the only
             thing between a stranger on the same screen and the fleet. */}
         <input
-          className="min-h-touch w-full rounded border border-line-strong bg-bg px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand-edge disabled:opacity-50"
+          className="min-h-touch w-full rounded border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring disabled:opacity-50"
           name="password"
           type="password"
           autoComplete="current-password"

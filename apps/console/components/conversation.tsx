@@ -176,7 +176,7 @@ export function Conversation({
             key={message.id}
             className={cn(
               "max-w-measure rounded-lg border border-solid border-border p-3",
-              message.direction === "inbound" ? "self-start rounded-bl bg-surface" : "self-end rounded-br bg-brand-wash",
+              message.direction === "inbound" ? "self-start rounded-bl bg-card" : "self-end rounded-br bg-accent",
             )}
           >
             {message.encoding === "8bit" ? (

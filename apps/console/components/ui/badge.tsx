@@ -29,7 +29,7 @@ const badgeVariants = cva(
         warn: "border-transparent bg-warn-wash text-warn",
         bad: "border-transparent bg-bad-wash text-bad",
         info: "border-transparent bg-info-wash text-info",
-        neutral: "border-transparent bg-line-strong text-fg",
+        neutral: "border-transparent bg-border text-foreground",
       },
     },
     defaultVariants: {

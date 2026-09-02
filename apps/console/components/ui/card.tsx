@@ -179,7 +179,7 @@ export function CardDisclosure({
   children: React.ReactNode;
 }) {
   return (
-    <details className={cn("overflow-hidden rounded-lg border border-border bg-surface shadow", className)} {...props}>
+    <details className={cn("overflow-hidden rounded-lg border border-border bg-card shadow", className)} {...props}>
       <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
         <span className="m-0 text-sm font-semibold text-foreground">{title}</span>
         {hint ? (
@@ -224,7 +224,7 @@ export function StatCard({
 }) {
   return (
     <section
-      className={cn("flex flex-1 flex-col gap-1 rounded-lg border border-border bg-surface p-4 shadow", className)}
+      className={cn("flex flex-1 flex-col gap-1 rounded-lg border border-border bg-card p-4 shadow", className)}
       {...props}
     >
       <span className="font-mono text-xs font-medium uppercase tracking-eyebrow text-muted-foreground">

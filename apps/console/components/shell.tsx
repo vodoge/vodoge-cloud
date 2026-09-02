@@ -52,7 +52,7 @@ export function Shell({
 
   return (
     <SidebarInset>
-      <header className="sticky top-0 z-20 flex shrink-0 items-center border-b border-border bg-surface">
+      <header className="sticky top-0 z-20 flex shrink-0 items-center border-b border-border bg-card">
         {/* The inline style is the safe-area inset; see SAFE_AREA. */}
         <div
           className="mx-auto flex w-full max-w-page flex-wrap items-center gap-2 px-3 py-2 sm:px-6"
@@ -68,7 +68,7 @@ export function Shell({
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <span
-              className="inline-flex items-center gap-2 rounded-pill border border-border bg-surface-hover px-3 py-1 text-xs text-muted-foreground"
+              className="inline-flex items-center gap-2 rounded-pill border border-border bg-accent px-3 py-1 text-xs text-muted-foreground"
               title={tenant.tenant_id}
             >
               <strong className="font-semibold text-foreground">{tenant.slug}</strong>

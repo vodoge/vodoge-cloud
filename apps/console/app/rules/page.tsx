@@ -56,7 +56,7 @@ export default async function RulesPage() {
           operator is already on when they go looking for the second one.
         */}
         <p className="m-0 text-sm text-muted-foreground">
-          <Link className="font-semibold text-brand underline" href="/schedule">
+          <Link className="font-semibold text-primary underline" href="/schedule">
             {t("rules.schedules", locale)}
           </Link>{" "}
           {t("rules.schedulesHint", locale)}
