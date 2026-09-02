@@ -26,7 +26,6 @@ import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE } from "@/lib/tokens";
 
 export default async function ProxyPage() {
   const locale = await getRequestLocale();
@@ -61,24 +60,24 @@ export default async function ProxyPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("proxy.title", locale)}</h1>
-          <p className={PAGE.description}>{t("proxy.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("proxy.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("proxy.desc", locale)}</p>
         </div>
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("proxy.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("proxy.loadError", locale)}</p> : null}
 
       {/*
         This container said `card-grid` for as long as the page has existed and
         the stylesheet has never had a rule by that name, so the two cards below
         were stacked by ordinary block flow with nothing between them —
-        markup claiming a layout it was not getting. `PAGE.stack` is a real
+        markup claiming a layout it was not getting. `"flex flex-col gap-6"` is a real
         rule: `flex flex-col gap-s5`, checked against the Tailwind build like
         every other class in this file.
       */}
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         <Card title={t("proxy.config", locale)} note={t("proxy.configNote", locale)}>
           <ProxyManager
             upstreams={upstreams}

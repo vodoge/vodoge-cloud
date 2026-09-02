@@ -13,7 +13,6 @@ import { fetchRules, type RuleRow } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE } from "@/lib/tokens";
 
 /**
  * The tenant's own extract rules, read-only.
@@ -41,23 +40,23 @@ export default async function RulesPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("rules.title", locale)}</h1>
-          <p className={PAGE.description}>{t("rules.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("rules.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("rules.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className={PAGE.error}>{t("rules.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("rules.loadError", locale)}</p> : null}
 
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         {/*
           Scheduled tasks reach the operator from here rather than from the top
           nav. Rules and schedules are the two halves of automation -- one reacts
           to what arrives, the other acts on a clock -- and this is the page an
           operator is already on when they go looking for the second one.
         */}
-        <p className={PAGE.hint}>
-          <Link className={PAGE.link} href="/schedule">
+        <p className="m-0 text-sm text-muted-foreground">
+          <Link className="font-semibold text-brand underline" href="/schedule">
             {t("rules.schedules", locale)}
           </Link>{" "}
           {t("rules.schedulesHint", locale)}

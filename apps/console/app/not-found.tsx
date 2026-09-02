@@ -1,7 +1,7 @@
 import { LocaleSwitch } from "@/components/locale-switch";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
-import { CENTERED, PAGE } from "@/lib/tokens";
+import { CENTERED } from "@/lib/tokens";
 
 /**
  * Reached for an unknown subdomain, which the middleware rewrites here rather
@@ -19,8 +19,8 @@ export default async function NotFound() {
     <div className={CENTERED.root}>
       <div className={CENTERED.card}>
         <div>
-          <h1 className={PAGE.title}>{t("notFound.title", locale)}</h1>
-          <p className={PAGE.description}>{t("notFound.body", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("notFound.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("notFound.body", locale)}</p>
         </div>
         <LocaleSwitch
           locale={locale}

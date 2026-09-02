@@ -15,7 +15,7 @@ import {
 } from "@/lib/session";
 import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { INBOX, PAGE } from "@/lib/tokens";
+import { INBOX } from "@/lib/tokens";
 
 /**
  * One conversation, and the three ways to change it.
@@ -60,7 +60,7 @@ export default async function ThreadPage({
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
           <Link href="/inbox" className={INBOX.backLink}>
             ← {t("inbox.title", locale)}
@@ -69,14 +69,14 @@ export default async function ThreadPage({
               an operator checking which SIM answered still needs the digits,
               and a heading that replaced them would hide the one field that
               is unambiguous. */}
-          <h1 className={cn(PAGE.title, name ? undefined : INBOX.titleMono)}>{name || peer}</h1>
-          <p className={PAGE.description}>
+          <h1 className={cn("m-0 text-xl font-semibold tracking-tight text-foreground", name ? undefined : INBOX.titleMono)}>{name || peer}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">
             {name ? <span className={INBOX.peerUnder}>{peer} · </span> : null}
             {messages.length} {t("inbox.messages", locale)}
           </p>
         </div>
         {writable ? null : (
-          <div className={PAGE.actions}>
+          <div className="ml-auto flex flex-wrap gap-2">
             <Badge tone="warn" dot={false}>
               {t("role.readOnlyBadge", locale)}
             </Badge>
@@ -84,7 +84,7 @@ export default async function ThreadPage({
         )}
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("inbox.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("inbox.loadError", locale)}</p> : null}
 
       <Card>
         <Conversation

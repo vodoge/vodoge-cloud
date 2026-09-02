@@ -39,7 +39,6 @@ import {
 import { t, type Locale } from "@/lib/i18n";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
-  PAGE,
   TABLE,
   deviceCommandGuard,
   esimSwitchVerdict,
@@ -373,7 +372,7 @@ export function EsimPanel({
           ) : null
         }
       >
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           {verdict ? <SwitchVerdict verdict={verdict} locale={locale} /> : null}
 
           {/* Not a fault and not a failed read: a plain SIM in a slot the page
@@ -384,7 +383,7 @@ export function EsimPanel({
             .map((failure) => (
               <FormHint key={`no-euicc-${failure.modemImei}`}>
                 {t("esim.notEuicc", locale, { imei: failure.modemImei })}{" "}
-                <span className={PAGE.mono}>{failure.reason}</span>
+                <span className="font-mono text-xs tabular-nums">{failure.reason}</span>
               </FormHint>
             ))}
           {readFailures
@@ -392,7 +391,7 @@ export function EsimPanel({
             .map((failure) => (
               <FormError key={`read-failed-${failure.modemImei}`}>
                 {t("esim.chipReadFailed", locale, { imei: failure.modemImei })}:{" "}
-                <span className={PAGE.mono}>{failure.reason}</span>
+                <span className="font-mono text-xs tabular-nums">{failure.reason}</span>
               </FormError>
             ))}
 
@@ -404,7 +403,7 @@ export function EsimPanel({
             .map((listing) => (
               <FormError key={`profiles-error-${listing.modemImei}`}>
                 {t("esim.profilesError", locale, { imei: listing.modemImei })}:{" "}
-                <span className={PAGE.mono}>{listing.profilesError}</span>
+                <span className="font-mono text-xs tabular-nums">{listing.profilesError}</span>
               </FormError>
             ))}
 
@@ -412,9 +411,9 @@ export function EsimPanel({
             <CardEmpty title={t("esim.none", locale)} />
           ) : (
             [...byEid.entries()].map(([eid, rows]) => (
-              <div key={eid} className={PAGE.section}>
-                <h3 className={PAGE.sectionTitle}>
-                  {t("esim.colEid", locale)} <span className={PAGE.mono}>{eid}</span>
+              <div key={eid} className="flex flex-col gap-4">
+                <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">
+                  {t("esim.colEid", locale)} <span className="font-mono text-xs tabular-nums">{eid}</span>
                 </h3>
                 <Table>
                   <TableHeader>
@@ -626,7 +625,7 @@ export function EsimPanel({
           ) : null
         }
       >
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           {reading ? <FormHint>{t("esim.chipBusy", locale)}</FormHint> : null}
           {/* The failed-read banner is rendered above, next to the inventory it
               explains, and split by cause. One banner that only knew the status
@@ -637,9 +636,9 @@ export function EsimPanel({
             <CardEmpty title={t("esim.noChip", locale)} />
           ) : (
             chips.map(({ info, completedAt }) => (
-              <div key={info.eid} className={PAGE.section}>
-                <h3 className={PAGE.sectionTitle}>
-                  {t("esim.colEid", locale)} <span className={PAGE.mono}>{info.eid}</span>
+              <div key={info.eid} className="flex flex-col gap-4">
+                <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">
+                  {t("esim.colEid", locale)} <span className="font-mono text-xs tabular-nums">{info.eid}</span>
                 </h3>
                 <SpecTable>
                   <TableBody>
@@ -658,12 +657,12 @@ export function EsimPanel({
                   </TableBody>
                 </SpecTable>
 
-                <h3 className={PAGE.sectionTitle}>{t("esim.notifications", locale)}</h3>
+                <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{t("esim.notifications", locale)}</h3>
                 {info.notificationsError ? (
                   <FormError>{info.notificationsError}</FormError>
                 ) : null}
                 {info.notifications.length === 0 ? (
-                  <p className={PAGE.note}>{t("esim.noNotifications", locale)}</p>
+                  <p className="m-0 text-sm text-muted-foreground">{t("esim.noNotifications", locale)}</p>
                 ) : (
                   <Table>
                     <TableHeader>
@@ -723,7 +722,7 @@ export function EsimPanel({
           )}
 
           {retrieved ? (
-            <p className={PAGE.note}>
+            <p className="m-0 text-sm text-muted-foreground">
               {t("esim.retrieved", locale, {
                 seq: retrieved.sequenceNumber,
                 bytes: retrieved.payloadBytes,
@@ -761,7 +760,7 @@ export function EsimPanel({
           ) : null
         }
       >
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           {authPending ? <FormHint>{t("esim.authBusy", locale)}</FormHint> : null}
           {failedAuthentication ? (
             <FormError>
@@ -787,7 +786,7 @@ export function EsimPanel({
           the box that took one. What the card is *about* -- what has been
           downloaded -- stays. */}
       <Card title={t("esim.dlTitle", locale)} note={writable ? t("esim.dlSecret", locale) : null}>
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           {writable ? (
             <>
               <Field label={t("esim.dlCode", locale)}>
@@ -922,14 +921,14 @@ function SwitchVerdict({
         ? t("esim.switchContradicted", locale, { state: verdict.observed ?? "" })
         : t("esim.switchUnverified", locale);
   return (
-    <div className={PAGE.section}>
+    <div className="flex flex-col gap-4">
       <div className={TABLE.cellInline}>
         <Badge tone={tone}>{t("esim.verifySwitch", locale)}</Badge>
-        <span className={PAGE.mono}>
+        <span className="font-mono text-xs tabular-nums">
           {t("esim.switchAsked", locale, { iccid: verdict.targetIccid })}
         </span>
         {verdict.readAt === null ? null : (
-          <span className={PAGE.faint}>
+          <span className="text-muted-foreground">
             {t("esim.switchReadAt", locale)}{" "}
             {new Date(verdict.readAt).toISOString().replace("T", " ").slice(0, 19)}
           </span>
@@ -967,10 +966,10 @@ function AuthenticationSection({
     [t("esim.checkCiKey", locale), authentication.ciKeyAcceptedByChip],
   ];
   return (
-    <div className={PAGE.section}>
-      <h3 className={PAGE.sectionTitle}>
+    <div className="flex flex-col gap-4">
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">
         {t("esim.aSmdp", locale)}{" "}
-        <span className={PAGE.mono}>
+        <span className="font-mono text-xs tabular-nums">
           {authentication.smdpAddress} · {authentication.eid}
         </span>
       </h3>
@@ -991,7 +990,7 @@ function AuthenticationSection({
         </TableBody>
       </SpecTable>
 
-      <h3 className={PAGE.sectionTitle}>{t("esim.checksTitle", locale)}</h3>
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{t("esim.checksTitle", locale)}</h3>
       <SpecTable>
         <TableBody>
           {checks.map(([label, passed]) => (
@@ -1004,7 +1003,7 @@ function AuthenticationSection({
         </TableBody>
       </SpecTable>
 
-      <h3 className={PAGE.sectionTitle}>{t("esim.aAnchors", locale)}</h3>
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{t("esim.aAnchors", locale)}</h3>
       <SpecTable>
         <TableBody>
           {authentication.trustAnchors.map((anchor) => (
@@ -1017,7 +1016,7 @@ function AuthenticationSection({
       </SpecTable>
 
       {authentication.profileDownloaded ? null : (
-        <p className={PAGE.note}>
+        <p className="m-0 text-sm text-muted-foreground">
           <strong>
             {t("esim.authStopped", locale, { why: authentication.stoppedAfter ?? "" })}
           </strong>
@@ -1154,9 +1153,9 @@ function DownloadSection({
     [t("esim.checkCiKey", locale), download.ciKeyAcceptedByChip],
   ];
   return (
-    <div className={PAGE.section}>
-      <h3 className={PAGE.sectionTitle}>
-        <span className={PAGE.mono}>
+    <div className="flex flex-col gap-4">
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">
+        <span className="font-mono text-xs tabular-nums">
           {download.eid} · {download.imei}
         </span>
       </h3>
@@ -1205,9 +1204,9 @@ function DownloadSection({
         </TableBody>
       </SpecTable>
 
-      <h3 className={PAGE.sectionTitle}>{t("esim.dlProfilesAfter", locale)}</h3>
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{t("esim.dlProfilesAfter", locale)}</h3>
       {after === null || after.profiles.length === 0 ? (
-        <p className={PAGE.note}>—</p>
+        <p className="m-0 text-sm text-muted-foreground">—</p>
       ) : (
         <Table>
           <TableHeader>
@@ -1234,7 +1233,7 @@ function DownloadSection({
       )}
 
       {download.stoppedAfter ? (
-        <p className={PAGE.note}>
+        <p className="m-0 text-sm text-muted-foreground">
           <strong>{t("esim.dlStopped", locale, { why: download.stoppedAfter })}</strong>
         </p>
       ) : null}

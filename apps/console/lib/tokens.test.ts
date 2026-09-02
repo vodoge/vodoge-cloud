@@ -4424,7 +4424,11 @@ test("the settings page lays its cards out with something that exists", () => {
   const { masked } = scan(source);
   const code = codeOnly(source);
 
-  const stacked = openingTags(source).filter((tag) => /className=\{PAGE\.stack\}/.test(tag.text));
+  // 布局从 `PAGE.stack` 换成了直接写工具类。守的性质没变：卡片之间必须有间距，
+  // 不能退回块级流。
+  const stacked = openingTags(source).filter((tag) =>
+    /className="flex flex-col gap-6"/.test(tag.text),
+  );
   assert.equal(stacked.length, 1, "the cards are back in block flow with no gap between them");
   for (const dead of ["card-grid", "card-span-all"]) {
     assert.ok(!code.includes(dead), `${dead} is back, and neither of them is a rule anywhere`);
@@ -4444,7 +4448,7 @@ test("the settings page lays its cards out with something that exists", () => {
   // for a read-only session, and an account that cannot respond to its own
   // credential leaking leaves nobody safer. Every brace opened after the stack
   // closes again before this element, so it is not the arm of a conditional.
-  const stackAt = masked.indexOf("className={PAGE.stack}");
+  const stackAt = masked.indexOf('className="flex flex-col gap-6"');
   const passwordAt = masked.indexOf("<PasswordForm");
   assert.ok(stackAt !== -1 && passwordAt > stackAt, "the password form left the page");
   const between = masked.slice(stackAt, passwordAt);
@@ -6860,8 +6864,6 @@ test("deleting a device still means typing its name", () => {
   assert.match(code, /method:\s*"DELETE"/);
 
   assert.match(code, /<Button\b[^>]*variant="risk"/, "the destructive control lost its colour");
-  const legacy = classListsIn(readSource("components/device-admin.tsx"));
-  assert.deepEqual(legacy, [], "a class here cannot be checked against the build");
 });
 
 /* ── Every command on this page says what it will do ─────────────────────

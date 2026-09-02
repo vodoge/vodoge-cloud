@@ -19,7 +19,7 @@ import {
 import type { CountryRuleRow, ProxyInstanceRow, UpstreamRow } from "@/lib/catalog";
 import { cn } from "@/lib/cn";
 import { interpolate } from "@/lib/i18n";
-import { FORM, PAGE } from "@/lib/tokens";
+import { FORM } from "@/lib/tokens";
 
 /**
  * Every user-visible string this component draws, named.
@@ -191,7 +191,7 @@ export function ProxyManager({
   }, [pending]);
 
   return (
-    <div className={PAGE.stack}>
+    <div className="flex flex-col gap-6">
       {error ? <FormError>{error}</FormError> : null}
 
       <UpstreamList
@@ -274,11 +274,11 @@ function UpstreamList({
   const [draft, setDraft] = useState({ name: "", address: "", username: "", password: "" });
 
   return (
-    <section className={PAGE.section}>
-      <h3 className={PAGE.sectionTitle}>{labels.upstreams}</h3>
+    <section className="flex flex-col gap-4">
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{labels.upstreams}</h3>
 
       {upstreams.length === 0 ? (
-        <p className={PAGE.note}>{labels.noUpstreams}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.noUpstreams}</p>
       ) : (
         <Table>
           <TableHeader>
@@ -425,7 +425,7 @@ function ProbeCell({
   at: number | null;
   labels: Labels;
 }) {
-  if (!probe) return <span className={PAGE.faint}>{labels.neverProbed}</span>;
+  if (!probe) return <span className="text-muted-foreground">{labels.neverProbed}</span>;
   const ok = probe.ok === true;
   const stage = typeof probe.stage === "string" ? probe.stage : "unknown";
   return (
@@ -434,10 +434,10 @@ function ProbeCell({
       {/* The stage is what says which thing to fix, so the hint travels with
           it rather than being flattened into a pass/fail. */}
       {!ok && typeof probe.hint === "string" ? (
-        <span className={PAGE.faint}> — {probe.hint}</span>
+        <span className="text-muted-foreground"> — {probe.hint}</span>
       ) : null}
       {at ? (
-        <span className={cn(PAGE.mono, PAGE.faint)}>
+        <span className={cn("font-mono text-xs tabular-nums", "text-muted-foreground")}>
           {" "}
           {new Date(at).toISOString().replace("T", " ").slice(5, 16)}
         </span>
@@ -474,11 +474,11 @@ function InstanceList({
   });
 
   return (
-    <section className={PAGE.section}>
-      <h3 className={PAGE.sectionTitle}>{labels.instances}</h3>
+    <section className="flex flex-col gap-4">
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{labels.instances}</h3>
 
       {instances.length === 0 ? (
-        <p className={PAGE.note}>{labels.noInstances}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.noInstances}</p>
       ) : (
         <Table>
           <TableHeader>
@@ -502,7 +502,7 @@ function InstanceList({
                 </TableCell>
                 <TableCell>
                   {upstreams.find((upstream) => upstream.id === instance.upstreamId)?.name ?? (
-                    <span className={PAGE.faint}>{labels.direct}</span>
+                    <span className="text-muted-foreground">{labels.direct}</span>
                   )}
                 </TableCell>
                 <TableCell>
@@ -780,7 +780,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
   );
 
   return (
-    <div className={PAGE.section}>
+    <div className="flex flex-col gap-4">
       {/* A row of controls rather than a form: there is no submit here, and a
           form would turn Return in the host field into an export. */}
       <div className={FORM.inline}>
@@ -809,17 +809,17 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
           </Button>
         ) : null}
       </div>
-      <p className={PAGE.note}>{labels.exportHostHint}</p>
+      <p className="m-0 text-sm text-muted-foreground">{labels.exportHostHint}</p>
 
       {error ? <FormError>{error}</FormError> : null}
-      {note ? <p className={PAGE.note}>{note}</p> : null}
+      {note ? <p className="m-0 text-sm text-muted-foreground">{note}</p> : null}
 
       {result ? (
-        <div className={PAGE.section}>
-          <p className={PAGE.note}>{labels.exportNote}</p>
+        <div className="flex flex-col gap-4">
+          <p className="m-0 text-sm text-muted-foreground">{labels.exportNote}</p>
 
           {result.endpoints.length === 0 ? (
-            <p className={PAGE.note}>{labels.exportEmpty}</p>
+            <p className="m-0 text-sm text-muted-foreground">{labels.exportEmpty}</p>
           ) : (
             <>
               <Table>
@@ -866,8 +866,8 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
           )}
 
           {result.skipped.length === 0 ? null : (
-            <section className={PAGE.section}>
-              <h4 className={PAGE.sectionTitle}>{labels.exportUnexportable}</h4>
+            <section className="flex flex-col gap-4">
+              <h4 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{labels.exportUnexportable}</h4>
               {/* The gateway's own reason, verbatim — it is the one that tells
                   an operator to repeat the request with `?host=`. A bare list:
                   neither `ul` nor `li` is styled by the legacy layer, so this
@@ -876,7 +876,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
               <ul>
                 {result.skipped.map((item) => (
                   <li key={item.id}>
-                    {item.name} <span className={PAGE.faint}>— {item.reason}</span>
+                    {item.name} <span className="text-muted-foreground">— {item.reason}</span>
                   </li>
                 ))}
               </ul>
@@ -971,11 +971,11 @@ function CountryRuleList({
   const [upstreamId, setUpstreamId] = useState("");
 
   return (
-    <section className={PAGE.section}>
-      <h3 className={PAGE.sectionTitle}>{labels.countryRules}</h3>
+    <section className="flex flex-col gap-4">
+      <h3 className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{labels.countryRules}</h3>
 
       {rules.length === 0 ? (
-        <p className={PAGE.note}>{labels.noCountryRules}</p>
+        <p className="m-0 text-sm text-muted-foreground">{labels.noCountryRules}</p>
       ) : (
         <Table>
           <TableHeader>
@@ -991,7 +991,7 @@ function CountryRuleList({
                 <TableCell mono>{rule.countryCode}</TableCell>
                 <TableCell>
                   {upstreams.find((upstream) => upstream.id === rule.upstreamId)?.name ?? (
-                    <span className={PAGE.faint}>{labels.direct}</span>
+                    <span className="text-muted-foreground">{labels.direct}</span>
                   )}
                 </TableCell>
                 <TableCell>

@@ -30,7 +30,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { CARD_POLICY_CONFIRMATIONS, PAGE, TABLE, type CardPolicyGuard } from "@/lib/tokens";
+import { CARD_POLICY_CONFIRMATIONS, TABLE, type CardPolicyGuard } from "@/lib/tokens";
 
 /**
  * The fleet, its modules, and the policies that follow a SIM between them.
@@ -130,16 +130,16 @@ export default async function DevicesPage({
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("devices.title", locale)}</h1>
-          <p className={PAGE.description}>{t("devices.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("devices.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("devices.desc", locale)}</p>
         </div>
         {/* The same badge, in the same slot, as `/settings` and both inbox
             pages. It says why the controls further down are missing, which is
             the question an operator asks before they ask anything else. */}
         {writable ? null : (
-          <div className={PAGE.actions}>
+          <div className="ml-auto flex flex-wrap gap-2">
             <Badge tone="warn" dot={false}>
               {t("role.readOnlyBadge", locale)}
             </Badge>
@@ -147,9 +147,9 @@ export default async function DevicesPage({
         )}
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("devices.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("devices.loadError", locale)}</p> : null}
 
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         <Card title={t("alerts.title", locale)} note={t("alerts.note", locale)} bodyless>
           {alerts.length === 0 ? (
             <CardEmpty title={t("alerts.none", locale)} />
@@ -293,7 +293,7 @@ export default async function DevicesPage({
         <Card title={t("devices.modems", locale)} note={t("devices.modemsNote", locale)} bodyless>
           {/* A plain GET form: the filter is the URL, so this works with no
               JavaScript and a filtered view is a link. */}
-          <form className={PAGE.section} method="get">
+          <form className="flex flex-col gap-4" method="get">
             <Field label={t("modems.search", locale)} inline>
               <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
             </Field>

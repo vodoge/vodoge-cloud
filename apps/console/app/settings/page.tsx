@@ -17,7 +17,6 @@ import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import {
   CARD,
   NOTIFICATION_FIELDS,
-  PAGE,
   DEVICE_FIELDS,
   SECURITY_FIELDS,
   SMS_FIELDS,
@@ -100,10 +99,10 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("settings.title", locale)}</h1>
-          <p className={PAGE.description}>{t("settings.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("settings.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("settings.desc", locale)}</p>
         </div>
         {writable ? null : (
           <Badge tone="warn" dot={false}>
@@ -112,15 +111,15 @@ export default async function SettingsPage() {
         )}
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("settings.loadError", locale)}</p> : null}
-      {writable ? null : <p className={PAGE.description}>{t("role.readOnlySettings", locale)}</p>}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("settings.loadError", locale)}</p> : null}
+      {writable ? null : <p className="m-0 mt-1 text-sm text-muted-foreground">{t("role.readOnlySettings", locale)}</p>}
 
-      {/* `PAGE.stack`, not the `card-grid` this page asked for from the day it
+      {/* `"flex flex-col gap-6"`, not the `card-grid` this page asked for from the day it
           was written. That class is in no stylesheet and never has been, so
           these four cards have been sitting in ordinary block flow with no gap
           at all between them, on a page whose markup says it lays them out in a
           grid. It was found by a check, not by three separate surveys. */}
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         <Card
           title={t("settings.notifications", locale)}
           note={t("settings.notificationsNote", locale)}

@@ -12,7 +12,7 @@ import { fetchSchedules, type ScheduleRow } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE, TABLE } from "@/lib/tokens";
+import { TABLE } from "@/lib/tokens";
 
 /**
  * Read-only on purpose, for now.
@@ -93,13 +93,13 @@ export default async function SchedulePage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("schedule.title", locale)}</h1>
-          <p className={PAGE.description}>{t("schedule.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("schedule.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("schedule.desc", locale)}</p>
         </div>
       </div>
-      {loadError ? <p className={PAGE.error}>{t("schedule.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("schedule.loadError", locale)}</p> : null}
 
       <Card>
         {schedules.length === 0 ? (

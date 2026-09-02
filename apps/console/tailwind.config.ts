@@ -93,6 +93,29 @@ import animate from "tailwindcss-animate";
  * 写死而不是从 `tailwindcss/defaultTheme` 导入：那个路径在 Node 的 ESM 加载器
  * 下解析不了，而 `tokens.test.ts` 正是以 ESM 导入这个配置的。
  */
+/**
+ * Tailwind 的默认间距刻度，写死。
+ *
+ * 原因和 FULL_OPACITY 一样：`tailwindcss/defaultTheme` 在 Node 的 ESM 加载器下
+ * 解析不了，而 tokens.test.ts 以 ESM 导入这个配置。
+ *
+ * 需要它是因为布局正在从 `PAGE.head` 这种命名配方换成直接写工具类，而写的就是
+ * 原生刻度。此前 theme 只有 s1..s7，`gap-4` 根本不会生成——又一次静默失效。
+ *
+ * 项目原有的 s1..s7 和它精确对齐（0.25/0.5/0.75/1/1.5/2/3rem = 1/2/3/4/6/8/12），
+ * 所以两套并存期间不会出现同名不同值。
+ */
+const FULL_SPACING = {
+  "0": "0px", px: "1px", "0.5": "0.125rem", "1": "0.25rem", "1.5": "0.375rem",
+  "2": "0.5rem", "2.5": "0.625rem", "3": "0.75rem", "3.5": "0.875rem",
+  "4": "1rem", "5": "1.25rem", "6": "1.5rem", "7": "1.75rem", "8": "2rem",
+  "9": "2.25rem", "10": "2.5rem", "11": "2.75rem", "12": "3rem", "14": "3.5rem",
+  "16": "4rem", "20": "5rem", "24": "6rem", "28": "7rem", "32": "8rem",
+  "36": "9rem", "40": "10rem", "44": "11rem", "48": "12rem", "52": "13rem",
+  "56": "14rem", "60": "15rem", "64": "16rem", "72": "18rem", "80": "20rem",
+  "96": "24rem",
+} as const;
+
 const FULL_OPACITY = {
   "0": "0", "5": "0.05", "10": "0.1", "15": "0.15", "20": "0.2", "25": "0.25",
   "30": "0.3", "35": "0.35", "40": "0.4", "45": "0.45", "50": "0.5",
@@ -193,7 +216,10 @@ export default {
     minHeight: TAILWIND_MIN_HEIGHT,
     maxHeight: TAILWIND_MAX_HEIGHT,
     inset: TAILWIND_INSET,
-    spacing: TAILWIND_SPACING,
+    // 🔴 合并而不是替换。原本这里只有 s1..s7，`gap-4` 这类原生刻度**不会生成**
+    // ——和透明度、环宽那两次是同一类静默失效：类名照写，样式表里没有。
+    // 布局正在从 PAGE.* 这种命名配方换成直接写工具类，写的就是原生刻度。
+    spacing: { ...FULL_SPACING, ...TAILWIND_SPACING },
     fontSize: TAILWIND_FONT_SIZE,
     borderRadius: TAILWIND_BORDER_RADIUS,
     maxWidth: TAILWIND_MAX_WIDTH,

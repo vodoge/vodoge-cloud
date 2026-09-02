@@ -23,7 +23,6 @@ import {
   cardPolicyGuardFor,
   cardPolicyPatch,
   FORM,
-  PAGE,
   type CardPolicyEdit,
   type CardPolicyGuard,
 } from "@/lib/tokens";
@@ -218,7 +217,7 @@ export function CardPolicies({
   const asked = pending === null ? null : confirmations[pending.guard];
 
   return (
-    <div className={PAGE.stack}>
+    <div className="flex flex-col gap-6">
       {error ? <FormError>{error}</FormError> : null}
 
       {policies.length === 0 ? (

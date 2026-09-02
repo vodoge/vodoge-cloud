@@ -13,7 +13,7 @@ import { mayWrite } from "@/lib/session";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE, TABLE } from "@/lib/tokens";
+import { TABLE } from "@/lib/tokens";
 import { LedgerAdmin } from "@/components/support-ledger";
 
 /**
@@ -52,13 +52,13 @@ export default async function SupportLedgerPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("ledger.title", locale)}</h1>
-          <p className={PAGE.description}>{t("ledger.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("ledger.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("ledger.desc", locale)}</p>
         </div>
       </div>
-      {failed ? <p className={PAGE.error}>{t("ledger.loadFailed", locale)}</p> : null}
+      {failed ? <p className="m-0 mb-4 text-sm text-destructive">{t("ledger.loadFailed", locale)}</p> : null}
 
       <Card title={t("ledger.measured", locale)} note={t("ledger.measuredNote", locale)}>
         {!failed && rows.length === 0 ? (

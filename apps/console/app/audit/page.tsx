@@ -12,7 +12,6 @@ import { auditScreen, loadAudit } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE } from "@/lib/tokens";
 
 /**
  * The first page moved onto Tailwind and the shared components.
@@ -45,14 +44,14 @@ export default async function AuditPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("audit.title", locale)}</h1>
-          <p className={PAGE.description}>{t("audit.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("audit.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("audit.desc", locale)}</p>
         </div>
       </div>
       {screen.errorKey ? (
-        <p className={PAGE.error}>{t(screen.errorKey, locale)}</p>
+        <p className="m-0 mb-4 text-sm text-destructive">{t(screen.errorKey, locale)}</p>
       ) : null}
 
       <Card>

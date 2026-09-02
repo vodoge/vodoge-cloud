@@ -2,7 +2,7 @@ import { LoginForm } from "@/components/login-form";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { safeNext } from "@/lib/session";
-import { CENTERED, PAGE, SHELL } from "@/lib/tokens";
+import { CENTERED, SHELL } from "@/lib/tokens";
 
 export default async function LoginPage({
   searchParams,
@@ -22,8 +22,8 @@ export default async function LoginPage({
           {t("app.name", locale)}
         </div>
         <div>
-          <h1 className={PAGE.title}>{t("login.title", locale)}</h1>
-          <p className={PAGE.description}>{t("login.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("login.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("login.desc", locale)}</p>
         </div>
         <LoginForm
           next={safeNext(params.next)}

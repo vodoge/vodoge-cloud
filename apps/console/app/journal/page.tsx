@@ -10,7 +10,6 @@ import { fetchJournal, type JournalEvent } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { PAGE } from "@/lib/tokens";
 
 /**
  * What the devices actually said, one row per envelope.
@@ -47,14 +46,14 @@ export default async function JournalPage() {
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("journal.title", locale)}</h1>
-          <p className={PAGE.description}>{t("journal.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("journal.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("journal.desc", locale)}</p>
         </div>
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("journal.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("journal.loadError", locale)}</p> : null}
 
       <Card>
         <CardHeader>

@@ -49,7 +49,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { CARD, DEVICE_TABS, PAGE, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
+import { CARD, DEVICE_TABS, TABLE, deviceTab, deviceTabHref } from "@/lib/tokens";
 
 /**
  * One device, and everything that can be done to it.
@@ -197,18 +197,18 @@ export default async function DevicePage({
 
   return (
     <>
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <Link href="/devices" className={PAGE.back}>
+          <Link href="/devices" className="text-sm text-muted-foreground no-underline hover:text-foreground">
             ← {t("device.back", locale)}
           </Link>
-          <h1 className={PAGE.title}>{device?.name ?? t("device.title", locale)}</h1>
-          <p className={PAGE.identifier}>{deviceId}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{device?.name ?? t("device.title", locale)}</h1>
+          <p className="m-0 mt-1 font-mono text-xs tabular-nums text-muted-foreground">{deviceId}</p>
         </div>
         {device ? <StateBadge state={device.state} /> : null}
       </div>
 
-      {loadError ? <p className={PAGE.error}>{t("devices.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("devices.loadError", locale)}</p> : null}
 
       <TabList>
         {DEVICE_TABS.map((tab) => (
@@ -223,7 +223,7 @@ export default async function DevicePage({
       </TabList>
 
       {/*
-        `PAGE.stack` is the replacement for `className="card-grid"`, which this
+        `"flex flex-col gap-6"` is the replacement for `className="card-grid"`, which this
         page carried since it was written and which **no stylesheet has ever
         defined** — not the legacy layer, not the Tailwind build. The markup
         said the cards were laid out in a grid and they were stacked in ordinary
@@ -236,7 +236,7 @@ export default async function DevicePage({
         did nothing here, because the container it was spanning was never a
         grid. A stack has one column, so full width is what a card gets.
       */}
-      <TabPanel className={PAGE.stack}>{panelFor(current)}</TabPanel>
+      <TabPanel className="flex flex-col gap-6">{panelFor(current)}</TabPanel>
     </>
   );
 }
@@ -591,8 +591,8 @@ function UptimeCard({ rows, locale }: { rows: UptimeHourRow[]; locale: Locale })
       {ratio === null ? (
         <CardEmpty title={t("device.uptimeNone", locale)} />
       ) : (
-        <div className={PAGE.section}>
-          <p className={PAGE.sectionTitle}>
+        <div className="flex flex-col gap-4">
+          <p className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">
             {(ratio * 100).toFixed(1)}% · {rows.length} {t("device.uptimeHours", locale)}
           </p>
           <Output>{uptimeSparkline(rows)}</Output>

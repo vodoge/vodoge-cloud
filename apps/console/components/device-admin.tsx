@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Field, FormError, FormHint, InlineForm, Input } from "@/components/ui/form";
 import { SpecRow, SpecTable, TableBody } from "@/components/ui/table";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
-import { PAGE } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -149,7 +148,7 @@ export function DeviceAdmin({
   // say it too, on the day it is handed a locale.
   if (permission !== "write") {
     return (
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         <SpecTable>
           <TableBody>
             <SpecRow term={labels.name}>{name}</SpecRow>
@@ -160,7 +159,7 @@ export function DeviceAdmin({
   }
 
   return (
-    <div className={PAGE.stack}>
+    <div className="flex flex-col gap-6">
       <InlineForm onSubmit={rename}>
         <Field inline label={labels.name}>
           <Input

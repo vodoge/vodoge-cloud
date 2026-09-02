@@ -46,7 +46,6 @@ import {
   AT_COMMAND_GUARDS,
   CARD,
   LOG,
-  PAGE,
   atCommandGuard,
   deviceCommandGuard,
   toneForCommandStatus,
@@ -450,7 +449,7 @@ export function DeviceDiagnostics({
         {permission !== "write" ? (
           <FormHint>{t("role.readOnlyDevice", locale)}</FormHint>
         ) : (
-          <div className={PAGE.section}>
+          <div className="flex flex-col gap-4">
             <ModemPicker
               modems={modems}
               imei={imei}
@@ -561,7 +560,7 @@ export function DeviceConsole({
     return (
       <>
         <CardPanel title={labels.console} note={labels.consoleNote}>
-          <div className={PAGE.section}>
+          <div className="flex flex-col gap-4">
             <CardEmpty title={labels.noModems} />
             <ButtonRow>
               <Button variant="outline" disabled={busy} onClick={() => request("refresh_modems")}>
@@ -595,7 +594,7 @@ export function DeviceConsole({
       </CardPanel>
 
       <CardPanel title={labels.networkTitle} note={labels.networkNote}>
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           <OperatorControls busy={busy} labels={labels} onRun={request} />
           <UsbnetControls busy={busy} labels={labels} onRun={request} />
           <ApnControls
@@ -708,7 +707,7 @@ function AtConsole({
   const tripped = atCommandGuard(command);
   return (
     <CardPanel title={labels.atCommand} note={labels.atNote}>
-      <div className={PAGE.section}>
+      <div className="flex flex-col gap-4">
         <InlineForm
           onSubmit={(event) => {
             event.preventDefault();
@@ -829,7 +828,7 @@ function UssdConsole({
   };
 
   return (
-    <div className={PAGE.section}>
+    <div className="flex flex-col gap-4">
       <InlineForm
         onSubmit={(event) => {
           event.preventDefault();
@@ -859,7 +858,7 @@ function UssdConsole({
       </InlineForm>
 
       {result ? (
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           <FormHint>{labels.ussdSession}</FormHint>
           {/* The stage in words. Four of the seven mean "no answer" for four
               different reasons, and the raw result carries an empty `text` for
@@ -868,10 +867,10 @@ function UssdConsole({
           {result.expectsReply ? (
             <FormHint>{labels[ussdStageLabelKey(result.stage)]}</FormHint>
           ) : (
-            <p className={PAGE.note}>
+            <p className="m-0 text-sm text-muted-foreground">
               {labels[ussdStageLabelKey(result.stage)]}
               {ussdStageLabelKey(result.stage) === "ussdStageOther" ? (
-                <span className={PAGE.mono}> {result.stage}</span>
+                <span className="font-mono text-xs tabular-nums"> {result.stage}</span>
               ) : null}
             </p>
           )}
@@ -910,7 +909,7 @@ function UssdConsole({
               {/* Which module the reply goes to, because it is not necessarily
                   the one selected above and an operator has no other way to
                   tell. */}
-              <span className={PAGE.mono}>
+              <span className="font-mono text-xs tabular-nums">
                 {labels.ussdSessionModem} {exchange?.modemImei}
               </span>
             </InlineForm>
@@ -1091,7 +1090,7 @@ function CandidatesCard({
       {pending.length === 0 ? (
         <FormHint>{labels.candidatesNone}</FormHint>
       ) : (
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           {pending.map((candidate) => (
             <InlineForm
               key={candidate.candidateKey}
@@ -1162,7 +1161,7 @@ function AgentLogCard({
   const lines = agentLogLines(newest?.result?.details);
   return (
     <CardPanel title={labels.agentLog} note={labels.agentLogNote}>
-      <div className={PAGE.section}>
+      <div className="flex flex-col gap-4">
         <InlineForm
           onSubmit={(event) => {
             event.preventDefault();
@@ -1249,7 +1248,7 @@ function ApnControls({
   const [cid, setCid] = useState("1");
   const chosen = contexts?.find((row) => String(row.cid) === cid) ?? null;
   return (
-    <div className={PAGE.section}>
+    <div className="flex flex-col gap-4">
       <Field label={labels.apnContext} inline>
         <Select value={cid} onChange={(event) => setCid(event.target.value)}>
           {APN_CIDS.map((option) => {
@@ -1411,7 +1410,7 @@ function DangerZone({
         <CardNote>{labels.dangerNote}</CardNote>
       </CardHeader>
       <CardContent>
-        <div className={PAGE.section}>
+        <div className="flex flex-col gap-4">
           <ButtonRow>
             {DISRUPTIVE.map((kind) => (
               <Button
@@ -1425,7 +1424,7 @@ function DangerZone({
             ))}
           </ButtonRow>
 
-          <p className={PAGE.sectionTitle}>{labels.recovery}</p>
+          <p className="m-0 font-mono text-sm font-medium uppercase tracking-eyebrow text-muted-foreground">{labels.recovery}</p>
           <ButtonRow>
             <Button
               variant="outline"
@@ -1463,9 +1462,9 @@ function CommandLogCard({ commands, labels }: { commands: CommandRow[]; labels: 
         {commands.map((row) => (
           <li key={row.id} className={LOG.entry}>
             <div className={LOG.head}>
-              <span className={PAGE.mono}>{commandLabel(labels, row.kind)}</span>
+              <span className="font-mono text-xs tabular-nums">{commandLabel(labels, row.kind)}</span>
               <Badge tone={toneForCommandStatus(row.status)}>{row.status}</Badge>
-              <span className={PAGE.faint}>
+              <span className="text-muted-foreground">
                 {new Date(row.issued_at).toISOString().replace("T", " ").slice(11, 19)}
               </span>
             </div>

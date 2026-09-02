@@ -7,7 +7,6 @@ import { RowActions } from "@/components/ui/button-row";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, FormError, FormHint, InlineForm, Input, Select } from "@/components/ui/form";
 import { CardPanel } from "@/components/ui/card";
-import { PAGE } from "@/lib/tokens";
 
 type Labels = Record<string, string>;
 
@@ -98,7 +97,7 @@ export function LedgerAdmin({
 
   return (
     <CardPanel title={labels.record} note={labels.recordNote}>
-      <div className={PAGE.section}>
+      <div className="flex flex-col gap-4">
         <InlineForm
           onSubmit={(event) => {
             event.preventDefault();

@@ -31,7 +31,7 @@ import {
 } from "@/lib/session";
 import { blockedSendModules } from "@/lib/sms-safety";
 import { gatewayBaseUrl } from "@/lib/tenant";
-import { INBOX, PAGE } from "@/lib/tokens";
+import { INBOX } from "@/lib/tokens";
 
 /**
  * The inbox: send a message, name a number, open a conversation.
@@ -115,12 +115,12 @@ export default async function InboxPage() {
   return (
     <>
       <LiveReload />
-      <div className={PAGE.head}>
+      <div className="mb-6 flex flex-wrap items-start gap-4">
         <div>
-          <h1 className={PAGE.title}>{t("inbox.title", locale)}</h1>
-          <p className={PAGE.description}>{t("inbox.desc", locale)}</p>
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-foreground">{t("inbox.title", locale)}</h1>
+          <p className="m-0 mt-1 text-sm text-muted-foreground">{t("inbox.desc", locale)}</p>
         </div>
-        <div className={PAGE.actions}>
+        <div className="ml-auto flex flex-wrap gap-2">
           {unread > 0 ? (
             <Badge tone="warn" dot={false}>
               {unread} {t("inbox.unread", locale)}
@@ -133,9 +133,9 @@ export default async function InboxPage() {
           )}
         </div>
       </div>
-      {loadError ? <p className={PAGE.error}>{t("inbox.loadError", locale)}</p> : null}
+      {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("inbox.loadError", locale)}</p> : null}
 
-      <div className={PAGE.stack}>
+      <div className="flex flex-col gap-6">
         {/* Read-only keeps the card and loses the form. Hiding the whole card
             would take away the answer to "why is there nowhere to send from";
             a paragraph in its place says which of the two it is. The same
