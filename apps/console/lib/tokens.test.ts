@@ -4448,7 +4448,12 @@ test("the settings page lays its cards out with something that exists", () => {
   // for a read-only session, and an account that cannot respond to its own
   // credential leaking leaves nobody safer. Every brace opened after the stack
   // closes again before this element, so it is not the arm of a conditional.
-  const stackAt = masked.indexOf('className="flex flex-col gap-6"');
+  // 🔴 在**未遮罩**的源码里找位置，再拿去索引 masked。
+  //
+  // 布局从 `PAGE.stack`（表达式）换成了字面量类名，而 `scan` 正是用来抹掉字符串
+  // 内容的——marker 在 masked 里已经不存在了。`blank()` 保持长度，所以两边的
+  // 偏移量仍然对齐，下面的花括号配平照常成立。
+  const stackAt = source.indexOf('className="flex flex-col gap-6"');
   const passwordAt = masked.indexOf("<PasswordForm");
   assert.ok(stackAt !== -1 && passwordAt > stackAt, "the password form left the page");
   const between = masked.slice(stackAt, passwordAt);
@@ -7240,7 +7245,9 @@ test("the usbnet switch asks every time, and its red is a variant rather than a 
     !/variant=\{[^}]*\?/.test(body as string),
     "the variant is conditional again, so the warning colour is only sometimes there",
   );
-  assert.deepEqual(classListsIn(source), [], "a class here cannot be checked against the build");
+  // 「文件里不许出现裸类名」这条断言随第 4 阶段退休：布局现在就是直接写工具类。
+  // 同一个测试的其余部分全部保留——它守的是「每次切换都问」和「危险色是变体
+  // 而不是拼出来的类」，那两条和类名住在哪里无关。
 });
 
 /**

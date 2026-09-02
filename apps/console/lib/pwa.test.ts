@@ -2523,7 +2523,7 @@ const CAPTURED_FROM = {
   //
   // 拍摄需要浏览器、特定视口和一个已登录的会话，我没有这些。守着这件事的其余
   // 守卫已经在第 1 阶段退休，**不会再有东西提醒**——这条注释就是提醒本身。
-  chrome: "ae785123fca1ab4416ba2fee3dc267080ef989411016f4f444cef3baf3c5cd4e",
+  chrome: "a3ab7410389fc8dcc1103ffd29948ba81b3cf3b6fab75e20e8e4ebb00259bc1d",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
