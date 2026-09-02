@@ -46,7 +46,10 @@ const PAYLOAD_COLUMNS = 4;
  *   selected button, and `segmented-on` is **not a rule** — the stylesheet only
  *   declares `.button-row button.segmented-on`, so it worked because of the
  *   container it happened to be in. `SEGMENTED` needs no ancestor, which is the
- *   same correction `BUTTON.variant.risk` is to `.risk`.
+ *   same correction the `risk` button variant is to `.risk`. (That variant now
+ *   lives in `components/ui/button.tsx`'s `cva`, not in a recipe — the recipe
+ *   `BUTTON.variant.risk` this line used to name still sits in `lib/tokens.ts`
+ *   with no caller, which is why the name is dropped rather than followed.)
  * - The payload block was `<pre className="output">` inside a table cell. `pre`
  *   is `white-space: pre`, so one long line of an envelope sets the cell's
  *   min-content width to that whole line and the table grows to fit it. That is

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { CONFIRM, assertConsequence } from "@/lib/tokens";
+import { assertConsequence } from "@/lib/tokens";
 
 /**
  * A confirmation that has somewhere to put the consequence.
@@ -105,12 +105,17 @@ export function ConfirmDialog({
         if (!next) onCancel();
       }}
     >
-      <AlertDialogContent className={cn(CONFIRM.panel, className)}>
+      <AlertDialogContent
+        className={cn(
+          "relative flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-surface p-6 shadow-lg",
+          className,
+        )}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{consequence}</AlertDialogDescription>
         </AlertDialogHeader>
-        <p className={CONFIRM.question}>{labels.question}</p>
+        <p className="m-0 text-sm font-semibold text-foreground">{labels.question}</p>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>{labels.cancel}</AlertDialogCancel>
           <AlertDialogAction
