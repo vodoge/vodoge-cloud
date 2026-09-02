@@ -1,5 +1,4 @@
 import { cn } from "@/lib/cn";
-import { BUTTON_ROW } from "@/lib/tokens";
 
 /**
  * A row of buttons that wraps rather than stretching its column.
@@ -16,7 +15,7 @@ import { BUTTON_ROW } from "@/lib/tokens";
 type DivProps = React.HTMLAttributes<HTMLDivElement>;
 
 export function ButtonRow({ className, ...props }: DivProps) {
-  return <div className={cn(BUTTON_ROW.root, className)} {...props} />;
+  return <div className={cn("flex flex-wrap items-center gap-2", className)} {...props} />;
 }
 
 /**
@@ -28,5 +27,5 @@ export function ButtonRow({ className, ...props }: DivProps) {
  * proxy instance). At `md` those four alone are wider than a phone.
  */
 export function RowActions({ className, ...props }: DivProps) {
-  return <div className={cn(BUTTON_ROW.rowActions, className)} {...props} />;
+  return <div className={cn("flex flex-wrap items-center gap-2", className)} {...props} />;
 }
