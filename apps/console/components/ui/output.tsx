@@ -1,5 +1,4 @@
 import { cn } from "@/lib/cn";
-import { OUTPUT } from "@/lib/tokens";
 
 /**
  * A reading shown verbatim: an AT transcript, a command's JSON, a journal
@@ -16,5 +15,11 @@ import { OUTPUT } from "@/lib/tokens";
  * Class strings live in `lib/tokens.ts`. See the note in `button.tsx`.
  */
 export function Output({ className, ...props }: React.HTMLAttributes<HTMLPreElement>) {
-  return <pre className={cn(OUTPUT.root, className)} {...props} />;
+  return <pre
+      className={cn(
+        "m-0 mt-2 max-h-panel overflow-auto rounded bg-bg p-3 font-mono text-xs text-foreground",
+        className,
+      )}
+      {...props}
+    />;
 }
