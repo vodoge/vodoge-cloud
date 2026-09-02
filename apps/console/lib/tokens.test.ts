@@ -5543,10 +5543,16 @@ test("the header keeps its safe-area inset, which no class can express", () => {
   // deleting the style and leaving the name in the comment above it — the
   // header then renders under the notch with the suite green, and this is one
   // of the items on the goal's PWA checklist.
-  const bar = openingTags(readSource("components/shell.tsx")).find((tag) =>
-    tag.text.includes("className={SHELL.bar}"),
-  );
+  // 配方内联之后改成按结构定位，而不是按配方名。守的东西一个字没变：inset 必须
+  // 在这个元素上，而不是文件里随便哪儿——上面那段注释记的就是绕过它的办法。
+  // 按结构而不按类名，是因为类名里带着密度值（`py-2`），收紧一档密度不该让这条
+  // 无障碍守卫改判。
+  const tags = openingTags(readSource("components/shell.tsx"));
+  const headerAt = tags.findIndex((tag) => tag.name === "header");
+  assert.ok(headerAt !== -1, "the header element is gone");
+  const bar = tags[headerAt + 1];
   assert.ok(bar, "the header bar element is gone");
+  assert.equal(bar.name, "div", "the header's first child is no longer the bar");
   assert.match(
     bar.text,
     /style=\{SAFE_AREA\.headerTop\}/,

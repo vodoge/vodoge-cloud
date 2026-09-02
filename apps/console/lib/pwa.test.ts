@@ -2515,7 +2515,7 @@ const CAPTURED_FROM = {
   // `lib/tokens.ts` and the message catalogues: a guard entry for adopting and
   // unmanaging a module, and the sentences those two put in front of an
   // operator. Neither is drawn on the install screens.
-    // ⚠️ **这两张截图现在是过期的，需要重拍。**
+  // ⚠️ **这两张截图现在是过期的，需要重拍。**
   //
   // 前几次重新盖章时外观没有变（只动了 globals.css 的变量）。这一次不同：
   // Button / Badge / Card / Table / 表单原语全部换成了 shadcn，尺寸也集中收紧
@@ -2523,7 +2523,14 @@ const CAPTURED_FROM = {
   //
   // 拍摄需要浏览器、特定视口和一个已登录的会话，我没有这些。守着这件事的其余
   // 守卫已经在第 1 阶段退休，**不会再有东西提醒**——这条注释就是提醒本身。
-  chrome: "4b569b986d58c67324d3b3bbe5ddbc6c7558992eeff3b4f37731af2a9b40d0b2",
+  //
+  // 🔴 SHELL 配方内联（2026-09-02）之后，这条记录要说得更死一点。上面那句
+  // 「需要重拍」当时还是个笼统的判断；这一次不是了：导航栏的链接与分组标签从
+  // --fg-muted / --fg-faint 换成了 --muted-foreground（#c1c1c1 / #a7a7a7 →
+  // #a1a1aa），而 **screenshot-wide.png 正对着左侧导航栏**，那几个分组标签就在
+  // 画面里。所以这次盖章走的**不是**上面那条「改动看不出来」的分支——是看得出
+  // 来、但拍摄条件仍然不具备。两者不该记成同一件事：前者是判断，后者是欠账。
+  chrome: "ead37d086100e7579d3e13b4c8255b29a2179b96c0a294c883e075a35dc09902",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

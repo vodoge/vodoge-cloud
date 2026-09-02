@@ -5,7 +5,7 @@ import { SignOutButton } from "@/components/sign-out";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { t, type Locale } from "@/lib/i18n";
 import type { Tenant } from "@/lib/tenant";
-import { SAFE_AREA, SHELL } from "@/lib/tokens";
+import { SAFE_AREA } from "@/lib/tokens";
 
 /**
  * The chrome every signed-in page renders inside: the navigation rail, a slim
@@ -15,19 +15,21 @@ import { SAFE_AREA, SHELL } from "@/lib/tokens";
  * groups of links, which wrapped to about three rows on a phone; that is now
  * `components/sidebar.tsx` on a wide screen and `components/mobile-nav.tsx` on
  * a narrow one, both drawing the same `NAV_GROUPS`. What is left here is the
- * brand and the controls — theme, language, sign out — which is why
- * `SHELL.header` is pinned at every width now rather than only above `sm`.
+ * brand and the controls — theme, language, sign out — which is why the
+ * header is pinned at every width now rather than only above `sm`.
  *
  * The nav data lives in `lib/tokens.ts` rather than in either renderer: a
  * `.tsx` cannot be read by a test in this app, so a nav written as markup is a
- * nav nothing can check. The same reason keeps every class string out of this
- * file — `SHELL.*` is data that `lib/tokens.test.ts` puts to the real Tailwind
- * build.
+ * nav nothing can check. The class strings no longer live there — they are
+ * written out below — and what guarded them survives the move: this file is on
+ * `MIGRATED_SOURCES`, so `lib/tokens.test.ts` reads its source and puts every
+ * class in it to the real Tailwind build. A class that produces no CSS is
+ * still a failing test rather than a silent no-op.
  *
  * `locale` arrives as a prop the server resolved. Nothing here reads a cookie.
  *
  * 🔴 **The outermost element is not here any more.** `app/layout.tsx` draws
- * `SHELL.root` and puts `SourceFooter` at the end of it, so that the footer
+ * the outer column and puts `SourceFooter` at the end of it, so that the footer
  * reaches the pages this component never wraps — see the note on
  * `SourceFooter`. This returns a fragment so the signed-in arrangement is
  * unchanged by that move, with the frame owned a level up instead of here.
@@ -48,30 +50,44 @@ export function Shell({
   const regionLabel = tenant.region === "cn" ? t("region.cn", locale) : t("region.intl", locale);
 
   return (
-    <div className={SHELL.layout}>
+    <div className="flex w-full flex-1">
       <Sidebar locale={locale} pathname={pathname} />
 
-      <div className={SHELL.column}>
-        <header className={SHELL.header}>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-20 border-b border-border bg-surface">
           {/* The inline style is the safe-area inset; see SAFE_AREA. */}
-          <div className={SHELL.bar} style={SAFE_AREA.headerTop}>
+          <div
+            className="mx-auto flex w-full max-w-page flex-wrap items-center gap-3 px-3 py-2 sm:px-6"
+            style={SAFE_AREA.headerTop}
+          >
             {/* Withdraws at `md`, where the rail's own head carries the name.
                 One brand on screen at every width, not two at some of them. */}
-            <Link href="/" className={SHELL.brand}>
-              <span className={SHELL.brandMark} aria-hidden="true">
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-base font-semibold tracking-tight text-foreground md:hidden"
+            >
+              <span
+                className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+                aria-hidden="true"
+              >
                 V
               </span>
               {/* The word leaves the layout below `sm` so the bar stays one
                   row, but stays in the accessibility tree — the mark next to
                   it is aria-hidden, so hiding the text outright would leave
-                  this link with no accessible name. See SHELL.brandName. */}
-              <span className={SHELL.brandName}>{t("app.name", locale)}</span>
+                  this link with no accessible name. `sr-only` takes it out of
+                  the layout and leaves it in the accessibility tree; `hidden`
+                  would take it out of both. */}
+              <span className="sr-only sm:not-sr-only">{t("app.name", locale)}</span>
             </Link>
 
-            <div className={SHELL.side}>
-              <span className={SHELL.tenant} title={tenant.tenant_id}>
-                <strong className={SHELL.tenantSlug}>{tenant.slug}</strong>
-                <span className={SHELL.tenantRegion}>{regionLabel}</span>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <span
+                className="inline-flex items-center gap-2 rounded-pill border border-border bg-surface-hover px-3 py-1 text-xs text-muted-foreground"
+                title={tenant.tenant_id}
+              >
+                <strong className="font-semibold text-foreground">{tenant.slug}</strong>
+                <span className="hidden text-muted-foreground sm:inline">{regionLabel}</span>
               </span>
               <ThemeToggle
                 labels={{
@@ -93,7 +109,7 @@ export function Shell({
           </div>
         </header>
 
-        <main className={SHELL.main}>{children}</main>
+        <main className="mx-auto w-full max-w-page flex-1 px-3 py-4 sm:px-6 sm:py-6">{children}</main>
       </div>
     </div>
   );
@@ -137,10 +153,10 @@ export function Shell({
  */
 export function SourceFooter({ locale }: { locale: Locale }) {
   return (
-    <footer className={SHELL.footer}>
-      <span className={SHELL.footerLabel}>{t("source.label", locale)}</span>
+    <footer className="mx-auto flex w-full max-w-page flex-wrap items-center gap-3 px-3 py-4 text-sm text-muted-foreground sm:px-6">
+      <span className="text-muted-foreground">{t("source.label", locale)}</span>
       <a
-        className={SHELL.footerLink}
+        className="underline transition-colors hover:text-foreground"
         href={t("source.consoleUrl", locale)}
         target="_blank"
         rel="noreferrer"
@@ -148,7 +164,7 @@ export function SourceFooter({ locale }: { locale: Locale }) {
         {t("source.console", locale)}
       </a>
       <a
-        className={SHELL.footerLink}
+        className="underline transition-colors hover:text-foreground"
         href={t("source.consoleLicenseUrl", locale)}
         target="_blank"
         rel="noreferrer"
@@ -156,7 +172,7 @@ export function SourceFooter({ locale }: { locale: Locale }) {
         {t("source.consoleLicense", locale)}
       </a>
       <a
-        className={SHELL.footerLink}
+        className="underline transition-colors hover:text-foreground"
         href={t("source.edgeUrl", locale)}
         target="_blank"
         rel="noreferrer"
@@ -164,7 +180,7 @@ export function SourceFooter({ locale }: { locale: Locale }) {
         {t("source.edge", locale)}
       </a>
       <a
-        className={SHELL.footerLink}
+        className="underline transition-colors hover:text-foreground"
         href={t("source.edgeLicenseUrl", locale)}
         target="_blank"
         rel="noreferrer"

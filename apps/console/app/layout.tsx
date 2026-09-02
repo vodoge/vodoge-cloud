@@ -9,7 +9,7 @@ import { htmlLang, t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { TENANT_HEADER } from "@/lib/tenant";
 import { getTenantFromHeaders, sessionToken } from "@/lib/tenant-headers";
-import { COLOR_TOKENS, SAFE_AREA, SHELL } from "@/lib/tokens";
+import { COLOR_TOKENS, SAFE_AREA } from "@/lib/tokens";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -218,7 +218,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             owns. What a signed-in page renders is unchanged by the move: the
             same header, the same content column, the same footer, the same
             three children of the same one column. */}
-        <div className={SHELL.root}>
+        <div className="flex min-h-dvh flex-col">
           {tenant && signedIn ? (
             <>
               <Shell tenant={tenant} locale={locale} pathname={pathname}>

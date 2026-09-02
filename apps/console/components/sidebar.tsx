@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 import { t, type Locale } from "@/lib/i18n";
-import { NAV_GROUPS, SHELL, navState } from "@/lib/tokens";
+import { NAV_GROUPS, navState } from "@/lib/tokens";
 
 /**
  * The desktop navigation rail.
@@ -21,24 +21,35 @@ import { NAV_GROUPS, SHELL, navState } from "@/lib/tokens";
  * reads either after hydration serves every reader the default language in the
  * HTML, and the check that reads this page runs no JavaScript at all.
  *
- * Below `md` it is `display: none` — see `SHELL.rail` — and the phone bar is
- * what draws instead. Exactly one of the two is ever on screen.
+ * Below `md` this rail is `display: none` and the phone bar is what draws
+ * instead. Exactly one of the two is ever on screen.
  */
 export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string }) {
   return (
-    <aside className={SHELL.rail}>
-      <div className={SHELL.railHeader}>
-        <span className={SHELL.brandMark} aria-hidden="true">
+    <aside className="hidden w-rail shrink-0 flex-col border-r border-border bg-surface md:flex">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-base font-semibold tracking-tight text-foreground">
+        <span
+          className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+          aria-hidden="true"
+        >
           V
         </span>
         {t("app.name", locale)}
       </div>
 
-      <nav className={SHELL.nav} aria-label={t("nav.label", locale)}>
+      <nav
+        className="flex flex-1 flex-col gap-3 overflow-y-auto p-2"
+        aria-label={t("nav.label", locale)}
+      >
         {NAV_GROUPS.map((group) => (
-          <div key={group.label ?? group.items[0].href} className={SHELL.navGroup}>
+          <div
+            key={group.label ?? group.items[0].href}
+            className="flex flex-col gap-1 border-t border-line-strong pt-3 first:border-t-0 first:pt-0"
+          >
             {group.label ? (
-              <span className={SHELL.navGroupLabel}>{t(group.label, locale)}</span>
+              <span className="px-1 font-mono text-xs font-medium uppercase tracking-eyebrow text-muted-foreground">
+                {t(group.label, locale)}
+              </span>
             ) : null}
             {group.items.map((item) => {
               const state = navState(pathname, item.href);
@@ -49,7 +60,10 @@ export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string
                   // Only an exact match is the current page. A device detail
                   // page is inside the devices section, not the devices page.
                   aria-current={state === "page" ? "page" : undefined}
-                  className={cn(SHELL.navLink, state ? SHELL.navLinkCurrent : undefined)}
+                  className={cn(
+                    "flex min-h-touch items-center gap-2 rounded px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground",
+                    state ? "bg-accent-wash font-semibold text-foreground" : undefined,
+                  )}
                 >
                   <NavIcon d={item.icon} />
                   {t(item.key, locale)}
@@ -82,7 +96,7 @@ export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string
 export function NavIcon({ d }: { d: string }) {
   return (
     <svg
-      className={SHELL.navIcon}
+      className="size-4 shrink-0"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

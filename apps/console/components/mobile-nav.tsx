@@ -28,8 +28,9 @@ import {
  * arrive as props the server resolved — a nav that reads either after
  * hydration serves the default language in the HTML to everybody.
  *
- * Above `md` the whole thing is `display: none` and `SHELL.rail` draws
- * instead, so exactly one of the two is ever on screen.
+ * Above `md` the whole thing is `display: none` and the rail in
+ * `components/sidebar.tsx` draws instead, so exactly one of the two is ever on
+ * screen.
  */
 export function MobileNav({ locale, pathname }: { locale: Locale; pathname: string }) {
   return (

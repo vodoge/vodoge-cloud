@@ -2,7 +2,7 @@ import { LoginForm } from "@/components/login-form";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { safeNext } from "@/lib/session";
-import { CENTERED, SHELL } from "@/lib/tokens";
+import { CENTERED } from "@/lib/tokens";
 
 export default async function LoginPage({
   searchParams,
@@ -16,7 +16,10 @@ export default async function LoginPage({
     <div className={CENTERED.root}>
       <div className={CENTERED.card}>
         <div className={CENTERED.brand}>
-          <span className={SHELL.brandMark} aria-hidden="true">
+          <span
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+            aria-hidden="true"
+          >
             V
           </span>
           {t("app.name", locale)}
