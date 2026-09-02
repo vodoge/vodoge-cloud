@@ -9,7 +9,7 @@ import {
   type ConnectionView,
   type FetchLike,
 } from "@/lib/pwa";
-import { PWA, SAFE_AREA } from "@/lib/tokens";
+import { SAFE_AREA } from "@/lib/tokens";
 
 /**
  * The missing half of "offline honesty".
@@ -101,19 +101,19 @@ export function ConnectionStatus({
 
   return (
     <div
-      className={PWA.connection.bar}
+      className="fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-bad bg-bad-wash shadow-lg"
       style={SAFE_AREA.fixedBottom}
       role="status"
       aria-live="polite"
     >
-      <div className={PWA.connection.inner}>
-        <span className={PWA.connection.mark} aria-hidden="true" />
-        <strong className={PWA.connection.title}>{labels.lost}</strong>
+      <div className="mx-auto flex w-full max-w-page flex-wrap items-center gap-x-3 gap-y-1 px-3 py-3 text-sm sm:px-6">
+        <span className="size-2 shrink-0 rounded-pill bg-bad" aria-hidden="true" />
+        <strong className="font-semibold text-destructive">{labels.lost}</strong>
         {/* The clock is the whole point. "Offline" on its own invites the
             reader to assume the numbers are merely a moment old. */}
-        <span className={PWA.connection.detail}>{labels.stale}</span>
-        <span className={PWA.connection.time}>{formatClock(new Date(view.dataAt))}</span>
-        <span className={PWA.connection.actions}>
+        <span className="text-muted-foreground">{labels.stale}</span>
+        <span className="font-mono font-semibold text-foreground">{formatClock(new Date(view.dataAt))}</span>
+        <span className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
             {labels.retry}
           </Button>

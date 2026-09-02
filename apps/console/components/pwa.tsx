@@ -9,7 +9,6 @@ import {
   isStandalone,
   type InstallState,
 } from "@/lib/pwa";
-import { PWA } from "@/lib/tokens";
 
 /**
  * Registers the service worker.
@@ -171,12 +170,16 @@ export function InstallPrompt({
   const ios = state === "ios-guide";
 
   return (
-    <div className={PWA.install.bar} role="region" aria-label={labels.title}>
-      <span className={PWA.install.text}>
-        <strong className={PWA.install.title}>{ios ? labels.iosTitle : labels.title}</strong>
-        <span className={PWA.install.hint}>{ios ? labels.iosHint : labels.hint}</span>
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-0 border-b border-solid border-border bg-muted px-3 py-2 text-sm sm:px-6"
+      role="region"
+      aria-label={labels.title}
+    >
+      <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <strong className="font-semibold text-foreground">{ios ? labels.iosTitle : labels.title}</strong>
+        <span className="text-muted-foreground">{ios ? labels.iosHint : labels.hint}</span>
       </span>
-      <span className={PWA.install.actions}>
+      <span className="ml-auto flex items-center gap-2">
         {/* iOS gets no button, because there is nothing a button could call.
             Pretending otherwise is worse than directions that work. */}
         {ios ? null : (

@@ -2170,9 +2170,15 @@ test("the two affordances cannot land on the same edge of the screen", () => {
   // They can be on screen together — a console being read offline is exactly
   // one somebody would rather have installed — and two fixed bars sharing an
   // edge means one of them is invisible.
-  assert.ok(!PWA.install.bar.includes("fixed"), "the install bar floats over the content");
-  assert.ok(PWA.connection.bar.includes("fixed"), "the banner scrolls away with the page");
-  assert.ok(PWA.connection.bar.includes("bottom-0"));
+  // 配方内联之后读组件源码。原本读 `PWA.install.bar` / `PWA.connection.bar`，
+  // 而那两个字符串已经没有任何组件在读了——继续读它等于绿着守一个空壳。
+  const install = readFileSync(join(root, "components/pwa.tsx"), "utf8");
+  const banner = readFileSync(join(root, "components/connection-status.tsx"), "utf8");
+  assert.ok(/role="region"/.test(install), "the install bar is gone; this check has no subject");
+  assert.ok(/role="status"/.test(banner), "the connection banner is gone; this check has no subject");
+  assert.ok(!/\bfixed\b/.test(install), "the install bar floats over the content");
+  assert.ok(/\bfixed\b/.test(banner), "the banner scrolls away with the page");
+  assert.ok(/\bbottom-0\b/.test(banner));
 });
 
 /* ── The fifth seam: are these still pictures of THIS console? ─────────
@@ -2549,7 +2555,7 @@ const CAPTURED_FROM = {
   // 前两个在两帧里到处都是（次级文字、统计卡标签、导航），所以这一次连「哪些
   // 像素动了」都不必推断——大面积都动了。仍然拍不了：要浏览器、特定视口和一个
   // 已登录的会话，本机没有网关也没有数据库。
-  chrome: "ef21ba2d9a21ab4d9e459949898a787f9d09ca3d01f0af31d67a44f5f9898696",
+  chrome: "128995c0bd2c409a3b8125a3603b030751cd088901c6d8d2f00d06a6d3bb9993",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

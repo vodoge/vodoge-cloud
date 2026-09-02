@@ -5136,26 +5136,32 @@ test("a label on the phone bar is clipped rather than allowed to widen its cell"
  * and only one of them can be spelled as an order, so the other is spelled as
  * a layer.
  *
- * The corner's occupants are DERIVED from the token table, not listed: a third
- * thing arriving here is covered without this test being edited, and will have
- * to pick a layer nobody else holds. What cannot be derived is which of two
- * should win — that is a judgement (an alert nobody can see is worse than a
- * nav briefly covered), so the last assertion names the two and would fail
- * loudly rather than skip if either were renamed.
+ * The corner's occupants are DERIVED, not listed: a third thing arriving here
+ * is covered without this test being edited, and will have to pick a layer
+ * nobody else holds. What cannot be derived is which of two should win — that
+ * is a judgement (an alert nobody can see is worse than a nav briefly
+ * covered), so the last assertion names the two and would fail loudly rather
+ * than skip if either were renamed.
+ *
+ * 🔴 **派生的来源从配方对象改成了组件源码，而这不是重构。** 它原本走
+ * `recipeNames()` 去扫 `lib/tokens.ts` 里的配方字符串。第 4 阶段把这些字符串逐个
+ * 内联进组件之后，配方对象还在、还是那两个值，于是这条守卫**继续全绿地检查两个
+ * 没有任何组件读的字符串**：真正画在屏幕底部角落的那两个元素，它一个都没看。
+ * 把 `BOTTOM_NAV.bar` 的 z-10 改掉、把组件里的字面量改成 z-20，它不会红。
+ * 现在扫的是每一个已迁移源文件里同时带 `fixed` 和 `bottom-0` 的开标签。
  */
 test("nothing pinned to the bottom corner shares a layer with anything else there", () => {
   const corner: { readonly path: string; readonly recipe: string }[] = [];
-  const walk = (value: unknown, path: string): void => {
-    if (typeof value === "string") {
-      const classes = value.split(/\s+/).filter(Boolean);
-      if (classes.includes("fixed") && classes.includes("bottom-0")) corner.push({ path, recipe: value });
-      return;
+  for (const relative of MIGRATED_SOURCES) {
+    for (const tag of openingTags(readSource(relative))) {
+      for (const list of classListsIn(tag.text)) {
+        const classes = list.split(/\s+/).filter(Boolean);
+        if (classes.includes("fixed") && classes.includes("bottom-0")) {
+          corner.push({ path: `${relative} <${tag.name}>`, recipe: list });
+        }
+      }
     }
-    if (!value || typeof value !== "object") return;
-    for (const [key, inner] of Object.entries(value)) walk(inner, `${path}.${key}`);
-  };
-  const table = TOKENS as unknown as Record<string, unknown>;
-  for (const name of recipeNames()) walk(table[name], name);
+  }
 
   // An extractor that had stopped finding anything would leave every loop
   // below empty, and an empty loop passes.
@@ -5189,10 +5195,13 @@ test("nothing pinned to the bottom corner shares a layer with anything else ther
     holder.set(layer, path);
   }
 
-  const bar = layers.find((entry) => entry.path === "BOTTOM_NAV.bar");
-  const banner = layers.find((entry) => entry.path === "PWA.connection.bar");
-  assert.ok(bar, "BOTTOM_NAV.bar is no longer pinned to the bottom corner; this check has lost its subject");
-  assert.ok(banner, "PWA.connection.bar is no longer pinned to the bottom corner; this check has lost its subject");
+  const bar = layers.find((entry) => entry.path === "components/mobile-nav.tsx <nav>");
+  const banner = layers.find((entry) => entry.path === "components/connection-status.tsx <div>");
+  assert.ok(bar, "the phone bar is no longer pinned to the bottom corner; this check has lost its subject");
+  assert.ok(
+    banner,
+    "the connection banner is no longer pinned to the bottom corner; this check has lost its subject",
+  );
   assert.ok(
     banner.layer > bar.layer,
     `the connection banner is on layer ${banner.layer} and the phone bar on ${bar.layer}, so the ` +
