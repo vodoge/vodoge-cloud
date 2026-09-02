@@ -1179,7 +1179,8 @@ export const SHELL = {
    * kept here in outline because the number in it travelled.** The header
    * carried the navigation, four groups wrapping to about three rows on a
    * phone, and pinning that would have handed a quarter of a 390px screen to
-   * navigation permanently. The phone now navigates from `BOTTOM_NAV` and the
+   * navigation permanently. The phone now navigates from the sidebar drawer
+   * and the
    * header is one row of brand and controls, so there is nothing left to
    * unpin for.
    *
@@ -1246,7 +1247,7 @@ export const SHELL = {
   /**
    * The desktop rail, which removes itself on a phone.
    *
-   * 🔴 **It draws from `NAV_GROUPS`, and so does `BOTTOM_NAV`.** That is the
+   * 🔴 **It draws from `NAV_GROUPS`.** That is the
    * whole point of this pair: the same ten destinations, two arrangements,
    * one array. Two lists that happened to agree on the day they were written
    * are the thing `tokens.test.ts` is set up to reject — it reads both
@@ -1300,20 +1301,9 @@ export const SHELL = {
 /* ── The phone's bottom bar ──────────────────────────────────────────────
  *
  * 🔴 **The second renderer of `NAV_GROUPS`, and it is not allowed to hold a
- * list of its own.** `SHELL.rail` draws the same array as four labelled
- * groups; this draws four of them as cells with a glyph, and puts the other
- * six behind an overflow trigger. Which four is `NavItem.bottomSlot`; which
- * six is everything without one, by subtraction. Neither renderer names a
- * destination, and `tokens.test.ts` fails if either starts to.
- *
- * **Five cells, because of arithmetic and not taste.** 390px is the narrowest
- * phone this console is checked on. Ten destinations laid out at once give
- * each one 39px, and `SIZE_TOKENS.touch` — the target size the operator signed
- * off — is 44px. Five give 78px. ⚠️ **Both are budgets rather than
- * measurements** — the row draws no cell of 78, and `BOTTOM_NAV.cell` carries
- * the shape it does draw. `bottomNavCellWidth()` computes both, and the suite
- * recomputes them rather than quoting them, so a sixth cell fails a test
- * instead of shipping a target nobody can hit.
+ * list of its own.** The rail draws the array as labelled groups; below
+ * shadcn's own breakpoint the library draws the same markup inside a Sheet,
+ * so there is one renderer and it cannot disagree with itself.
  *
  * ⚠️ **The overflow trigger deliberately does not sink when pressed.** Every
  * other control in this console does — `BUTTON.base` carries the press — and
@@ -1332,198 +1322,6 @@ export const SHELL = {
  * arbitrary value. It is an inline style — `SAFE_AREA.fixedBottom`, the same
  * one the connection banner uses.
  */
-
-export const BOTTOM_NAV = {
-  /**
-   * ⚠️ Shares this exact corner with `PWA.connection.bar`, the connection
-   * banner. The classes that do the pinning — the positioning, the edge, the
-   * full width — are identical word for word in both recipes; what differs is
-   * the paint (this one is the surface tone, the banner is the status red) and
-   * the responsive hide, which only this one carries. That hide is why the
-   * corner is contested on a phone and nowhere else: measured at 1280x800,
-   * signed in and offline, the banner is present and this bar is not in the
-   * corner at all. The other two conditions are a dropped network and a
-   * signed-in tenant, since `app/layout.tsx` gates both components on that.
-   *
-   * 🔴 **This bar sits one layer below the banner, and that is deliberate.**
-   * `app/layout.tsx` draws the banner first and this bar last. While both sat
-   * on the same layer the later one won, and the bar painted over the alert.
-   * Measured in a browser at 390x844, signed in, network dropped: the banner
-   * occupied the strip from 787 to 844, this bar from 799 to 844, and of 400
-   * points sampled across the banner the bar was the topmost element at 320 of
-   * them. All four of the banner's own runs of text — the sentence, the
-   * explanation, the clock, and the reload control — came back from
-   * `elementFromPoint` as something inside this bar, so the alert was not
-   * merely dimmed: the first three sat under one of the four links, and the
-   * reload control sat under the overflow trigger, so pressing reload opened
-   * the sheet.
-   *
-   * A banner nobody can see is worse than a nav briefly covered. That
-   * judgement is what decides the tie, and it now decides it in
-   * `TAILWIND_Z_INDEX` rather than by accident of source order: this recipe
-   * takes the 10, and the banner keeps the 20.
-   *
-   * 🔴 **The layer moved and the source order did not, on purpose.** The other
-   * way to settle this is to draw this component before the banner — but the
-   * source footer's clearance depends on this component being drawn *after*
-   * the footer, and `tokens.test.ts` pins that order for exactly that reason.
-   * Reordering to fix one would have broken the other. Nothing else is left
-   * wanting this corner: the sticky header holds the 20 at the opposite edge
-   * (measured at 390x844 it runs 0 to 65, this bar 799 to 844), and the
-   * confirmation dialog is on the 30 because it is meant to cover everything —
-   * which is the other reason the banner was not simply raised to meet it.
-   *
-   * ⚠️ Before adding a third thing to this corner, give it a layer of its own.
-   * `tokens.test.ts` derives the corner's occupants rather than listing them,
-   * and requires that no two of them share one.
-   */
-  bar: "fixed inset-x-0 bottom-0 z-10 border-0 border-t border-solid border-line bg-surface md:hidden",
-  /**
-   * `relative` so the sheet can hang off the whole bar rather than off the one
-   * 78px cell that opens it.
-   */
-  row: "relative mx-auto flex w-full max-w-page items-stretch",
-  /**
-   * One cell, grown from a zero basis so that nobody divides 390 by 5 in a
-   * class name.
-   *
-   * ⚠️ **The five are not equal: measured, they span 8.02px.** At 390 the row
-   * draws 79.59 / 79.61 / 79.59 / 79.61 / 71.59, summing to 389.99, and no
-   * cell is the 78 that `bottomNavCellWidth()` returns — that function is the
-   * budget the design was chosen against, not a description of the boxes.
-   *
-   * The 8.02 is this recipe's own horizontal padding, `SPACE_TOKENS.s1` a
-   * side. Under the inherited border-box rule a zero basis cannot fall below
-   * an item's own padding, so the four links enter the share-out already
-   * carrying 8px while the overflow trigger carries nothing — its padding sits
-   * on the `<summary>` within it rather than on the cell. The five then split
-   * what is left, (390 − 32) / 5 = 71.6 apiece, which puts the links at 79.6
-   * and the trigger at 71.6. Measured from the other side as well: take this
-   * padding away and all five come out at exactly 78.00.
-   *
-   * 🔴 **Not a defect — what would make it one is the floor, not the span.**
-   * The narrowest cell is 71.59 against a `SIZE_TOKENS.touch` of 44.
-   *
-   * 🔴 **The floor is stated, and stating it is what stops the text deciding
-   * it.** A share of the row with no minimum of its own has its content's, so
-   * the longest label in the row used to settle what every other cell was left
-   * with. Measured: a twenty-one-letter German compound took the four links to
-   * 128.77 apiece and left the overflow trigger — the only way to the other six
-   * destinations — 24.00px wide, with that trigger and the fourth link both
-   * past the right-hand edge of a 390px screen, and the bar 13.19px taller than
-   * the gutter that holds the source footer clear of it. Neither language
-   * shipped today can reach any of that; the narrowest cell zh or en can make
-   * is 71.59, so it is the next translation that meets it.
-   *
-   * Stating a minimum *replaces* the content-based one rather than adding to
-   * it, so the label loses that power outright — and what it is replaced by is
-   * `SIZE_TOKENS.touch`, the same token the height is floored at, so there is
-   * no second number here to keep in step.
-   *
-   * ⚠️ **Nothing was taken from the other four cells to pay for it.** What they
-   * gave up is the claim to be as wide as their longest word, which was never a
-   * claim about the target size. Measured after: zh and en draw the same five
-   * widths to the hundredth of a pixel, and the German label now draws them
-   * too. The arrangement holds down to a 220px viewport, below which five
-   * targets no longer fit side by side at all. Geometry and the mutation run
-   * are in the T012 note under `docs/goals/vodoge-shape-nav/notes/`.
-   */
-  cell: "flex min-h-touch min-w-touch flex-1 flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
-  cellCurrent: "font-semibold text-fg-accent",
-  /**
-   * The label, in an element of its own so that there is something to clip.
-   *
-   * With the cell's width settled by the floor above, a label longer than its
-   * cell still has to go somewhere, and both places it can go are defects. A
-   * bare text node paints across its neighbours. A wrapping one makes the row
-   * taller — and the gutter below is pinned at one target size, so a bar that
-   * grows is a bar that no longer matches the gutter holding the source footer
-   * clear of it. That is the 45 → 58.19px measured on the long label, and the
-   * 13.33px of footer it buried.
-   *
-   * Capped to the cell and cut off with an ellipsis, it does neither. Measured
-   * with the twenty-one-letter label in place: every cell reports its scrollable
-   * width equal to its visible width, so no ink leaves any cell, and the bar
-   * stays level with its gutter at every viewport from 220 to 767.
-   *
-   * ⚠️ **The sheet's rows deliberately do not carry this.** They are full
-   * width with a whole viewport to lay a word out in, and cutting them off
-   * would shorten labels that fit.
-   */
-  cellLabel: "max-w-full truncate",
-  /**
-   * The trigger, which is a `<summary>`.
-   *
-   * `list-none` removes the disclosure marker; the glyph below is the
-   * affordance instead. Same arrangement as `CARD.disclosureSummary`, and the
-   * same reason: `<details>` works with JavaScript off and needs no client
-   * boundary, which is what keeps this whole bar server-rendered and its
-   * labels in the language the server resolved.
-   *
-   * It repeats `BOTTOM_NAV.cell` rather than composing it because it is the
-   * one cell that must **not** pick up a press or an `aria-current`. Sharing
-   * the recipe and subtracting from it is how the press would arrive here the
-   * next time someone adds one to `cell`.
-   */
-  moreTrigger:
-    "flex min-h-touch w-full cursor-pointer list-none flex-col items-center justify-center gap-s1 px-s1 text-xs text-fg-muted transition-colors hover:text-fg",
-  /**
-   * The `<details>` itself, taking a cell's share of the row — a share, not a
-   * width: carrying no padding of its own, it settles 8.02px under the four
-   * links. `BOTTOM_NAV.cell` holds the measurement and why that is the shape
-   * this row is supposed to have rather than a defect.
-   *
-   * 🔴 It carries the same floor as the other four, and it is the cell that
-   * needed it: the remainder of the row lands here, so this is the one that
-   * collapsed — to 24.00px — when a long label made the four links greedy.
-   */
-  more: "flex min-w-touch flex-1",
-  /**
-   * The sheet, opening upwards out of the bar.
-   *
-   * `bottom-full` is why `TAILWIND_INSET` has a `full` step: the bar's height
-   * is a touch target plus a device inset, which is not a number this scale
-   * could have held.
-   */
-  sheet:
-    "absolute inset-x-0 bottom-full flex max-h-panel flex-col gap-s1 overflow-y-auto border-b border-line bg-surface p-s2 shadow-lg",
-  sheetLabel: "px-s2 py-s1 font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
-  sheetLink:
-    "flex min-h-touch items-center gap-s3 rounded px-s3 text-sm text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg",
-  sheetLinkCurrent: "bg-brand-wash font-semibold text-fg-accent",
-  /**
-   * The gutter, and the reason it is an element rather than padding.
-   *
-   * A bar with `position: fixed` covers whatever the document ends with, and
-   * what this document ends with is the source footer — the one thing on the
-   * page addressed to people who are not signed in. Padding on the shell root
-   * would not reach it, because `app/layout.tsx` draws the footer as a sibling
-   * of the shell and not inside it; padding on the root itself would also land
-   * on `/login`, which has no bar to clear.
-   *
-   * So the gutter is drawn after the footer, by the same component that draws
-   * the bar, and it is exactly as tall: one border plus a touch target plus
-   * the same inline inset. It goes away with the bar at `md`.
-   *
-   * ⚠️ **The content-box sizing on this line is the whole of it.** Measured:
-   * under the inherited border-box rule the gutter came out 44px against the
-   * bar's 45px, and the source footer sat 0.97px underneath the bar. The bar's
-   * height is its 44px touch row *plus* its 1px top border, because nothing
-   * constrains it; the gutter's minimum was swallowing the border inside the
-   * same 44px. Sizing to the content makes the minimum apply to the content,
-   * so both boxes are one border plus a touch target plus the same inline
-   * inset — equal by construction rather than by two numbers kept in step.
-   *
-   * ⚠️ The utility's own name is deliberately not written in this comment.
-   * This file is Tailwind content, so spelling it here would make the rule
-   * ship whether or not any recipe still asks for it — and the check that
-   * finds an orphaned rule would then answer for the prose instead of for the
-   * layout. That is not hypothetical: it happened, and it made a mutation
-   * that removes this class look as though it had been caught by a height
-   * check when nothing here can measure a height.
-   */
-  spacer: "box-content min-h-touch border-0 border-t border-solid border-transparent md:hidden",
-} as const;
 
 /**
  * The one thing the token scales cannot express.
@@ -1863,9 +1661,9 @@ export const PWA = {
    * number above it is already out of date.
    *
    * ⚠️ It shares that bottom corner with the phone navigation bar, which is
-   * why this recipe holds the 20 of `TAILWIND_Z_INDEX` while `BOTTOM_NAV.bar`
+   * why this recipe holds the 20 of `TAILWIND_Z_INDEX` while the phone bar
    * takes the 10. Lowering this one to meet it puts the alert back underneath
-   * a navigation cell — measured, and written up on `BOTTOM_NAV.bar`.
+   * a navigation cell — measured, on the bar that shadcn's Sidebar replaced.
    */
   connection: {
     bar: "fixed inset-x-0 bottom-0 z-20 border-0 border-t border-solid border-bad bg-bad-wash shadow-lg",
@@ -2099,18 +1897,6 @@ export type NavItem = {
   readonly href: string;
   readonly key: string;
   /**
-   * The label the phone bar draws, which has 78px to draw it in.
-   *
-   * A second key rather than a shortened copy of the first: the two renderers
-   * want different lengths of the same word, and a translator has to be able
-   * to shorten one without the other moving. The reference console this board
-   * is modelled on separates them the same way. Several are the same sentence
-   * in both catalogues today, and that is fine — what matters is that there is
-   * somewhere to put a shorter one when a language needs it, which is the
-   * thing a single key does not have.
-   */
-  readonly shortKey: string;
-  /**
    * `d` of one path drawn in a 24×24 box, stroked, no fill.
    *
    * ⚠️ Absolute commands and no minus signs anywhere, on purpose. This file is
@@ -2121,26 +1907,6 @@ export type NavItem = {
    * is "the stylesheet contains no rule that no file asks for".
    */
   readonly icon: string;
-  /**
-   * Where the phone's bottom bar draws it, or `null` for the ones behind the
-   * overflow trigger.
-   *
-   * 🔴 **This is the whole of "which four are on the bar", and it lives on the
-   * item.** A separate array of four hrefs would be a second list, and the two
-   * would be free to disagree the first time a destination was renamed — which
-   * is the failure this card was written to make impossible. Both sets are
-   * read off this field: the bar is the items that have a number, in that
-   * order, and the overflow sheet is *everything else*, derived by
-   * subtraction rather than typed out. A destination added to a group above
-   * and given no number appears in the sheet without anybody editing a list.
-   *
-   * The order is the operator's, confirmed 2026-08-27, and it is not the order
-   * the groups happen to be in: overview, devices, inbox, journal puts the two
-   * most-read pages side by side, while the flattened groups would interleave
-   * `/journal` between them. That is the only reason this is a number and not
-   * a boolean.
-   */
-  readonly bottomSlot: number | null;
 };
 export type NavGroup = {
   /** `null` when the group is a single link whose own label names it. */
@@ -2155,23 +1921,17 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       {
         href: "/",
         key: "nav.overview",
-        shortKey: "nav.overviewShort",
         icon: "M4 4H10V10H4ZM14 4H20V10H14ZM4 14H10V20H4ZM14 14H20V20H14Z",
-        bottomSlot: 1,
       },
       {
         href: "/devices",
         key: "nav.devices",
-        shortKey: "nav.devicesShort",
         icon: "M7 3H17V21H7ZM10 18H14",
-        bottomSlot: 2,
       },
       {
         href: "/journal",
         key: "nav.journal",
-        shortKey: "nav.journalShort",
         icon: "M6 3H15L19 7V21H6ZM9 12H16M9 16H14",
-        bottomSlot: 4,
       },
       {
         // What has been measured on which module and network. It sits with
@@ -2180,21 +1940,17 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         // stick refused.
         href: "/support-ledger",
         key: "nav.ledger",
-        shortKey: "nav.ledgerShort",
         icon: "M4 6H20M4 12H20M4 18H13",
         // Explicitly null, not omitted. `bottomNavItems` filters on
         // `!== null`, so an omitted key is `undefined`, passes the filter, and
         // lands the destination on the phone bar with a slot that sorts as
         // NaN. The type says `number | null` for this reason; leaving it out
         // is the one way to get a fifth cell by accident.
-        bottomSlot: null,
       },
       {
         href: "/audit",
         key: "nav.audit",
-        shortKey: "nav.auditShort",
         icon: "M12 3L20 6V12C20 17 16 20 12 21C8 20 4 17 4 12V6Z M9 12L11 14L15 10",
-        bottomSlot: null,
       },
     ],
   },
@@ -2204,30 +1960,22 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       {
         href: "/inbox",
         key: "nav.inbox",
-        shortKey: "nav.inboxShort",
         icon: "M3 6H21V18H3Z M3 7L12 13L21 7",
-        bottomSlot: 3,
       },
       {
         href: "/sessions",
         key: "nav.sessions",
-        shortKey: "nav.sessionsShort",
         icon: "M21 12C21 16 17 19 12 19C11 19 10 19 9 18L4 20L5 16C4 15 3 14 3 12C3 8 7 5 12 5C17 5 21 8 21 12Z",
-        bottomSlot: null,
       },
       {
         href: "/rules",
         key: "nav.rules",
-        shortKey: "nav.rulesShort",
         icon: "M4 7H20M4 17H20 M9 4V10M15 14V20",
-        bottomSlot: null,
       },
       {
         href: "/schedule",
         key: "nav.schedule",
-        shortKey: "nav.scheduleShort",
         icon: "M4 6H20V20H4ZM4 10H20M9 3V7M15 3V7",
-        bottomSlot: null,
       },
     ],
   },
@@ -2237,9 +1985,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       {
         href: "/proxy",
         key: "nav.proxy",
-        shortKey: "nav.proxyShort",
         icon: "M4 4H10V10H4ZM14 14H20V20H14ZM10 7H17V14",
-        bottomSlot: null,
       },
     ],
   },
@@ -2249,31 +1995,11 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       {
         href: "/settings",
         key: "nav.settings",
-        shortKey: "nav.settingsShort",
         icon: "M12 8A4 4 0 1 0 12 16A4 4 0 1 0 12 8Z M12 2V5M12 19V22M2 12H5M19 12H22",
-        bottomSlot: null,
       },
     ],
   },
 ];
-
-/**
- * The fifth cell, which is not a destination.
- *
- * It opens the sheet holding everything the bar has no room for. It carries
- * the same three fields a destination carries so that the bar draws five cells
- * from one shape rather than four of one shape and a special case — and so
- * that its label is checked by the same assertion that checks the other ten.
- *
- * It deliberately has no `href` and no `bottomSlot`: it is not somewhere to
- * go, and `NAV_GROUPS` is where somewhere-to-go is written down. Keeping it
- * out of that array is what keeps "ten destinations" countable.
- */
-export const NAV_MORE = {
-  key: "nav.more",
-  shortKey: "nav.moreShort",
-  icon: "M5 10A2 2 0 1 0 5 14A2 2 0 1 0 5 10Z M12 10A2 2 0 1 0 12 14A2 2 0 1 0 12 10Z M19 10A2 2 0 1 0 19 14A2 2 0 1 0 19 10Z",
-} as const;
 
 /**
  * Every destination, in the order the groups declare them.
@@ -2284,61 +2010,6 @@ export const NAV_MORE = {
  */
 export function navItems(): readonly NavItem[] {
   return NAV_GROUPS.flatMap((group) => group.items);
-}
-
-/**
- * The four the phone bar draws, in the operator's order.
- *
- * Derived, and the sort is what makes `bottomSlot` mean position rather than
- * merely membership.
- */
-export function bottomNavItems(): readonly NavItem[] {
-  return navItems()
-    .filter((item) => item.bottomSlot !== null)
-    .slice()
-    .sort((a, b) => (a.bottomSlot as number) - (b.bottomSlot as number));
-}
-
-/**
- * Everything else — the six behind the overflow trigger.
- *
- * 🔴 **By subtraction, never by enumeration.** A hand-written list of six is a
- * list that silently loses an entry the day an eleventh destination is added,
- * and a destination that is on neither renderer is a page reachable only by
- * typing its URL. This cannot under-report: whatever is not on the bar is
- * here, by construction.
- */
-export function overflowNavItems(): readonly NavItem[] {
-  return navItems().filter((item) => item.bottomSlot === null);
-}
-
-/**
- * How many cells the phone bar draws: the destinations on it, plus the
- * overflow trigger.
- *
- * A count rather than a literal five, because the arithmetic below is the
- * reason the operator chose four destinations and not ten, and an arithmetic
- * check reading a literal is a check that agrees with itself.
- */
-export function bottomNavCellCount(): number {
-  return bottomNavItems().length + 1;
-}
-
-/**
- * What one cell gets, across a viewport of `width` CSS pixels.
- *
- * 🔴 **This is the constraint that settled the design, so it is computed and
- * not remembered.** At 390px — the narrowest phone this console is checked on
- * — ten destinations laid out at once give 39px a cell, and `SIZE_TOKENS.touch`
- * is 44px. Five cells give 78px. ⚠️ **This is a budget, not a rendered width**
- * — measured at 390 the row draws 79.59 / 79.61 / 79.59 / 79.61 / 71.59, and
- * `BOTTOM_NAV.cell` says why. The operator was shown both numbers and chose
- * five; `tokens.test.ts` recomputes them from this function rather than
- * quoting them, so a sixth cell fails the suite instead of shipping a target
- * nobody can hit.
- */
-export function bottomNavCellWidth(width: number, cells = bottomNavCellCount()): number {
-  return width / cells;
 }
 
 /** Exact match, an ancestor of the current path, or neither. */

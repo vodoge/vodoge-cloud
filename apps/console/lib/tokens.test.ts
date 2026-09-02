@@ -44,7 +44,6 @@ import * as TOKENS from "./tokens.ts";
 import { CONFIRMED_WRITES, SMS_BLOCKED_MODULES, blockedSendModules , WRITES_WITHOUT_A_DIALOG } from "./sms-safety.ts";
 import {
   AT_COMMAND_GUARDS,
-  BOTTOM_NAV,
   BUTTON,
   CARD_POLICY_CONFIRMATIONS,
   CARD,
@@ -60,7 +59,6 @@ import {
   LOG,
   MIGRATED_SOURCES,
   NAV_GROUPS,
-  NAV_MORE,
   NON_UTILITY_CLASSES,
   NOTIFICATION_FIELDS,
   REDACTED_SECRET,
@@ -96,9 +94,6 @@ import {
   assertConsequence,
   atCommandGuard,
   badgeClass,
-  bottomNavCellCount,
-  bottomNavCellWidth,
-  bottomNavItems,
   buttonClass,
   cardPolicyGuardFor,
   cardPolicyPatch,
@@ -112,7 +107,6 @@ import {
   navItems,
   navState,
   notificationChannels,
-  overflowNavItems,
   rootTokenValues,
   secretInputProps,
   settingsDocument,
@@ -520,10 +514,6 @@ const NOT_A_RECIPE = new Set([
   // Not classes: an inline style, nav data, and the migration ledger.
   "SAFE_AREA",
   "NAV_GROUPS",
-  // The fifth cell of the phone bar. Nav data like `NAV_GROUPS`: a message
-  // key, a shorter message key, and SVG path data. Walked as a class list it
-  // would ask the build for `nav.more` and for a run of path commands.
-  "NAV_MORE",
   "DEVICE_TABS",
   // The guard tables: command kinds, AT command shapes, regexes and the
   // message keys that say what each one costs. Every string in them is a
@@ -4799,19 +4789,22 @@ test("the renderers being scanned are derived from the tree, not typed out", () 
 
 test("the nav renderer writes down no destination of its own", () => {
   // Everything that identifies a destination: where it goes, what it is
-  // called at both lengths, and what it is drawn as. Derived from the array,
-  // so a new field on `NavItem` is covered the day it is added.
+  // called, and what it is drawn as. Derived from the array, so a new field on
+  // `NavItem` is covered the day it is added.
+  //
+  // ⚠️ `shortKey` was a fourth: the 8-character label the 78px phone-bar cell
+  // drew. The bar went with shadcn's Sidebar, the drawer draws the long label,
+  // and the field and its twelve catalogue entries went with it.
   const owned = new Set<string>();
   for (const item of navItems()) {
     owned.add(item.href);
     owned.add(item.key);
-    owned.add(item.shortKey);
     owned.add(item.icon);
   }
   // A positive control on the fixture itself: if this set were empty, or the
   // literals were being read from the wrong place, every assertion below
   // would pass on nothing.
-  assert.equal(owned.size, 4 * navItems().length, "the set of owned strings is not what it should be");
+  assert.equal(owned.size, 3 * navItems().length, "the set of owned strings is not what it should be");
 
   for (const relative of navRenderers()) {
     const written = scan(readSource(relative))
@@ -4950,40 +4943,28 @@ test("nothing pinned to the bottom corner shares a layer with anything else ther
   // 事让 reload 按钮按不下去（390x844 实测，栏是每一个字上方的最顶层元素）。
 });
 
-test("every nav label exists in both catalogues at both lengths", () => {
+test("every nav label exists in both catalogues", () => {
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
 
-  const keys = [
-    ...navItems().flatMap((item) => [item.key, item.shortKey]),
-    NAV_MORE.key,
-    NAV_MORE.shortKey,
-  ];
+  const keys = navItems().map((item) => item.key);
   const missing = keys.filter((key) => typeof zh[key] !== "string" || typeof en[key] !== "string");
-  assert.deepEqual(missing, [], "a nav cell would render as ⟦key⟧");
+  assert.deepEqual(missing, [], "a nav entry would render as ⟦key⟧");
+  assert.ok(keys.length >= 10, `only ${keys.length} nav labels checked; the derivation collapsed`);
 
-  // A short label that is longer than the long one is a short label that is
-  // doing nothing, and the 78px cell is what the short one exists for. Eight
-  // characters is what fits there at `--text-xs`; the rendered width is
-  // measured in a browser, this is the cheap guard against the obvious.
-  for (const item of [...navItems(), NAV_MORE]) {
-    for (const [language, table] of [
-      ["zh", zh],
-      ["en", en],
-    ] as const) {
-      const long = table[item.key] as string;
-      const short = table[item.shortKey] as string;
-      assert.ok(
-        short.length <= long.length,
-        `${item.shortKey} is longer than ${item.key} in ${language}: ${short} vs ${long}`,
-      );
-      assert.ok(short.length <= 8, `${item.shortKey} is ${short.length} characters in ${language}`);
-    }
-  }
+  // ⚠️ 这条原本叫「两种长度」，还断言短标签不长于长标签、且不超过 8 个字符。
+  // 那两条守的是手机栏 78px 格子里的排版；栏随 shadcn Sidebar 一起没了，抽屉画
+  // 的是长标签，`shortKey` 和它在两份目录里的十二个条目也一起删了。
+  //
+  // 🔴 覆盖损失说清楚：现在没有东西拦「某个语言的导航标签长到撑破侧栏」。
+  // 侧栏宽度由库决定（SIDEBAR_WIDTH 16rem）并且 SidebarMenuButton 自带
+  // truncate，所以后果是被截断而不是撑破布局——这是接受这条退休的理由，
+  // 不是「没人想到」。
 });
+
 test("every nav glyph is path data, and none of it spells a class", async () => {
-  const icons = [...navItems().map((item) => item.icon), NAV_MORE.icon];
-  assert.equal(icons.length, 12, "eleven destinations and the overflow trigger");
+  const icons = navItems().map((item) => item.icon);
+  assert.equal(icons.length, 11, "eleven destinations");
 
   // 🔴 `lib/tokens.ts` is Tailwind content and Tailwind reads text, not
   // meaning. Path data sits in this file as ordinary strings, so a coordinate
