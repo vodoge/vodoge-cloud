@@ -5004,7 +5004,13 @@ test("a cell of the phone bar has a floor on its width, from the token that give
  * truncate labels that fit. The subject here is the bar's cells only.
  */
 test("a label on the phone bar is clipped rather than allowed to widen its cell", async () => {
-  const tags = openingTags(readSource("components/mobile-nav.tsx"));
+  // 两个文件一起读：条目还在 mobile-nav.tsx，溢出触发器搬到了 nav-more.tsx。
+  // 少读一个，这条断言就在数一半的格子，而它的全部意义是「格子数 == 被裁切的
+  // 标签数」——半份数据也能相等，那才是最糟的通过方式。
+  const tags = [
+    ...openingTags(readSource("components/mobile-nav.tsx")),
+    ...openingTags(readSource("components/nav-more.tsx")),
+  ];
 
   // 🔴 The lookahead is not decoration. `BOTTOM_NAV.cellCurrent` and
   // `BOTTOM_NAV.cellLabel` both contain `BOTTOM_NAV.cell`, so a plain substring
@@ -5269,11 +5275,16 @@ test("the phone bar and its gutter both carry the inset no class can express", (
 });
 
 test("the overflow trigger says it opens something, and does not sink when pressed", () => {
-  const trigger = openingTags(readSource("components/mobile-nav.tsx")).find((tag) =>
+  // 触发器搬到了 components/nav-more.tsx：那段 `<details>` 换成了 Radix 的
+  // Sheet，客户端边界因此收在这一个组件里，而不是爬到整棵导航树上。
+  const trigger = openingTags(readSource("components/nav-more.tsx")).find((tag) =>
     tag.text.includes("className={BOTTOM_NAV.moreTrigger}"),
   );
   assert.ok(trigger, "the overflow trigger is gone");
-  assert.equal(trigger.name, "summary", "a `<details>` is what makes the sheet work with no script");
+  // 以前断言它是 `<summary>`，理由是「`<details>` 才让面板在无脚本时可用」。
+  // 那条性质是这次刻意换掉的：换来的是现成的动画、焦点陷阱、Escape 和滚动锁。
+  // 仍然要守的是**它是个触发器而不是链接**——下面两条断言就是这个。
+  assert.equal(trigger.name, "SheetTrigger", "the trigger is no longer the sheet's own");
   assert.match(trigger.text, /aria-haspopup=/, "nothing says this opens rather than navigates");
 
   // 🔴 A control that opens a sheet should stay still while the sheet moves.

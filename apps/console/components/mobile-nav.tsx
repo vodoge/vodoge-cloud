@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NavMore } from "@/components/nav-more";
 import { NavIcon } from "@/components/sidebar";
 import { cn } from "@/lib/cn";
 import { t, type Locale } from "@/lib/i18n";
@@ -58,38 +59,16 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
             );
           })}
 
-          <details className={BOTTOM_NAV.more}>
-            {/* `aria-haspopup` says this opens something rather than going
-                somewhere. It is also the attribute the reference console's
-                press guard keys on — and the reason this trigger carries its
-                own recipe instead of BUTTON.base: a control that opens a sheet
-                should stay still while the sheet moves. */}
-            <summary className={BOTTOM_NAV.moreTrigger} aria-haspopup="menu">
-              <NavIcon d={NAV_MORE.icon} />
-              <span className={BOTTOM_NAV.cellLabel}>{t(NAV_MORE.shortKey, locale)}</span>
-            </summary>
-
-            <div className={BOTTOM_NAV.sheet}>
-              <span className={BOTTOM_NAV.sheetLabel}>{t(NAV_MORE.key, locale)}</span>
-              {overflowNavItems().map((item) => {
-                const state = navState(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    aria-current={state === "page" ? "page" : undefined}
-                    className={cn(
-                      BOTTOM_NAV.sheetLink,
-                      state ? BOTTOM_NAV.sheetLinkCurrent : undefined,
-                    )}
-                  >
-                    <NavIcon d={item.icon} />
-                    {t(item.shortKey, locale)}
-                  </Link>
-                );
-              })}
-            </div>
-          </details>
+          <NavMore
+            triggerLabel={t(NAV_MORE.shortKey, locale)}
+            title={t(NAV_MORE.key, locale)}
+            items={overflowNavItems().map((item) => ({
+              href: item.href,
+              icon: item.icon,
+              label: t(item.shortKey, locale),
+              current: navState(pathname, item.href) !== null,
+            }))}
+          />
         </div>
       </nav>
 
