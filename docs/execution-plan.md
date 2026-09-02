@@ -50,7 +50,7 @@
 
 | 角色 | 地址 | 说明 |
 | --- | --- | --- |
-| **工作站** | 本机 macOS | 写代码、交叉编译、跑测试。**不要在这里跑 dev server** |
+| **工作站** | **就是边缘机本身**（见下一行） | 写代码、跑测试。**不要在这里跑 dev server** |
 | **云主机** | `root@43.108.53.126` | 网关 + 控制台 + PostgreSQL + Redis，Docker Compose |
 | **边缘机** | `root@192.168.6.83`（端口 **22**） | 裸机 Ubuntu 26.04，主机名 `aabb`，i5-12400F / 30G。模组**直插 USB，不再有 usbip** |
 | 基础域名 | `vodoge.com` | 公开控制台 |
@@ -61,8 +61,8 @@
 
 | 仓库 | 路径 | 远端 | 内容 |
 | --- | --- | --- | --- |
-| `vodoge-cloud` | `~/Documents/local/vodoge-cloud` | `github.com/vodoge/vodoge-cloud` | Go 网关 + Next.js 控制台 + 迁移 |
-| `vodoge-edge` | `~/Documents/local/vodoge-edge` | `github.com/vodoge/vodoge-edge` | Rust 边缘代理 |
+| `vodoge-cloud` | `/run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-cloud` | `github.com/vodoge/vodoge-cloud` | Go 网关 + Next.js 控制台 + 迁移 |
+| `vodoge-edge` | `/run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-edge` | `github.com/vodoge/vodoge-edge` | Rust 边缘代理 |
 
 > 🔴 **旧版单机 Go 产品（`vodoge`）已经没有任何可查的副本了。**
 > 本文档此前把它列为"只读参考"，指向 `~/Documents/local/vodoge`。那个目录
@@ -134,10 +134,15 @@ cd ~/Documents/local/vodoge-cloud/apps/console && NEXT_TELEMETRY_DISABLED=1 VODO
 ### 2.3 边缘（Rust）
 
 **边缘代码有一大块在 `#[cfg(target_os = "linux")]` 里**（`edge-bin/src/main.rs`
-的 `mod linux`），macOS 上根本不编译。**在工作站上 `cargo build` 通过，
-不代表边缘代码通过。** 四个真实的解码 bug 就是这么活下来的。
+的 `mod linux`）。这条规则写下来的时候工作站是 macOS，那块代码在上面根本不编译，
+**四个真实的解码 bug 就是这么活下来的**。
 
-所以：工作站上跑单测（`cargo test`），**类型检查和发布构建都在边缘机上做**。
+⚠️ **现在工作站和边缘机是同一台 Linux 机器**，所以那个具体的失效模式没有了——
+`mod linux` 在这里正常编译。规则本身仍然成立，只是理由变了：发布二进制必须在它
+实际运行的机器上构建，而这台机器的 `cargo` 是发行版包（`/usr/bin/cargo`，没有
+rustup）。换回一台非 Linux 的工作站时，上面那个坑会原样回来。
+
+2026-09-03 实测：workspace 编译通过，**39 个测试二进制、657 个测试全绿**。
 
 同步源码到**边缘机**：
 
@@ -212,7 +217,7 @@ ssh root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep -v "pol
 > 而且要**读回**模组settle 在哪种 framing：报成功却保持原样是同一个故障。
 
 > 🔴 **模组的默认路由永远不能进主路由表。**
-> 这台机器有四个模组和它自己的一条上行。`ip route add default` 进主表在已有默认
+> 这台机器插着若干模组，外加它自己的一条上行。`ip route add default` 进主表在已有默认
 > 路由时会被拒(`RTNETLINK answers: File exists`)——**而被拒是好事**:成功的话
 > 会把本机流量连同正在配置它的那条 SSH 一起搬到模组上去。
 > 现在每个接口一张自己的表(`wwan0`→100),配一条 `ip rule from <地址> lookup`。
@@ -231,23 +236,44 @@ ssh root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep -v "pol
 
 > 📐 **前端重建的方案在 [`docs/frontend-rebuild/`](frontend-rebuild/)。**
 > 两端各自换成现成的 UI 框架——云端 shadcn/ui，边缘端 Leptos + WASM + Thaw UI。
-> 分阶段、已定的决定、以及各自放弃了什么，都写在那里。边缘端有一组**现在还不
-> 成立的前置条件**（那台机器没有 rustup、没有 wasm32 std、DNS 是坏的），开工前
-> 先看 `edge-leptos.md`。
+>
+> ✅ **云端已经做完**：组件、主题、以及导航外壳（shadcn `Sidebar`）全部落地，
+> `lib/tokens.ts` 从 4049 行缩到 2572 行、只剩语义不剩样式配方，PWA 安装截图
+> 已按新界面重拍。细节见 `cloud-shadcn.md`。
+>
+> ⏸ **边缘端未开工**，前置条件从四条降到三条：DNS 已经好了（2026-09-03 复核），
+> 还差装 rustup、加 wasm32 target、装 trunk。**另外 Thaw 的版本落后于 Leptos
+> 一个大版本**，这是选型当天就要做的取舍——开工前先看 `edge-leptos.md`。
 
-**当前 schema 版本：53**。迁移文件在 `packages/db/migrations/`，
+> 🔧 **控制台的检查命令**（这份文档此前只给了网关的 `go test ./... && go vet ./...`，
+> 控制台那一半只有构建流水线，没有测试命令）：
+>
+> ```bash
+> cd apps/console && npm run typecheck && npm test
+> ```
+>
+> 336 条测试，`node --test` 跑原生 TS，没有 jsdom / testing-library / vitest。
+> `package.json` 的 test 脚本是**手写的文件清单**，加了测试文件不登记就永远不会跑
+> ——有一条守卫专门盯这件事。
+>
+> ⚠️ **Node 版本**：`package.json` 写 `engines: node >=20`，实测用的是
+> **v24.19.0**。这台机器上 node **没有装在系统路径里**，用的是
+> `/usr/lib/chatgpt/resources/cua_node/bin/node`（另一个应用自带的）。这是个很脆
+> 的依赖，值得单独装一套。
+
+**当前 schema 版本：55**（0054 加了 `register_modem` / `unregister_modem` 两个 command_kind 枚举值，0055 给 `app.modems` 加了 `managed` 列）。迁移文件在 `packages/db/migrations/`，
 命名 `NNNN_name.sql`，四位数字连号。
 
 应用一条新迁移（从**工作站**发起）：
 
 ```bash
-cd ~/Documents/local/vodoge-cloud && scp packages/db/migrations/0034_your_change.sql root@43.108.53.126:/tmp/m.sql && ssh root@43.108.53.126 'docker cp /tmp/m.sql vodoge-cloud-postgres-1:/tmp/m.sql && docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 -f /tmp/m.sql'
+cd ~/Documents/local/vodoge-cloud && scp packages/db/migrations/NNNN_your_change.sql root@43.108.53.126:/tmp/m.sql && ssh root@43.108.53.126 'docker cp /tmp/m.sql vodoge-cloud-postgres-1:/tmp/m.sql && docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 -f /tmp/m.sql'
 ```
 
 **应用成功后必须登记版本号**，否则追踪表会和现实脱节：
 
 ```bash
-ssh root@43.108.53.126 "docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -c \"INSERT INTO app.schema_migrations (version, name) VALUES (34, '0034_your_change') ON CONFLICT (version) DO NOTHING\""
+ssh root@43.108.53.126 "docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -c \"INSERT INTO app.schema_migrations (version, name) VALUES (NN, 'NNNN_your_change') ON CONFLICT (version) DO NOTHING\""
 ```
 
 开一个交互 psql（**云主机**）：
@@ -396,7 +422,8 @@ edge-bin 的 `RadioPort::refuse_unsupported`)。另外三个 `Operation` 变体�
 ## 3.7 没有 QMI 的模组走 AT
 
 **EC200U 系列的 USB 组合 `2c7c:0901` 不暴露任何 `cdc-wdm`**,这是系列特性不是配置。
-台面上 `2-4.2` 是它,其余四个 `pid=0125` 各对应一个 `cdc-wdm`。
+（台面上具体哪根是它、插了几根,随时会变——参照 §2.3 对拓扑的同一条处理:
+不要把当时的接线记成长期事实。）
 
 所以有两条 AT 通路(`edge-modem/src/at_sms.rs`、`at_inbox.rs`),都用 PDU 模式,
 复用与 QMI 完全相同的编解码器。**发送只在 QMI 找不到模组时才回退**:
@@ -442,8 +469,9 @@ Club 卡那种套餐限制悄悄掩盖掉。
 
 #### 1.1 通知补齐剩下的事件
 
-- **做什么**：`notify.KindDeviceOffline` 和 `notify.KindContractViolation`
-  两个事件类型已定义但**无人触发**；备份失败连事件类型都没有。
+- ✅ **这一条已经做完。** `KindBackupFailed` 已定义（`notify.go:52`），而且
+  三个事件类型在 `cmd/gateway/main.go` 里都有真实触发点：备份失败 `:467`、
+  契约违规 `:528`、设备掉线 `:794`。
 - **动哪里**：`apps/gateway/internal/notify/notify.go` 加 `KindBackupFailed`；
   触发点：设备掉线在 `session.Hub` 的回收路径（`cmd/gateway/main.go` 里
   已有 `SweepIdle` 的 ticker，那里就能发），契约违规在契约校验处，
@@ -491,8 +519,11 @@ Club 卡那种套餐限制悄悄掩盖掉。
 
 - **做什么**：重扫描、刷新缓存、数据网络启停、USBNET 模式。
 - **动哪里**：云端命令目录 `apps/gateway/internal/commands/catalogue.go`
-  （现有 13 个 kind），边缘执行器 `edge-agent/src/lib.rs`，
+  （现有 **29** 个 kind），边缘执行器 `edge-agent/src/lib.rs`，
   控制台按钮。边缘侧 QMI/AT 能力都已具备。
+- ⚠️ **这四个操作已经在命令目录里了**（`refresh_modems`、`scan_operators`、
+  `set_data_network`、`set_usbnet_mode`）。这一条需要重新定范围：还欠的是控制台
+  或边缘侧的哪一半，而不是整件事。
 - **判据**：四个按钮在真机上各生效一次，控制台看到回执。
 
 #### 1.6 发现未纳管硬件
@@ -537,8 +568,8 @@ Club 卡那种套餐限制悄悄掩盖掉。
 
 - **做什么**：Telegram、飞书、企业微信、Pushplus。
 - **注意**：`settings.go` 里**已经有** `telegram.bot_token`、`pushplus.token`
-  的配置槽位，但 `channels.go` 里只有 webhook/bark/email 三个实现 ——
-  **现在配了也不会发**，这是个会误导人的半成品，优先补上或者暂时移除槽位。
+  的配置槽位。✅ **七个渠道现在都实现了**（webhook、email、bark、telegram、
+  feishu、wecom、pushplus），那个「配了也不会发」的半成品问题已经消失。
 - **动哪里**：`apps/gateway/internal/notify/channels.go`，照现有三个的形状加。
 - **判据**：每个新渠道的"测试"按钮都能真收到消息。
 
@@ -551,8 +582,11 @@ Club 卡那种套餐限制悄悄掩盖掉。
 
 #### 2.4 只读账号
 
-- **做什么**：现在只有单一操作员角色。给一个能看不能动的角色。
-- **判据**：只读账号登录后，所有写操作的 API 返回 403，控制台不显示危险按钮。
+- ✅ **只读角色已经上线**（迁移 `0039_readonly_role.sql`：角色列加在
+  `app.users` 上，网关侧在路由表周围强制）。角色放在账号而不是会话上，理由写在
+  那个迁移的注释里。
+- **还欠的**：判据的控制台那一半——只读账号登录后不显示危险按钮。API 侧的 403
+  已经有了。
 
 ---
 
@@ -651,9 +685,9 @@ Club 卡那种套餐限制悄悄掩盖掉。
    但库里现存的短信全是旧二进制入队的存量，`encoding` 标签不可信。
    **真实新短信到达后要核对一次。**
 
-2. **一条 `accepted` 命令的 outbox 记录始终未 resolve。**
-   `apply_command_receipt` 的账目遗留。不会导致重发
-   （`PendingForDevice` 不选 `accepted`），只是脏数据。
+2. ~~**一条 `accepted` 命令的 outbox 记录始终未 resolve。**~~ ✅ 已消除：
+   0037 退休了「accepted 但不出声」这个状态，让已结清的 outbox 行离开
+   `pending`（迁移前实测 97 行全是 `pending`，其中只有 1 行真的未决，另外 96 行早就是终态，只是状态列不认）。
 
 3. **过期命令回收只在设备 resume 时触发。** 原因见 3.1 ——
    没法枚举租户做全局清扫。不回来的设备会一直留着陈旧记录。
