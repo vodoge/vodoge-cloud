@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -22,7 +23,6 @@ import { fetchDevices, fetchMessages, fetchSessions, type DeviceRow } from "@/li
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
-import { buttonClass } from "@/lib/tokens";
 
 /**
  * The landing page answers "is anything wrong, and what just happened".
@@ -104,9 +104,12 @@ export default async function OverviewPage() {
             <CardTitle>{t("overview.recent", locale)}</CardTitle>
             <CardNote>{t("overview.recentNote", locale)}</CardNote>
             <CardActions>
-              <Link className={buttonClass({ variant: "ghost" })} href="/inbox">
-                {t("overview.seeAll", locale)}
-              </Link>
+              {/* shadcn 的 Button + asChild：外观由组件库决定，语义仍然是个链接。
+                  这里原本是 `buttonClass({ variant: "ghost" })`——手写配方的最后
+                  一个调用点。 */}
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/inbox">{t("overview.seeAll", locale)}</Link>
+              </Button>
             </CardActions>
           </CardHeader>
 

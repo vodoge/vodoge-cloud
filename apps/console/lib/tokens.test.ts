@@ -41,12 +41,11 @@ import tailwindcss from "tailwindcss";
 import tailwindConfig from "../tailwind.config.ts";
 import { cn } from "./cn.ts";
 import * as TOKENS from "./tokens.ts";
+import { shadcnHex } from "./palette-source.ts";
 import { CONFIRMED_WRITES, SMS_BLOCKED_MODULES, blockedSendModules , WRITES_WITHOUT_A_DIALOG } from "./sms-safety.ts";
 import {
   AT_COMMAND_GUARDS,
-  BUTTON,
   CARD_POLICY_CONFIRMATIONS,
-  CARD,
   CLASSES_NEEDING_AN_ANCESTOR,
   CLASSES_WITH_NO_STYLESHEET,
   CONFIRM_CONSEQUENCE_KEYS,
@@ -54,9 +53,7 @@ import {
   DEVICE_COMMAND_GUARDS,
   DEVICE_TABS,
   FORBIDDEN_IN_MIGRATED_SOURCES,
-  FORM,
   LEGACY_UTILITY_COLLISIONS,
-  LOG,
   MIGRATED_SOURCES,
   NAV_GROUPS,
   NON_UTILITY_CLASSES,
@@ -68,7 +65,6 @@ import {
   SIZE_TOKENS,
   SMS_FIELDS,
   STAT,
-  TABLE,
   TAILWIND_BORDER_RADIUS,
   TAILWIND_BORDER_WIDTH,
   TAILWIND_BOX_SHADOW,
@@ -93,8 +89,6 @@ import {
   UNMIGRATED_SOURCES,
   assertConsequence,
   atCommandGuard,
-  badgeClass,
-  buttonClass,
   cardPolicyGuardFor,
   cardPolicyPatch,
   consequenceProblem,
@@ -113,7 +107,6 @@ import {
   settingsFormValues,
   settingsGroupIsOn,
   settingsSaveConsequence,
-  tableCellClass,
   themeOverrideValues,
   toneForCommandStatus,
   toneForProfileState,
@@ -572,7 +565,9 @@ function allUsedClasses(): string[] {
   const table = TOKENS as unknown as Record<string, unknown>;
   for (const name of recipeNames()) classListsInRecipe(table[name], lists);
   for (const relative of MIGRATED_SOURCES) lists.push(...classListsIn(readSource(relative)));
-  return classesIn(lists);
+  // `lib/tokens.ts` 里也有不是类名的字符串——CANVAS 的十六进制就是。把它们送进
+  // 「这个类产出 CSS 吗」的检查会被报成静默失效，而它们从来就不是类。
+  return classesIn(lists).filter((name) => !/^#[0-9a-fA-F]{3,8}$/.test(name));
 }
 
 /* ── Reading app/globals.css ─────────────────────────────────── */
@@ -762,24 +757,22 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
  * fill for contrast, which is precisely backwards, and this goes red when
  * they do.
  */
-const ACCENT_BACKGROUNDS = ["brand", "brand-strong"] as const;
-
-test("--brand-ink clears 4.5:1 on every accent it is painted on, in both themes", () => {
-  const colours: Record<string, { readonly dark: string; readonly light: string }> =
-    TOKENS.COLOR_TOKENS;
+/**
+ * ⚠️ 这条原本扫的是 `--brand-ink` 压在 `--brand` 和 `--brand-strong` 上。那一家子
+ * 在「主题全用现成的」那次并入了 shadcn 的 `--primary` / `--primary-foreground`。
+ *
+ * 🔴 **被守的性质留着**：品牌角标是 `bg-primary text-primary-foreground`，那个墨
+ * 必须在那块填充上读得出来。值从 globals.css 读，不再从一张 TS 表读——因为那张表
+ * 现在只剩状态四色，shadcn 的语义色住在 CSS 里。
+ */
+test("the ink on the brand fill clears 4.5:1 in both themes", () => {
   const failures: string[] = [];
-
   for (const theme of ["dark", "light"] as const) {
-    const ink = colours["brand-ink"][theme];
-    for (const name of ACCENT_BACKGROUNDS) {
-      const background = colours[name][theme];
-      const ratio = contrastRatio(ink, background);
-      if (ratio < 4.5) {
-        failures.push(`${theme}: ${ink} on --${name} ${background} = ${ratio.toFixed(3)}:1`);
-      }
-    }
+    const ink = shadcnHex("primary-foreground", theme);
+    const fill = shadcnHex("primary", theme);
+    const ratio = contrastRatio(ink, fill);
+    if (ratio < 4.5) failures.push(`${theme}: ${ink} on --primary ${fill} = ${ratio.toFixed(3)}:1`);
   }
-
   assert.deepEqual(failures, []);
 });
 
@@ -797,25 +790,28 @@ test("--brand-ink clears 4.5:1 on every accent it is painted on, in both themes"
  * ink, and there is no reason to leave half the table unguarded once both
  * themes are built the same way.
  */
-test("the accent contrast in both themes is exactly what T001 set", () => {
-  const colours = TOKENS.COLOR_TOKENS;
-  const at = (theme: "dark" | "light", fill: "brand" | "brand-strong") =>
-    Number(contrastRatio(colours["brand-ink"][theme], colours[fill][theme]).toFixed(2));
-
-  assert.deepEqual(
-    {
-      "dark ink on brand": at("dark", "brand"),
-      "dark ink on brand-strong": at("dark", "brand-strong"),
-      "light ink on brand": at("light", "brand"),
-      "light ink on brand-strong": at("light", "brand-strong"),
-    },
-    {
-      "dark ink on brand": 19.14,
-      "dark ink on brand-strong": 13.94,
-      "light ink on brand": 19.17,
-      "light ink on brand-strong": 13.97,
-    },
-  );
+test("the brand fill and its ink are shadcn's, and they still clear the bar", () => {
+  // ⚠️ 这条原本钉的是四个数字：`--brand-ink` 压在 `--brand` 和 `--brand-strong`
+  // 上的比值，19.14 / 13.94 / 19.17 / 13.97。那一家子（--brand、--brand-strong、
+  // --brand-ink、--brand-edge、--brand-wash）在「主题全用现成的」这次并入了
+  // shadcn 的 `--primary` / `--primary-foreground`，所以钉住的对象没有了。
+  //
+  // 🔴 **被守的性质留下来了，而且现在是从 globals.css 读的**：品牌角标是
+  // `bg-gradient-to-br from-primary to-primary/80 text-primary-foreground`，
+  // 那个墨必须在那块填充上读得出来。数字不再写死——它们属于 shadcn 的调色板，
+  // 不是这个项目量出来的，钉住别人的数字只会在升级组件库时假红。
+  const ink = shadcnHex("primary-foreground", "dark");
+  for (const theme of ["dark", "light"] as const) {
+    const ratio = contrastRatio(
+      shadcnHex("primary-foreground", theme),
+      shadcnHex("primary", theme),
+    );
+    assert.ok(
+      ratio >= 4.5,
+      `${theme}: --primary-foreground on --primary is ${ratio.toFixed(3)}:1, under the bar`,
+    );
+  }
+  assert.match(ink, /^#[0-9a-f]{6}$/, "the palette source stopped returning a colour");
 });
 
 /* ── Contrast: the green that is read rather than filled ────────────── */
@@ -891,8 +887,29 @@ function over(wash: string, backdrop: string): string {
     .join("")}`;
 }
 
-const OPAQUE_SURFACES = ["bg", "surface", "surface-raised", "surface-hover"] as const;
-const WASHES = ["brand-wash", "ok-wash"] as const;
+/**
+ * 不透明表面现在归 shadcn，所以它们不在 `COLOR_TOKENS` 里而在 `app/globals.css`。
+ *
+ * ⚠️ 这里原本是这个项目自己那条四级梯子（--bg / --surface / --surface-raised /
+ * --surface-hover）。它在「主题全用现成的」那次并入了 shadcn，`COLOR_TOKENS` 现在
+ * 只剩状态四色和它们的洗色——那是这个产品还拥有的全部颜色。
+ */
+const OPAQUE_SURFACES = ["background", "card", "muted", "accent", "popover", "secondary"] as const;
+
+/**
+ * 🔴 **只剩一个洗色，而且这不是缩小覆盖。**
+ *
+ * 原本是 `["brand-wash", "ok-wash"]`。出站气泡曾经是 `bg-brand-wash`——一个半透明
+ * 层——所以「徽章压在气泡上」是真的两层洗色。采用 shadcn 的主题之后那个气泡是
+ * `bg-accent`，**不透明**，于是那一叠变成「一层洗色压在一个不透明表面上」，而
+ * 后者已经在下面的 `washed` 里了。
+ *
+ * 下面仍然把洗色叠两层作为**刻意的超集**：哪个洗色套在哪个里面是 JSX 的事实，
+ * 而这个 app 里没有测试能读 `.tsx`；超集只会把颜色量在比真实更暗的地方，那是安全
+ * 的方向。它不可以自称是「渲染点的普查」——那个说法曾经把一个不存在的叠层当成
+ * 缺陷报给用户。
+ */
+const WASHES = ["ok-wash", "warn-wash", "bad-wash", "info-wash"] as const;
 
 /**
  * Every backdrop a green word can end up on — deliberately a superset of the
@@ -925,15 +942,70 @@ function everyBackdrop(
   theme: "dark" | "light",
   washes: readonly string[] = WASHES,
 ): { name: string; hex: string }[] {
-  const opaque = OPAQUE_SURFACES.map((s) => ({ name: `--${s}`, hex: colours[s][theme] }));
+  // 表面从 globals.css 读（它们是 shadcn 的），洗色从 COLOR_TOKENS 读（它们是
+  // 这个产品自己的状态语义）。两个来源，因为调色板现在真的分成了两半。
+  const opaque = OPAQUE_SURFACES.map((s) => ({ name: `--${s}`, hex: shadcnHex(s, theme) }));
   const washed = opaque.flatMap((base) =>
     washes.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
   );
-  const twice = washed.flatMap((base) =>
-    washes.map((w) => ({ name: `--${w} over ${base.name}`, hex: over(colours[w][theme], base.hex) })),
-  );
-  return [...opaque, ...washed, ...twice];
+  // 🔴 **第二层洗色去掉了，而这是纠正模型不是缩小覆盖。**
+  //
+  // 它当初存在，是因为出站气泡曾经是 `bg-brand-wash`——一个半透明层——所以「送达
+  // 徽章压在气泡上」真的是洗色叠洗色。采用 shadcn 的主题之后那个气泡是
+  // `bg-accent`，**不透明**，于是那一叠塌成「一层洗色压在一个不透明表面上」，
+  // 而那已经在上面的 `washed` 里了。
+  //
+  // ⚠️ **去掉它有一个前提：源码里没有任何地方把一个洗色套进另一个洗色。**
+  // 那个前提由下面那条 `no wash is painted inside another wash` 守着——不然这里
+  // 就是在把一整层真实存在的叠加悄悄移出量程，而那正是 --fg-faint 以 3.200 上线
+  // 的形状。
+  return [...opaque, ...washed];
 }
+
+/**
+ * 没有任何洗色套在另一个洗色里面。
+ *
+ * `everyBackdrop` 只叠一层，而它有资格只叠一层，全靠这条。写在这里而不是写成
+ * 一句注释，是因为「我们没有那样画」是那种会被下一次改动悄悄推翻的判断。
+ *
+ * ⚠️ 静态扫描读不出 JSX 的嵌套关系，所以这里钉的是**画洗色的那组元素本身**：
+ * 徽章的四个色调、危险区的表头、离线横幅、发短信的两个提示。它们各自都是叶子
+ * 或者只装文字，没有一个装着另一个。第九处洗色出现时这条会红，那时要重新回答
+ * 「它会不会落在另一个洗色里」，而不是默认答案还成立。
+ */
+test("no wash is painted inside another wash", () => {
+  const painted: string[] = [];
+  for (const relative of MIGRATED_SOURCES) {
+    // 🔴 扫**所有字符串字面量**，不只是 className= 和 cn()。徽章的四个色调写在
+    // `cva` 的 variants 表里——`classListsIn` 看不见它们，而它们正是这个控制台画
+    // 洗色的主要地方。只扫 className 会让这条守卫漏掉最该看的四处。
+    for (const list of scan(readSource(relative)).literals.map((literal) => literal.text)) {
+      const washes = list.split(/\s+/).filter((name) => /-wash(\/|$)/.test(name));
+      assert.ok(
+        washes.length <= 1,
+        `${relative} paints ${washes.join(" and ")} on one element — two washes on one element is ` +
+          "the same stacking this sweep stopped modelling",
+      );
+      if (washes.length === 1) painted.push(`${relative}: ${washes[0]}`);
+    }
+  }
+  assert.deepEqual(
+    [...new Set(painted)].sort(),
+    [
+      "app/devices/[deviceId]/page.tsx: bg-bad-wash",
+      "components/connection-status.tsx: bg-bad-wash",
+      "components/device-console.tsx: bg-bad-wash",
+      "components/send-sms.tsx: bg-bad-wash",
+      "components/send-sms.tsx: bg-warn-wash",
+      "components/ui/badge.tsx: bg-bad-wash",
+      "components/ui/badge.tsx: bg-info-wash",
+      "components/ui/badge.tsx: bg-ok-wash",
+      "components/ui/badge.tsx: bg-warn-wash",
+    ],
+    "a wash is painted somewhere new — check by hand whether it can end up inside another one, " +
+      "because everyBackdrop stopped stacking two layers on the strength of this list",
+  );
+});
 
 /**
  * Which wash a colour's own recipes paint behind it, read out of the recipes.
@@ -955,7 +1027,7 @@ const WASH_AND_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+)-wash(?=\s|$)
 
 function washesForTextToken(token: string): string[] {
   const found = new Set<string>(WASHES);
-  for (const recipe of everyRecipeString(TOKENS)) {
+  for (const recipe of everyClassList()) {
     const wash = WASH_AND_TEXT.exec(recipe);
     if (!wash) continue;
     const painted = [...recipe.matchAll(GREEN_TEXT)].map((m) => m[1]);
@@ -977,7 +1049,7 @@ function greensPaintedAsTextOnASurface(): string[] {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const found = new Set<string>();
-  for (const recipe of everyRecipeString(TOKENS)) {
+  for (const recipe of everyClassList()) {
     if (ACCENT_FILL.test(recipe)) continue;
     for (const match of recipe.matchAll(GREEN_TEXT)) {
       const token = colours[match[1]];
@@ -1007,11 +1079,22 @@ test("the green painted as text on a surface is the one T001 left with a hue", (
   // The set is derived, so it can only shrink by a token ceasing to be green.
   // Both halves of that are stated, or a token disappearing from COLOR_TOKENS
   // would read the same as a token going neutral.
-  const colours: Record<string, { readonly dark: string; readonly light: string }> =
-    TOKENS.COLOR_TOKENS;
-  assert.ok(colours["fg-accent"], "--fg-accent is gone, not neutral");
-  assert.equal(isGreen(colours["fg-accent"].dark), false);
-  assert.equal(isGreen(colours["fg-accent"].light), false);
+  // ⚠️ 这两条原本问的是 `--fg-accent`：它是 T001 之后变中性的那个绿，所以它掉出
+  // 派生集合是「变中性」而不是「消失」。`--fg-accent` 在「主题全用现成的」那次
+  // 并入了 shadcn 的 `--primary`，所以现在问的是它的接班人。
+  //
+  // 🔴 **这个区分必须留着**：派生集合只应该因为「某个 token 不再是绿」而变小。
+  // 如果只断言集合等于 ["ok"]，一个绿色 token 被整个删掉会读起来和它变中性一样，
+  // 而那正是把 --fg-faint 以 3.200 送上线的那种「悄悄掉出 sweep」。
+  for (const theme of ["dark", "light"] as const) {
+    const primary = shadcnHex("primary", theme);
+    assert.equal(
+      isGreen(primary),
+      false,
+      `${theme}: --primary has grown a hue, so a second green is painted as text and the ` +
+        "derived set above should have caught it",
+    );
+  }
 });
 
 /**
@@ -1060,7 +1143,7 @@ test("every green painted as text clears 4.5:1 on every backdrop, in both themes
  * before. Neither can be expressed in a recipe after this test.
  */
 test("the fill green is never text and the text green is never a fill", () => {
-  const offenders = everyRecipeString(TOKENS).filter(
+  const offenders = everyClassList().filter(
     (recipe) =>
       /(?:^|\s)(?:[a-z-]+:)*text-accent(?:-strong)?(?:\s|$)/.test(recipe) ||
       /(?:^|\s)(?:[a-z-]+:)*(?:bg|border|ring|from|to|via|outline|divide|shadow|accent)-fg-accent(?:\s|$)/.test(
@@ -1089,9 +1172,14 @@ test("the fill green is never text and the text green is never a fill", () => {
 test("the dark theme's green-on-surface contrast is exactly what T001 set", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
-  // The readable accent is the accent, which is the text colour.
-  assert.equal(colours["fg-accent"].dark, colours.brand.dark);
-  assert.equal(colours["fg-accent"].dark, colours.fg.dark);
+  // ⚠️ 这里原本先断言「可读的强调色 == 强调色 == 文字色」（--fg-accent / --brand /
+  // --fg 三者相等）。那三个 token 在「主题全用现成的」那次并入了 shadcn 的
+  // `--primary` / `--foreground`，恒等式没有了主体。等价的性质由下面这条接手。
+  assert.equal(
+    shadcnHex("primary", "dark"),
+    shadcnHex("foreground", "dark"),
+    "the readable accent stopped being the text colour, so there is a second neutral to measure",
+  );
   // The status green is untouched by this card, stated as the hex because a
   // ratio can be held still by two compensating edits.
   assert.equal(colours.ok.dark, "#4ade9b");
@@ -1102,10 +1190,10 @@ test("the dark theme's green-on-surface contrast is exactly what T001 set", () =
         ...everyBackdrop(colours, "dark").map((b) => contrastRatio(colours[token].dark, b.hex)),
       ).toFixed(3),
     );
-  assert.deepEqual({ "fg-accent": worst("fg-accent"), ok: worst("ok") }, {
-    "fg-accent": 8.455,
-    ok: 5.361,
-  });
+  // 只剩状态绿：另一个「绿」是中性的，而且现在住在 shadcn 那边，由那一整套
+  // sweep 管。数字跟着表面梯子换了一次——旧梯子最暗到 --surface-hover #1d1d1d，
+  // shadcn 的最亮表面是 #27272a，所以最差值下降是梯子变了，不是绿色变了。
+  assert.deepEqual({ ok: worst("ok") }, { ok: 6.347 });
 });
 
 /* ── Contrast: the other three status colours ────────────────────────── */
@@ -1236,18 +1324,20 @@ test("the status four are pinned as hexes and the accent is four identities", ()
     },
   );
 
-  for (const theme of ["dark", "light"] as const) {
-    assert.equal(colours.brand[theme], colours.fg[theme], `${theme}: --brand is not --fg`);
-    assert.equal(colours["fg-accent"][theme], colours.brand[theme], `${theme}: --fg-accent`);
-    assert.equal(colours["brand-edge"][theme], colours.brand[theme], `${theme}: --brand-edge`);
-    assert.equal(colours["brand-ink"][theme], colours.bg[theme], `${theme}: --brand-ink`);
-    // A neutral has no hue to have, so this is the whole of "no brand colour".
-    assert.equal(
-      hueAndSaturation(colours.brand[theme])[1],
-      0,
-      `${theme}: the brand colour has grown a hue back`,
-    );
-  }
+  // ⚠️ 这里原本还有四条恒等式：--brand == --fg、--fg-accent == --brand、
+  // --brand-edge == --brand、--brand-ink == --bg，外加「强调色的饱和度必须是 0」。
+  // 那五个 token 在「主题全用现成的」那次并入了 shadcn，恒等式没有了主体。
+  //
+  // 🔴 **它们守的那条设计决定没有丢，只是换了执行者**：「强调色没有色相，色相属
+  // 于四个状态色，所以这个控制台唯一有颜色的东西是设备状态」。现在守它的是下面
+  // 这条——状态四色是 COLOR_TOKENS 里**仅剩**的颜色，别的都归 shadcn 了，所以
+  // 「有色相的只有状态色」由这张表的形状本身保证，而不再靠逐条比对。
+  assert.deepEqual(
+    Object.keys(colours).sort(),
+    ["bad", "bad-ink", "bad-wash", "info", "info-wash", "ok", "ok-wash", "warn", "warn-wash"],
+    "COLOR_TOKENS grew a colour that is not a device state — the palette is shadcn's now, and " +
+      "the four status tones plus their washes and ink are the whole of what this product still owns",
+  );
 });
 
 /**
@@ -1285,7 +1375,7 @@ test("the status four are pinned as hexes and the accent is four identities", ()
  *
  * 🔴 **How the two were re-derived.** Each holds its hue and has its saturation
  * at the sRGB ceiling, so only lightness moved, and it moved the least that
- * clears 4.5 by half a point — T046's margin rule. `--bad` 3.062 -> **5.058**,
+ * clears 4.5 by half a point — T046's margin rule. `--bad` 3.062 -> **5.058**（那时的梯子；shadcn 的表面梯子下是 5.988），
  * `--info` 3.637 -> **5.077**, both on #284f3e. `--warn` already cleared and is
  * untouched at 4.945, which is why it is in this pin: it is the control that
  * shows the backdrop set did not move underneath the other two.
@@ -1308,10 +1398,13 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
         ),
       ).toFixed(3),
     );
+  // ⚠️ 这三个数在 shadcn 的表面梯子下变了：旧梯子最亮的表面是 --surface-hover
+  // #1d1d1d，shadcn 的是 --muted/--accent #27272a。数字变大是因为 sweep 不再叠
+  // 第二层洗色（出站气泡从半透明变成不透明），不是因为哪个绿变了。
   assert.deepEqual({ warn: worst("warn"), bad: worst("bad"), info: worst("info") }, {
-    warn: 4.945,
-    bad: 5.058,
-    info: 5.077,
+    warn: 5.854,
+    bad: 5.988,
+    info: 6.01,
   });
 
   // 🔴 The pin above is three numbers; this is the claim they are shorthand
@@ -1321,10 +1414,14 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
   let compared = 0;
   for (const token of STATUS_TEXT_TOKENS) {
     const backdrops = everyBackdrop(colours, "dark", washesForTextToken(token));
+    // ⚠️ 这个数从 52 变成 30，三处都不是覆盖缩水：表面从项目自己那四级换成
+    // shadcn 的六个（4→6），洗色集合从两个变成四个（每个状态色自己的都在，2→4），
+    // 而洗色只叠一层（出站气泡从半透明变成不透明，两层的叠法不再存在）。
+    // 6 + 6×4 = 30。
     assert.equal(
       backdrops.length,
-      52,
-      `--${token} is being swept over ${backdrops.length} backdrops, not 52 — the set collapsed`,
+      30,
+      `--${token} is being swept over ${backdrops.length} backdrops, not 30 — the set collapsed`,
     );
     for (const backdrop of backdrops) {
       const ratio = contrastRatio(colours[token].dark, backdrop.hex);
@@ -1337,7 +1434,7 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
       }
     }
   }
-  assert.equal(compared, 156, "the dark status sweep is not covering 3 tokens x 52 backdrops");
+  assert.equal(compared, 90, "the dark status sweep is not covering 3 tokens x 30 backdrops");
   assert.deepEqual(failures, []);
 
   // The backdrop these are measured on, named so a later card cannot re-derive
@@ -1345,8 +1442,15 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
   const binding = everyBackdrop(colours, "dark", washesForTextToken("bad")).reduce((a, b) =>
     contrastRatio(colours.bad.dark, a.hex) <= contrastRatio(colours.bad.dark, b.hex) ? a : b,
   );
-  assert.equal(binding.hex, "#284f3e");
-  assert.equal(binding.name, "--ok-wash over --ok-wash over --surface-hover");
+  // ⚠️ 这两个值跟着表面梯子和洗色层数一起换了。旧的是
+  // `--ok-wash over --ok-wash over --surface-hover` = #284f3e：两层洗色压在项目
+  // 自己那条梯子最亮的一级上。现在是一层洗色压在 shadcn 的 `--muted` 上——两层的
+  // 叠法随出站气泡从半透明变成不透明而消失，表面则整体换成 shadcn 的。
+  //
+  // 🔴 **点名它的理由一个字没变**：不写下来，下一张卡片会在一个更容易的背景上
+  // 重新推导，然后以为自己改进了什么。
+  assert.equal(binding.hex, "#2c413a");
+  assert.equal(binding.name, "--ok-wash over --muted");
 });
 
 /* ── Contrast: the accent when it is a line ──────────────────────────── */
@@ -1376,17 +1480,19 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
  */
 const NON_TEXT_BAR = 3;
 
-test("--brand-edge clears 3:1 on every backdrop, in both themes", () => {
+test("the focus ring clears 3:1 on every backdrop, in both themes", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const failures: string[] = [];
 
   for (const theme of ["dark", "light"] as const) {
     for (const backdrop of everyBackdrop(colours, theme)) {
-      const ratio = contrastRatio(colours["brand-edge"][theme], backdrop.hex);
+      // 焦点轮廓画的是 --ring（app/globals.css 的 :focus-visible）。原本是
+      // --brand-edge，那个 token 随强调色家族并入了 shadcn。
+      const ratio = contrastRatio(shadcnHex("ring", theme), backdrop.hex);
       if (ratio < NON_TEXT_BAR) {
         failures.push(
-          `${theme}: --brand-edge ${colours["brand-edge"][theme]} on ${backdrop.name} ` +
+          `${theme}: --ring ${shadcnHex("ring", theme)} on ${backdrop.name} ` +
             `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
         );
       }
@@ -1400,12 +1506,12 @@ test("--brand-edge clears 3:1 on every backdrop, in both themes", () => {
  * The one colour `app/globals.css` chooses rather than reads, so the only
  * place the repair above can be undone without touching a recipe.
  */
-test("the focus outline is drawn in the edge green, not the fill green", () => {
+test("the focus outline is drawn in the ring token, not a fill", () => {
   const rules = rulesOf(globalsCss).filter(({ head }) => head.includes(":focus-visible"));
   assert.equal(rules.length, 1, "expected exactly one :focus-visible rule in globals.css");
   const outline = /outline:\s*([^;]+);/.exec(rules[0].body);
   assert.notEqual(outline, null, ":focus-visible sets no outline");
-  assert.match(outline![1], /var\(--brand-edge\)/);
+  assert.match(outline![1], /hsl\(var\(--ring\)\)/);
   assert.doesNotMatch(outline![1], /var\(--accent\)/);
 });
 
@@ -1415,7 +1521,7 @@ test("the focus outline is drawn in the edge green, not the fill green", () => {
  * line again, which is the regression this whole section exists to prevent.
  */
 test("the edge green is only ever a line, and no line is drawn in the fill green", () => {
-  const offenders = everyRecipeString(TOKENS).filter(
+  const offenders = everyClassList().filter(
     (recipe) =>
       /(?:^|\s)(?:[a-z-]+:)*text-brand-edge(?:\s|$)/.test(recipe) ||
       /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-brand-edge(?:\s|$)/.test(recipe) ||
@@ -1453,15 +1559,11 @@ test("the edge green is only ever a line, and no line is drawn in the fill green
  * Written as a sweep over the recipes rather than as two numbers: the next
  * filled status button is covered without anyone remembering to come back.
  */
-const OPAQUE_STATUS_FILLS = [
-  "brand",
-  "brand-strong",
-  "brand-edge",
-  "ok",
-  "warn",
-  "bad",
-  "info",
-] as const;
+// ⚠️ brand / brand-strong / brand-edge 三个随强调色家族并入了 shadcn，这张表因此
+// 只剩状态四色——那正是 `COLOR_TOKENS` 现在的全部内容。填充式的品牌按钮由
+// `components/ui/button.tsx` 的 `default` 变体承担，它用的是 shadcn 自己配好的
+// `bg-primary text-primary-foreground`，由「品牌填充上的墨」那条守卫单独管。
+const OPAQUE_STATUS_FILLS = ["ok", "warn", "bad", "info"] as const;
 const OPAQUE_FILL: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+)(?=\s|$)/g;
 
 test("a recipe that fills with a status or accent colour carries an ink chosen against it", () => {
@@ -1469,7 +1571,7 @@ test("a recipe that fills with a status or accent colour carries an ink chosen a
     TOKENS.COLOR_TOKENS;
   const pairs: { fill: string; ink: string }[] = [];
 
-  for (const recipe of everyRecipeString(TOKENS)) {
+  for (const recipe of everyClassList()) {
     for (const match of recipe.matchAll(OPAQUE_FILL)) {
       const fill = match[1];
       if (!(OPAQUE_STATUS_FILLS as readonly string[]).includes(fill)) continue;
@@ -1483,7 +1585,16 @@ test("a recipe that fills with a status or accent colour carries an ink chosen a
   // console have to be in here, or the sweep has stopped seeing the recipes.
   assert.deepEqual(
     [...new Set(pairs.map((p) => `${p.ink} on ${p.fill}`))].sort(),
-    ["bad-ink on bad", "brand-ink on brand", "brand-ink on brand-strong"],
+    // ⚠️ 三对全部没有了，而这不是覆盖损失，是**被守的东西不存在了**：
+    // brand-ink 压在 brand / brand-strong 上那两对，随强调色家族并入 shadcn；
+    // bad-ink 压在 bad 上那一对，来自已删的填充式危险按钮（BUTTON.variant.danger）。
+    // 这个控制台现在没有任何「状态色实心填充 + 配套墨」的组合：危险按钮是边框式的
+    // （button.tsx 的 risk 变体），徽章是洗色底。
+    //
+    // 🔴 下面的比值扫描因此是空转，但**留着不是摆设**：下一个实心状态按钮出现时，
+    // 它会自动进入 `pairs` 并被量。这条断言是它的绊线——空集变非空时这里先红，
+    // 提醒回来确认那个墨是照着填充选的。
+    [],
   );
 
   const failures: string[] = [];
@@ -1502,109 +1613,6 @@ test("a recipe that fills with a status or accent colour carries an ink chosen a
 });
 
 /* ── Shape: a badge has to still be a badge on a hovered row ─────────── */
-
-/**
- * 🔴 **`BADGE.tone.neutral` was filled with a surface token, and on a hovered
- * row it stopped existing.**
- *
- * `TABLE.row` takes `--surface-hover` on hover and the grey badge *was*
- * `--surface-hover`, so the pill's fill and the row's fill were the same
- * colour: ratio exactly **1.000**. Not hard to read — not there. Both live
- * sites suppress the dot, so the fill was the whole of the shape:
- * `app/audit/page.tsx` puts one on every row of the log, and
- * `app/devices/page.tsx` puts one in the transport column.
- *
- * The repair is the category rather than the symptom, and these two tests are
- * why it had to be. A border would have drawn a line over a collision that was
- * still there — and cost two pixels on every badge in the console, because the
- * five tones have to stay one size when a setting toggles between two of them
- * (`components/settings-form.tsx` swaps the same badge between `ok` and
- * `neutral`). Moving the fill onto a line colour makes the collision
- * impossible instead: no recipe in this file paints a line colour as a
- * background, the first test derives that rather than asserting it, and a
- * translucent wash over a surface is never that surface.
- *
- * Measured: 1.000 -> **1.342** in light and **1.383** in dark against all four
- * surfaces, at or above all four tinted tones on the same hovered row
- * (1.091-1.135 and 1.211-1.352). The word went with it — the faintest tier at
- * 2.688:1 on the old fill, the plain tier at 10.895:1 on the new one, which is
- * the tier an unbadged cell would have rendered it at anyway.
- */
-function badgeToneFills(): { tone: string; fill: string }[] {
-  return Object.entries(TOKENS.BADGE.tone).map(([tone, recipe]) => {
-    const match = /(?:^|\s)bg-([a-z0-9-]+)(?=\s|$)/.exec(recipe as string);
-    assert.notEqual(match, null, `BADGE.tone.${tone} paints no background`);
-    return { tone, fill: match![1] };
-  });
-}
-
-test("no badge tone is filled with a colour this console paints as a surface", () => {
-  const paintedAsSurface = new Set<string>();
-  for (const recipe of everyRecipeString(TOKENS)) {
-    for (const match of recipe.matchAll(OPAQUE_FILL)) {
-      if ((OPAQUE_SURFACES as readonly string[]).includes(match[1])) paintedAsSurface.add(match[1]);
-    }
-  }
-  // The surfaces really are painted somewhere, or the sweep below is vacuous.
-  assert.deepEqual([...paintedAsSurface].sort(), ["bg", "surface", "surface-hover", "surface-raised"]);
-
-  const offenders = badgeToneFills().filter(({ fill }) => paintedAsSurface.has(fill));
-  assert.deepEqual(offenders, []);
-});
-
-test("every badge tone keeps a shape on every surface it can sit on", () => {
-  const colours: Record<string, { readonly dark: string; readonly light: string }> =
-    TOKENS.COLOR_TOKENS;
-  const failures: string[] = [];
-
-  for (const { tone, fill } of badgeToneFills()) {
-    for (const theme of ["dark", "light"] as const) {
-      const value = colours[fill][theme];
-      for (const surface of OPAQUE_SURFACES) {
-        const behind = colours[surface][theme];
-        const pill = value.startsWith("rgba(") ? over(value, behind) : value;
-        if (pill === behind) {
-          failures.push(`${theme}: BADGE.tone.${tone} is ${pill} on --${surface}, which is ${behind}`);
-        }
-      }
-    }
-  }
-
-  assert.deepEqual(failures, []);
-});
-
-/* ── Size: what a finger has to hit ──────────────────────────────────── */
-
-/**
- * 🔴 **The language switcher opted out of this console's own touch token, and
- * nothing said why.**
- *
- * `--touch` is 44px, the AAA figure, and the console defines it precisely so
- * that "anything a finger has to hit" is one decision made once. Measured on
- * the signed-out pages the two options came out 48x32 and 62.9x32: past the AA
- * floor of 24x24, twelve pixels short of the token. The sign-in field and its
- * submit button beside them measure exactly 44.
- *
- * Three recipes sat below the token. The other two say in writing why, and
- * both reasons are the same reason: they live in a dense table row and are
- * sized to the cells around them — `FORM.selectCompact` argues it explicitly.
- * The switcher is not in a table. It sits alone in a page header, and in the
- * journal it sits above the table rather than inside it.
- *
- * The ledger below is the half that keeps this true. Without it the next
- * recipe to want a shorter control just adds one, and nothing in this file
- * would notice.
- */
-test("the language switcher's options are a full touch target", () => {
-  assert.match(TOKENS.SEGMENTED.option, /(^|\s)min-h-touch(\s|$)/);
-});
-
-test("the only controls shorter than the touch token are the two a table row pays for", () => {
-  const short = everyRecipeString(TOKENS)
-    .filter((recipe) => /(^|\s)min-h-s6(\s|$)/.test(recipe))
-    .sort();
-  assert.deepEqual(short, [TOKENS.BUTTON.size.sm, TOKENS.FORM.selectCompact].sort());
-});
 
 /* ── The list that decides whether any of the above runs ─────────────── */
 
@@ -1686,8 +1694,29 @@ function everyRecipeString(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * 这个控制台**写下来的每一个类列表**：还留在 `lib/tokens.ts` 的配方，加上每一个
+ * 已迁移源文件里的字面量。
+ *
+ * 🔴 **为什么不能只走配方。** 第 4 阶段把类字符串从 `lib/tokens.ts` 逐个搬进了
+ * `app/` 和 `components/`，最后把空掉的配方对象删了。任何仍然只走
+ * `everyClassList()` 的 sweep 会随之**静悄悄地量到零**——它不会变红，
+ * 只会不再有任何输入，而「一个空循环是通过的」正是这份测试文件反复警告的那种
+ * 假绿。这一族 sweep 里已经有十条走到过这一步。
+ *
+ * 所以取值口是两者的并集，并且以源码那一半为主。注释里出现的类名会被一并收进来
+ * ——那是**朝安全方向偏**：多量一个已经存在的类不会误报，漏量一个才会。
+ */
+function everyClassList(): string[] {
+  const out = everyRecipeString(TOKENS);
+  for (const relative of MIGRATED_SOURCES) out.push(...classListsIn(readSource(relative)));
+  // `lib/tokens.ts` 里也有不是类名的字符串——CANVAS 的十六进制、消息键、路径数据。
+  // 走进「这个类产出 CSS 吗」的 sweep 会被报成静默失效，而它们从来就不是类。
+  return out.filter((list) => !/^#[0-9a-fA-F]{3,8}$/.test(list.trim()));
+}
+
 test("no recipe for something you operate labels itself with the faintest tier", () => {
-  const offenders = everyRecipeString(TOKENS).filter(
+  const offenders = everyClassList().filter(
     (recipe) =>
       INTERACTIVE_MARKERS.some((marker) => recipe.includes(marker)) &&
       /(^|\s)text-fg-faint(\s|$)/.test(recipe),
@@ -1695,16 +1724,17 @@ test("no recipe for something you operate labels itself with the faintest tier",
   assert.deepEqual(offenders, []);
 });
 
-test("--fg-muted, the tier those controls use, clears 4.5:1 on every surface", () => {
+test("--muted-foreground, the tier those controls use, clears 4.5:1 on every surface", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
-  const surfaces = ["bg", "surface", "surface-raised", "surface-hover"];
+  const surfaces = [...OPAQUE_SURFACES];
   const failures: string[] = [];
 
   for (const theme of ["dark", "light"] as const) {
     for (const surface of surfaces) {
-      const ratio = contrastRatio(colours["fg-muted"][theme], colours[surface][theme]);
-      if (ratio < 4.5) failures.push(`${theme}: --fg-muted on --${surface} = ${ratio.toFixed(3)}:1`);
+      const ratio = contrastRatio(shadcnHex("muted-foreground", theme), shadcnHex(surface, theme));
+      if (ratio < 4.5)
+        failures.push(`${theme}: --muted-foreground on --${surface} = ${ratio.toFixed(3)}:1`);
     }
   }
 
@@ -2103,16 +2133,21 @@ test("every export of lib/tokens.ts is either walked as a recipe or named as dat
   assert.deepEqual(stale, [], "NOT_A_RECIPE names something lib/tokens.ts no longer exports");
 
   const recipes = recipeNames();
-  for (const expected of ["PAGE", "CARD", "STAT", "TABLE", "BUTTON", "BADGE", "SHELL", "FORM"]) {
+  // ⚠️ 这张清单原本是 PAGE / CARD / STAT / TABLE / BUTTON / BADGE / SHELL / FORM。
+  // 第 4 阶段把它们的类字符串内联进组件之后，只有 STAT 因为 `tone` 是语义而留下，
+  // 其余七个删除。清单跟着缩到唯一还存在的那个——它仍然是非空对照：遍历器坏掉时
+  // 这里会红。
+  for (const expected of ["STAT"]) {
     assert.ok(recipes.includes(expected), `${expected} stopped being walked as a recipe`);
   }
 
-  // Nested keys included, or C3 comes straight back: STAT.tone.* and
-  // BUTTON.size.* are two levels down and used to be listed one by one.
+  // ⚠️ 嵌套键仍然要遍历到。原本这里举的是 STAT.tone.* 和 BUTTON.size.*；配方内联
+  // 完成之后 lib/tokens.ts 只剩 STAT.tone 一个嵌套的类配方——别的要么内联进组件、
+  // 要么随组件换成 shadcn 的 cva 而删除。
   const lists: string[] = [];
   const table = TOKENS as unknown as Record<string, unknown>;
   for (const name of recipes) classListsInRecipe(table[name], lists);
-  for (const nested of [STAT.tone.warn, TABLE.cellMono, FORM.select, FORM.textarea]) {
+  for (const nested of [STAT.tone.warn, STAT.tone.bad]) {
     assert.ok(lists.includes(nested), `a nested recipe value is not being walked: ${nested}`);
   }
 });
@@ -2155,45 +2190,6 @@ test("a file gives every element the stylesheet names a class of its own", () =>
     [],
     "this element is styled by the reset and by nothing else; say what it should look like",
   );
-});
-
-/**
- * And there has to be a recipe to give them — all five, not just the three
- * the reset happens to name.
- *
- * This used to derive the list from the stylesheet: whichever elements
- * `@layer legacy` styled bare were the ones that needed a recipe. That
- * derivation would now answer `input`, `select` and `textarea` and quietly
- * drop `form` and `label`, which is the wrong direction — the reason those
- * two need a recipe is precisely that **nothing** styles them any more. A
- * `<form>` with no class is a block with no gap between its fields, and a
- * `<label>` with no class is body text.
- *
- * So the list is stated, and the test that it is complete is the one above:
- * a bare form element in any file fails there.
- */
-test("there is a form recipe for every form element this console renders", () => {
-  const recipeFor: Record<string, string> = {
-    form: "root",
-    label: "label",
-    input: "input",
-    select: "select",
-    textarea: "textarea",
-  };
-  const missing = Object.entries(recipeFor)
-    .filter(([, key]) => typeof (FORM as Record<string, unknown>)[key] !== "string")
-    .map(([element]) => element);
-  assert.deepEqual(missing, [], "a page that needs one of these has nowhere to get it from");
-
-  // And every one of them has to be a real class list, not an empty string:
-  // an empty recipe passes the check above and draws nothing.
-  for (const [element, key] of Object.entries(recipeFor)) {
-    const recipe = (FORM as Record<string, unknown>)[key] as string;
-    assert.ok(
-      recipe.split(/\s+/).filter(Boolean).length > 1,
-      `FORM.${key} is empty, so a bare <${element}> is what a page still gets`,
-    );
-  }
 });
 
 /**
@@ -2516,17 +2512,20 @@ test("a class that needs an ancestor has a variant that does not", async () => {
     "the ancestor-only derivation has broken, so the empty answer above means nothing",
   );
 
-  // And the way out has to render. `buttonClass` takes no ancestor and no
-  // container; this is the whole difference between the variant and the class.
-  const classes = buttonClass({ variant: "risk" }).split(/\s+/).filter(Boolean);
+  // And the way out has to render. ⚠️ 原本读的是 `buttonClass({variant:"risk"})`
+  // 和 `BUTTON.variant.*`；按钮换成 shadcn 之后 risk 变体住在
+  // `components/ui/button.tsx` 的 `cva` 里，那个手写配方连同 buttonClass 一起
+  // 删掉了。守的东西没变：这个变体必须真的产出 CSS，而且必须读起来是红的。
+  const risk = /risk:\s*\n?\s*"([^"]+)"/.exec(readSource("components/ui/button.tsx"));
+  assert.ok(risk, "the risk variant is gone from button.tsx");
+  const classes = risk[1].split(/\s+/).filter(Boolean);
   const generated = await generatedClasses(classes);
   const silent = classes.filter((name) => !generated.has(name));
   assert.deepEqual(silent, [], "the risk variant produces no CSS, so it is the same defect again");
-  assert.ok(BUTTON.variant.risk.includes("text-bad"), "a risk button has to read as one");
-  assert.notEqual(
-    BUTTON.variant.risk,
-    BUTTON.variant.danger,
-    "outlined in a row of eight, filled for the one button that carries it out",
+  assert.match(risk[1], /\btext-destructive\b/, "a risk button has to read as one");
+  assert.ok(
+    !/\bbg-destructive\b(?!\/)/.test(risk[1]),
+    "outlined in a row of eight, not filled: a screen of solid red desensitises the reader",
   );
 });
 
@@ -5276,8 +5275,21 @@ test("the overview is drawn by the shared components, at the point of use", () =
  */
 test("the overview stays a read-only server component", () => {
   const code = codeOnly(readSource("app/page.tsx"));
-  for (const forbidden of [/"use client"/, /<form\b/, /<button\b/, /<Button\b/, /\bonClick\b/]) {
+  // ⚠️ `<Button>` 从禁用清单里拿掉了，换成更准的一条。总览页现在用
+  // `<Button asChild variant="ghost">` 包一个 `<Link>`——那是 shadcn 给「长得像
+  // 按钮的链接」的标准写法，渲染出来是 `<a>`，一个字都不会写。守的东西没变：
+  // 这一页不许有写入。真正表示写入的是下面那条 `asChild` 检查。
+  for (const forbidden of [/"use client"/, /<form\b/, /<button\b/, /\bonClick\b/]) {
     assert.ok(!forbidden.test(code), `the overview gained ${forbidden} — it writes nothing`);
+  }
+  // 🔴 一个 `<Button>` 只有在 `asChild` 之下才是链接。少了它就是一个真按钮，
+  // 而一个真按钮出现在这一页上意味着有人给它接了动作。
+  for (const button of [...code.matchAll(/<Button\b[^>]*>/g)]) {
+    assert.match(
+      button[0],
+      /\basChild\b/,
+      "the overview has a Button that is not asChild, so it renders a real button rather than a link",
+    );
   }
   // And the locale is handed to every string, from the server's own read. A
   // `t(key)` with the locale left off renders the default language into the
@@ -5689,6 +5701,11 @@ test("a recipe that asks for a border width says what kind of border it is", () 
     }
   };
   for (const name of recipeNames()) walk(table[name], name);
+  // ⚠️ 配方内联之后 `recipeNames()` 只剩 STAT，上面那圈几乎什么都找不到。类串现在
+  // 写在组件里，所以补上源码那一半——否则这一族边框检查会静静地量到零。
+  for (const relative of MIGRATED_SOURCES) {
+    for (const list of classListsIn(readSource(relative))) walk(list, relative);
+  }
 
   // Derived, not remembered: if the width matcher stops matching, everything
   // below it is vacuously true.
@@ -5865,11 +5882,17 @@ test("a recipe that says border-solid states a width for all four sides", () => 
     }
   };
   for (const name of recipeNames()) walkStyles(table[name], name);
+  // ⚠️ 配方内联之后 `recipeNames()` 几乎是空的，`border-solid` 都写在组件里了。
+  // 不补这一半，这条会靠「什么都没找到」而变成空转——它自己下面那句非空断言正是
+  // 为这种情况写的，现在它真的触发了。
+  for (const relative of MIGRATED_SOURCES) {
+    for (const list of classListsIn(readSource(relative))) walkStyles(list, relative);
+  }
   // Derived, not remembered: if nothing says `border-solid` any more, the
   // assertion under this is vacuous and has to say so.
   assert.ok(
     seen > 0,
-    "no recipe says border-solid at all; this check is measuring nothing",
+    "nothing says border-solid at all; this check is measuring nothing",
   );
   assert.deepEqual(
     partial,
@@ -5950,28 +5973,27 @@ test("no border in this console is drawn by the stylesheet on a bare element", (
   const width = /^(-?border)(-[xytrbl])?(-\d+)?$/;
   const table = TOKENS as unknown as Record<string, unknown>;
   const orphans: string[] = [];
-  const drawnByRecipe: Record<string, string> = {
-    button: "BUTTON.base",
-    input: "FORM.input",
-    select: "FORM.select",
-    textarea: "FORM.textarea",
-    th: "TABLE.headerCell",
-    // The cell rule drew the line between rows for this console's whole life.
-    // `TABLE.row` draws it now, and it is the only thing drawing it.
-    td: "TABLE.row",
+  // ⚠️ 这张表原本是「元素 → 画它边框的那个配方路径」（BUTTON.base、FORM.input…）。
+  // 配方全部内联进组件之后路径指不到东西了。守的性质一个字没变——**每个曾经靠样式
+  // 表拿边框的元素，现在必须自己要一条**——只是去问组件源码而不是问配方对象。
+  const drawnByComponent: Record<string, string> = {
+    // ⚠️ `button` 从这张表里去掉了。它当初在这里，是因为 `@layer legacy` 给裸
+    // `<button>` 画过边框，所以接手的配方必须继续要一条。现在两个前提都变了：
+    // `app/globals.css` 的 `*` reset 把 `border-width` 归零，裸 button 本来就没有
+    // 边框；而 shadcn 的 Button 基座是**填充式**的，边框只属于 `outline` 和
+    // `risk` 两个变体。要求它无条件要一条边框，等于要求它不是 shadcn 的按钮。
+    input: "components/ui/input.tsx",
+    select: "components/ui/form.tsx",
+    textarea: "components/ui/textarea.tsx",
+    th: "components/ui/table.tsx",
+    td: "components/ui/table.tsx",
   };
-  for (const [element, path] of Object.entries(drawnByRecipe)) {
-    const recipe = path.split(".").reduce<unknown>((value, key) => {
-      return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
-    }, table);
-    if (typeof recipe !== "string") {
-      orphans.push(`${element}: ${path} is not a recipe string`);
-      continue;
-    }
-    const words = recipe.split(/\s+/).filter(Boolean);
-    if (!words.some((word) => width.test(word) && !/-0$/.test(word))) {
-      orphans.push(`${element}: ${path} asks for no border of its own`);
-    }
+  for (const [element, relative] of Object.entries(drawnByComponent)) {
+    const lists = classListsIn(readSource(relative));
+    const asks = lists.some((list) =>
+      list.split(/\s+/).filter(Boolean).some((word) => width.test(word) && !/-0$/.test(word)),
+    );
+    if (!asks) orphans.push(`${element}: ${relative} asks for no border of its own`);
   }
   assert.deepEqual(
     orphans,
@@ -6381,9 +6403,10 @@ test("the device page's widest column is marked secondary on both of its cells",
     "a column is secondary in its header and not in its body, or the other way round: " +
       "one of them stays on the phone alone",
   );
-  // And the recipe those two share really is a rule the build generates.
-  assert.match(TABLE.cellSecondary, /\bhidden\b/);
-  assert.match(TABLE.cellSecondary, /\bsm:table-cell\b/);
+  // 那两处共用的类真的是构建能产出的规则。⚠️ 原本读 `TABLE.cellSecondary`；
+  // 配方内联之后它是 components/ui/table.tsx 里的字面量。
+  const table = codeOnly(readSource("components/ui/table.tsx"));
+  assert.match(table, /secondary && "hidden sm:table-cell"/);
 });
 
 /**
@@ -6466,6 +6489,11 @@ test("no file uses a class that only works inside a grid", () => {
     }
   };
   for (const name of recipeNames()) walk(table[name], name);
+  // ⚠️ 配方内联之后 `recipeNames()` 只剩 STAT，上面那圈几乎什么都找不到。类串现在
+  // 写在组件里，所以补上源码那一半——否则这一族边框检查会静静地量到零。
+  for (const relative of MIGRATED_SOURCES) {
+    for (const list of classListsIn(readSource(relative))) walk(list, relative);
+  }
 
   assert.deepEqual(
     [...offenders, ...inRecipes],
@@ -7156,27 +7184,6 @@ test("cn lets the caller's class win over the component's", () => {
   // A falsy override leaves the base alone.
   assert.equal(cn("p-s4", undefined), "p-s4");
 });
-
-test("buttonClass defaults to the primary action at touch size", () => {
-  const fallback = buttonClass();
-  assert.equal(fallback, buttonClass({ variant: "primary", size: "md" }));
-  assert.ok(fallback.includes("min-h-touch"), "a control a finger has to hit");
-  assert.ok(buttonClass({ variant: "danger" }).includes("bg-bad"));
-  assert.ok(buttonClass({ size: "sm" }).includes("text-xs"));
-});
-
-test("badgeClass falls back to neutral", () => {
-  assert.equal(badgeClass(), badgeClass("neutral"));
-  assert.ok(badgeClass("bad").includes("text-bad"));
-});
-
-test("tableCellClass adds only what it is asked for", () => {
-  assert.equal(tableCellClass(), TABLE.cell);
-  assert.ok(tableCellClass({ mono: true }).includes("font-mono"));
-  assert.ok(!tableCellClass({ mono: true }).includes(TABLE.cellFaint));
-  assert.ok(tableCellClass({ mono: true, faint: true }).includes(TABLE.cellFaint));
-});
-
 /**
  * A tone on a stat has to replace the colour and leave the size alone.
  *
@@ -7187,13 +7194,17 @@ test("tableCellClass adds only what it is asked for", () => {
  * which looks exactly like working code.
  */
 test("a stat's tone recolours the number without resizing it", () => {
-  const warned = cn(STAT.value, STAT.tone.warn);
+  // ⚠️ 原本读 `STAT.value`；那个键连同其余四个布局键内联进了
+  // components/ui/card.tsx，只有 `STAT.tone` 作为语义留下。数值那串类从组件里取。
+  const value = /"(font-mono text-2xl[^"]*)"/.exec(readSource("components/ui/card.tsx"));
+  assert.ok(value, "the stat value's classes are gone from card.tsx");
+  const warned = cn(value[1], STAT.tone.warn);
   assert.ok(warned.includes("text-warn"), "the tone lost to the base colour");
-  assert.ok(!warned.includes("text-fg"), "both colours survived; the stylesheet decides");
+  assert.ok(!warned.includes("text-foreground"), "both colours survived; the stylesheet decides");
   assert.ok(warned.includes("text-2xl"), "the tone ate the type scale");
   assert.ok(warned.includes("tabular-nums"), "a changing count would shift its own label");
   // No tone at all is the common case, and it must not be styled as one.
-  assert.equal(cn(STAT.value, undefined), STAT.value);
+  assert.equal(cn(value[1], undefined), value[1]);
 });
 
 test("an unknown state gets no colour rather than a guessed one", () => {
@@ -7253,10 +7264,10 @@ test("the status bar names the background the server actually paints", () => {
   );
   assert.match(
     viewportBlock,
-    /themeColor:\s*COLOR_TOKENS\.bg\.dark/,
+    /themeColor:\s*CANVAS\.dark/,
     "the status bar must be the dark background, the one painted before any script runs",
   );
-  for (const hex of [TOKENS.COLOR_TOKENS.bg.dark, TOKENS.COLOR_TOKENS.bg.light]) {
+  for (const hex of [TOKENS.CANVAS.dark, TOKENS.CANVAS.light]) {
     assert.ok(
       !viewportBlock.includes(hex),
       `${hex} is typed into the viewport instead of read from the token table`,

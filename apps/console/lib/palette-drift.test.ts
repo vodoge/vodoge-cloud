@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { test } from "node:test";
+import { hslTripletToHex, shadcnHex } from "./palette-source.ts";
+import * as TOKENS from "./tokens.ts";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 
@@ -100,6 +102,12 @@ const lightTokens = () => tokenBlock(':root[data-theme="light"] {');
  * compares unequal, which is the only property this needs to have.
  */
 function normalise(value: string): string {
+  // 🔴 **shadcn 的语义色是 HSL 三元组，不是十六进制。** 这个文件比对的是「出货
+  // 文件里写死的颜色」和「主题声明的颜色」，而采用 shadcn 之后主题那一侧变成了
+  // `240 10% 3.9%` 这种写法。不先转成十六进制，比较就永远不相等，报出来的还是
+  // 「图标没跟上」这种指错方向的错——图标其实跟上了。
+  const asHex = hslTripletToHex(value.trim());
+  if (asHex) return asHex;
   let out = value.trim().toLowerCase().replace(/\s+/g, "");
   out = out.replace(/(^|[^0-9])\.(\d)/g, "$10.$2");
   // `#4a9` and `#44aa99` are the same colour to a browser, so they are the same
@@ -127,25 +135,25 @@ const ICON_PAINT: { file: string; where: string; token: string; read: (svg: stri
   {
     file: "icon.svg",
     where: "icon.svg <rect fill>",
-    token: "--bg",
+    token: "--background",
     read: (svg) => attribute(svg, "rect", "fill"),
   },
   {
     file: "icon.svg",
     where: "icon.svg <path stroke>",
-    token: "--brand",
+    token: "--primary",
     read: (svg) => attribute(svg, "path", "stroke"),
   },
   {
     file: "icon-maskable.svg",
     where: "icon-maskable.svg <rect fill>",
-    token: "--bg",
+    token: "--background",
     read: (svg) => attribute(svg, "rect", "fill"),
   },
   {
     file: "icon-maskable.svg",
     where: "icon-maskable.svg <path stroke>",
-    token: "--brand",
+    token: "--primary",
     read: (svg) => attribute(svg, "path", "stroke"),
   },
 ];
@@ -299,27 +307,29 @@ const SCREENSHOTS = ["screenshot-mobile.png", "screenshot-wide.png"];
 
 test("the install screenshots are painted on the dark theme's current canvas", () => {
   const dark = darkTokens();
-  const wanted = ["--bg", "--surface"].map((token) => {
-    const value = dark.get(token);
-    assert.ok(value, `globals.css :root no longer declares ${token}`);
-    return normalise(value);
-  });
+  // ⚠️ **这条原本认「两块平涂」，那个前提没了。**
+  //
+  // 它说的是 `--bg` 和 `--surface`：画布和卡片，各占 61% 和 28-32%，是这个设计的
+  // 第一印象。采用 shadcn 的主题之后 `--background` 和 `--card` 是**同一个值**
+  // （都是 240 10% 3.9%），所以两块平涂塌成了一块。
+  //
+  // 🔴 现在认的是**每一版真正最大的那块**，而两版不一样，这本身就是版式的事实：
+  // 宽屏第二大的是侧栏（--sidebar，18.8%），手机版没有侧栏，第二大的已经是
+  // 抗锯齿量级。所以断言写成「最大的那块必须是画布」加「宽屏第二大必须是侧栏」，
+  // 而不是硬凑一个两元组。
+  const canvas = normalise(dark.get("--background") ?? "");
+  const sidebar = normalise(dark.get("--sidebar") ?? "");
+  assert.ok(canvas && sidebar, "globals.css no longer declares --background or --sidebar");
 
   const stale: string[] = [];
   for (const name of SCREENSHOTS) {
     const counts = histogram(name);
-    // The two flat fills that cover the whole interface. In both files they are
-    // 61% and 28-32% of the image against 1.7% for the next colour down, so
-    // "the largest two" is not a close call that antialiasing could tip — and
-    // it is the claim worth making, because those two are the canvas and the
-    // card, the design's whole first impression.
-    const top = [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([hex]) => normalise(hex))
-      .sort();
-    if (JSON.stringify(top) !== JSON.stringify([...wanted].sort())) {
-      stale.push(`${name} is mostly ${top.join(" and ")}, but --bg/--surface are now ${wanted.join(" and ")}`);
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([hex]) => normalise(hex));
+    if (ranked[0] !== canvas) {
+      stale.push(`${name} is mostly ${ranked[0]}, but --background is now ${canvas}`);
+    }
+    if (name.includes("wide") && ranked[1] !== sidebar) {
+      stale.push(`${name}'s second fill is ${ranked[1]}, but --sidebar is now ${sidebar}`);
     }
   }
   assert.deepEqual(
@@ -340,7 +350,7 @@ test("the install screenshots still carry the rest of the dark ramp", () => {
   const missing: string[] = [];
   for (const name of SCREENSHOTS) {
     const counts = histogram(name);
-    for (const token of ["--line", "--fg", "--fg-muted", "--brand"]) {
+    for (const token of ["--border", "--foreground", "--muted-foreground", "--primary"]) {
       const value = dark.get(token);
       assert.ok(value, `globals.css :root no longer declares ${token}`);
       const seen = counts.get(normalise(value)) ?? 0;
@@ -501,4 +511,28 @@ test("the sweep can see a colour in every encoding it claims to cover", () => {
   const notColours = ['code: "*#100#"', "const at = [1, 3, 5];", "// the transition is green", "#region", "id=\"#top\""];
   const overeager = notColours.filter((text) => colourLiterals(text).length > 0);
   assert.deepEqual(overeager, [], "the sweep is reporting colours in text that has none");
+});
+
+
+/**
+ * `CANVAS` 是 `--background` 的十六进制写法，这里钉住它们不分家。
+ *
+ * 🔴 **为什么需要这条：PWA manifest 是 JSON、`viewport.themeColor` 是 meta 标签,
+ * 两者都读不到 CSS 变量,所以画布色必须在 TypeScript 里有一份十六进制。** 那就是
+ * 第二种写法,而这个仓库对第二种写法的经验是它会长歪——`lib/tokens.ts` 自己的注释
+ * 就写着「手抄一个十六进制是第三个要记得改的地方,那种会在手机上以上季度的状态栏
+ * 颜色被发现」。
+ *
+ * 这条守卫的第一次兑现就在它写下的当天:`--background: 240 10% 3.9%` 被手算成
+ * #0a0a0b,真值是 #09090b,而两个 SVG 图标和五个 PNG 已经按错的那个生成过一轮。
+ */
+test("the canvas hex TypeScript ships equals the one the stylesheet declares", () => {
+  for (const theme of ["dark", "light"] as const) {
+    assert.equal(
+      TOKENS.CANVAS[theme],
+      shadcnHex("background", theme),
+      `CANVAS.${theme} and --background disagree; the manifest and the status bar would ship a ` +
+        "colour the page never paints",
+    );
+  }
 });

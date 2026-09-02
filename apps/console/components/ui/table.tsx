@@ -1,7 +1,6 @@
 import * as React from "react"
 
 import { cn } from "@/lib/cn"
-import { tableCellClass } from "@/lib/tokens"
 
 const Table = React.forwardRef<
   HTMLTableElement,
@@ -107,7 +106,12 @@ const TableCell = React.forwardRef<
     ref={ref}
     className={cn(
       "px-2 py-1.5 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-      tableCellClass({ mono, faint }),
+      // 🔴 原本是 `tableCellClass({ mono, faint })`，读 lib/tokens.ts 的 TABLE.cell
+      // 那一组。那三个值里 `px-s4 py-s3` 从来没有真的生效过——这个 <td> 自己在上一
+      // 行就写了 `px-2 py-1.5`，tailwind-merge 让后写的赢。所以只有 mono 和 faint
+      // 两个修饰是活的，内联的就是它们。
+      mono && "font-mono text-xs tabular-nums",
+      faint && "text-muted-foreground",
       secondary && "hidden sm:table-cell",
       wrap && "break-all",
       nowrap && "whitespace-nowrap",

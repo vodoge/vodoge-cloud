@@ -10,7 +10,7 @@ import { htmlLang, t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { TENANT_HEADER } from "@/lib/tenant";
 import { getTenantFromHeaders, sessionToken } from "@/lib/tenant-headers";
-import { COLOR_TOKENS, SAFE_AREA } from "@/lib/tokens";
+import { CANVAS, SAFE_AREA } from "@/lib/tokens";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -123,7 +123,7 @@ const monoFace = localFont({
  * found later, on a phone, as a status bar in last season's colour.
  */
 export const viewport: Viewport = {
-  themeColor: COLOR_TOKENS.bg.dark,
+  themeColor: CANVAS.dark,
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

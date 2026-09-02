@@ -22,7 +22,9 @@
  * arrived.
  */
 
-import { COLOR_TOKENS } from "./tokens.ts";
+import { CANVAS } from "./tokens.ts";
+
+
 
 /* ── The manifest ────────────────────────────────────────────────────────
  *
@@ -161,8 +163,13 @@ export function consoleManifest(): ConsoleManifest {
     // From the token table, not typed again. The splash screen an installed
     // console shows before its first paint is drawn from these two, so a
     // hand-copied pair means a launch that flashes the old palette.
-    background_color: COLOR_TOKENS.bg.dark,
-    theme_color: COLOR_TOKENS.bg.dark,
+    // 🔴 **画布色的十六进制写法，而它的唯一真源是 app/globals.css 的
+    // `--background`。** manifest 是 JSON，读不到 CSS 变量，所以这里必须是字面
+    // 量；`lib/palette-drift.test.ts` 因此断言它和 globals.css 解析出来的
+    // `--background` 一致。以前这里写的是 `COLOR_TOKENS.bg.dark`，而 `--bg` 是
+    // 这个项目自己那套调色板的画布——两套并存时它才是对的。现在只剩 shadcn 一套。
+    background_color: CANVAS.dark,
+    theme_color: CANVAS.dark,
     categories: ["business", "utilities"],
     icons: [
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },

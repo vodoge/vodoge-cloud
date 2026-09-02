@@ -22,7 +22,7 @@
  *     rewritten (T013); this bump is what carries that fix to consoles that
  *     were installed before it, which install alone never would.
  */
-const CACHE = "vodoge-shell-v3";
+const CACHE = "vodoge-shell-v4";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {

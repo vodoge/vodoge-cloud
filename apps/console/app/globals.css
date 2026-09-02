@@ -105,41 +105,23 @@
   --sidebar-border: 240 3.7% 15.9%;
   --sidebar-ring: 217.2 91.2% 59.8%;
 
-
-
   /* Surfaces, from furthest back to nearest the reader. Four distinct values,
      stepping away from the canvas as a surface rises. */
-  --bg: #010102;
-  --surface: #0d0d0d;
-  --surface-raised: #151515;
-  --surface-hover: #1d1d1d;
-  --line: #23252a;
-  --line-strong: #30333a;
 
   /* Text. Four tiers, every one of them at 4.5 or better on all four surfaces
      above — worst 7.007, where the faintest tier used to be 3.200. */
-  --fg: #f5f5f5;
-  --fg-strong: #d3d3d3;
-  --fg-muted: #c1c1c1;
-  --fg-faint: #a7a7a7;
   /* The accent when it is being read rather than filled. It lives in this
      family and not the accent one because the prefix is the role. The accent
      is a text tier itself now, so the two coincide in both themes. */
-  --fg-accent: #f5f5f5;
 
   /* One accent, and it has no hue: it is the text colour, inked with the
      background. Hue belongs to the four status colours, so the only coloured
      thing on this console is device state. */
-  --brand: #f5f5f5;
-  --brand-strong: #d3d3d3;
-  --brand-ink: #010102;
   /* The accent when it has to be seen as a line rather than filled or read:
      the focus outline below, the current tab's rule, an input's focused edge.
      Its bar is the 3:1 WCAG 1.4.11 sets for non-text, not a text tier. A
      neutral accent clears it everywhere, so this equals the fill in both
      themes; the entry stays because the role does. */
-  --brand-edge: #f5f5f5;
-  --brand-wash: rgba(245, 245, 245, 0.1);
 
   /* Status. These carry meaning, so they are never used decoratively, and
      they are the only hue left in the console.
@@ -256,24 +238,8 @@
      `--surface-raised` both at #ffffff and the raised tier not existing at all.
      The page is the white end now and surfaces darken as they rise, so all four
      are distinct and the direction matches the dark theme. */
-  --bg: #ffffff;
-  --surface: #f7f7f7;
-  --surface-raised: #f0f0f0;
-  --surface-hover: #e7e7e7;
-  --line: #dcdcdc;
-  --line-strong: #c8c8c8;
   /* Same four tiers at the same tier-to-tier ratios as the dark theme.
      Worst of the sixteen pairings 7.055, where the faintest was 2.810. */
-  --fg: #0f0f0f;
-  --fg-strong: #2c2c2c;
-  --fg-muted: #393939;
-  --fg-faint: #4b4b4b;
-  --fg-accent: #0f0f0f;
-  --brand: #0f0f0f;
-  --brand-strong: #2c2c2c;
-  --brand-ink: #ffffff;
-  --brand-edge: #0f0f0f;
-  --brand-wash: rgba(15, 15, 15, 0.06);
   /* These four are the same hue and saturation as the dark theme's, at the
      lightness their new backdrops need: the light surfaces darken as they
      rise, so the worst pairing is darker than the one T049 and T051 derived
@@ -346,7 +312,7 @@
   box-sizing: border-box;
   border-width: 0;
   border-style: solid;
-  border-color: var(--line);
+  border-color: hsl(var(--border));
 }
 
 /*
@@ -397,8 +363,8 @@ body {
 }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-family: var(--font-ui);
   font-size: var(--text-base);
   line-height: 1.55;
@@ -445,7 +411,7 @@ a {
  * the ring is left to trace whatever the element already is.
  */
 :focus-visible {
-  outline: 2px solid var(--brand-edge);
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 

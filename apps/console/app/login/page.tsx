@@ -16,7 +16,7 @@ export default async function LoginPage({
       <div className="flex w-full max-w-measure flex-col gap-4 rounded-lg border border-border bg-card p-8 shadow-lg">
         <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
           <span
-            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-primary to-primary/80 text-xs font-bold text-primary-foreground"
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground"
             aria-hidden="true"
           >
             V

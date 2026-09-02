@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="VoDoge">
-  <rect width="64" height="64" rx="14" fill="#010102"/>
-  <path d="M16 20 L32 46 L48 20" fill="none" stroke="#f5f5f5" stroke-width="7"
+  <rect width="64" height="64" rx="14" fill="#09090b"/>
+  <path d="M16 20 L32 46 L48 20" fill="none" stroke="#fafafa" stroke-width="7"
         stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

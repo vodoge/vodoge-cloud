@@ -252,9 +252,33 @@ function everyRecipeString(value: unknown, out: string[] = []): string[] {
 }
 
 /**
+ * 这个控制台**写下来的每一个类列表**：还留在 `lib/tokens.ts` 的配方，加上每一个
+ * 已迁移源文件里的字面量。
+ *
+ * 🔴 **为什么不能只走配方。** 第 4 阶段把类字符串从 `lib/tokens.ts` 逐个搬进了
+ * `app/` 和 `components/`，最后把空掉的配方对象删了。任何仍然只走
+ * `everyClassList()` 的 sweep 会随之**静悄悄地量到零**——它不会变红，
+ * 只会不再有任何输入，而「一个空循环是通过的」正是这份测试文件反复警告的那种
+ * 假绿。这一族 sweep 里已经有十条走到过这一步。
+ *
+ * 所以取值口是两者的并集，并且以源码那一半为主。注释里出现的类名会被一并收进来
+ * ——那是**朝安全方向偏**：多量一个已经存在的类不会误报，漏量一个才会。
+ */
+function everyClassList(): string[] {
+  const out = everyRecipeString(TOKENS);
+  for (const relative of TOKENS.MIGRATED_SOURCES) {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", relative), "utf8");
+    // 双引号字符串就够了：这个 sweep 只在乎「有没有用某个颜色画字」，多收一些
+    // 非类名的字符串不会误报，因为下游都会先过 `Object.hasOwn(COLOURS, …)`。
+    for (const literal of source.matchAll(/"([^"\n]{2,400})"/g)) out.push(literal[1]);
+  }
+  return out;
+}
+
+/**
  * 🔴 **必须同时读 `.tsx` 源码，不能只读配方对象。**
  *
- * 这个 sweep 原本只走 `everyRecipeString(TOKENS)`——即 `lib/tokens.ts` 里的配方
+ * 这个 sweep 原本只走 `everyClassList()`——即 `lib/tokens.ts` 里的配方
  * 字符串。第 4 阶段正在把这些字符串逐个内联进 `app/` 和 `components/`，所以只看
  * 配方的话，**这份守卫的视野会随着迁移推进而逐步缩小**，而且是静悄悄地缩：它不
  * 会变红，只会measure得越来越少。等 cloud-shadcn.md 计划里的「删掉 tokens.ts」
@@ -269,7 +293,7 @@ function everyRecipeString(value: unknown, out: string[] = []): string[] {
 function paintedAsType(): string[] {
   const found = new Set<string>();
   const corpus = [
-    ...everyRecipeString(TOKENS),
+    ...everyClassList(),
     ...TOKENS.MIGRATED_SOURCES.map((relative) =>
       readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", relative), "utf8"),
     ),
@@ -444,7 +468,10 @@ test("the sweep covers every colour used as type, not a hand-written subset", ()
 
   // 下限跟着两套调色板一起抬高：只剩六个就说明其中一套整个掉出了 sweep。
   assert.ok(TEXT.length >= 10, `only ${TEXT.length} colours swept as type; the derivation collapsed`);
-  assert.ok(SURFACES.length >= 9, `only ${SURFACES.length} surfaces found`);
+  // 下限从 9 降到 7：项目自己那四个表面（--bg/--surface/--surface-raised/
+  // --surface-hover）在「主题全用现成的」那次并入了 shadcn，剩下的是 shadcn 的五个
+  // 加 sidebar 那两个。降的是数量不是覆盖——每一个真正被画的表面都还在里面。
+  assert.ok(SURFACES.length >= 7, `only ${SURFACES.length} surfaces found`);
   assert.deepEqual(THEMES, ["dark", "light"]);
 });
 
@@ -581,7 +608,7 @@ const WASH_BACKGROUND: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-([a-z0-9-]+-wash)(?=\s|
 
 function paintedAsWash(): string[] {
   const found = new Set<string>();
-  for (const recipe of everyRecipeString(TOKENS)) {
+  for (const recipe of everyClassList()) {
     for (const match of recipe.matchAll(WASH_BACKGROUND)) {
       if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
     }
@@ -670,7 +697,7 @@ const WASH_AND_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*bg-[a-z0-9-]+-wash(?=\s|$)/;
 
 function paintedOnItsOwnWash(): string[] {
   const found = new Set<string>();
-  for (const recipe of everyRecipeString(TOKENS)) {
+  for (const recipe of everyClassList()) {
     if (!WASH_AND_TEXT.test(recipe)) continue;
     for (const match of recipe.matchAll(TEXT_UTILITY)) {
       if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
@@ -763,7 +790,7 @@ test("every colour painted as type is either a chip or ladder text", () => {
   );
   assert.deepEqual(
     tiersOnAWash,
-    ["fg-accent"],
+    [],
     `a type tier other than the accent is painted on a wash, so it is chip text ` +
       `now and can reach two wash layers — the one-layer ladder exception below ` +
       `no longer covers it: ${tiersOnAWash.join(", ")}`,

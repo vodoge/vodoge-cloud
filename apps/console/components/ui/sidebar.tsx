@@ -502,7 +502,12 @@ const SidebarMenu = React.forwardRef<
   <ul
     ref={ref}
     data-sidebar="menu"
-    className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+    // 🔴 `list-none` 是这个项目加的，不在 shadcn 的原版里。shadcn 依赖 Tailwind 的
+    // preflight 去掉 <ul> 的列表符号，而这个控制台**preflight 是关的**
+    // （tailwind.config.ts 的 corePlugins.preflight = false，因为旧样式表还在
+    // @layer legacy 里给裸元素上样式时打开它会盖过一切）。不加这一句，导航每一项
+    // 前面都会多一个圆点——拍截图时才看见的。
+    className={cn("flex w-full min-w-0 list-none flex-col gap-1", className)}
     {...props}
   />
 ))

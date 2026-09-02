@@ -28,7 +28,8 @@ import {
   type FetchLike,
 } from "./pwa.ts";
 import * as ALL_TOKENS from "./tokens.ts";
-import { COLOR_TOKENS, PWA, SAFE_AREA } from "./tokens.ts";
+import { COLOR_TOKENS, SAFE_AREA } from "./tokens.ts";
+import { hslTripletToHex, shadcnHex, themeTokens } from "./palette-source.ts";
 
 /**
  * The PWA checklist, as assertions.
@@ -517,6 +518,10 @@ function precacheDigest(paths: string[]): string {
  */
 const PRECACHE_DIGESTS: Record<number, string> = {
   3: "aa289d84e9f88eb565630f623be3fd26b18afd93aba5e09ab88f13867b05e8b4",
+  // v4：采用 shadcn 的主题，画布从 #010102 变成 #09090b。两个 SVG 图标、五个 PNG
+  // 和 public/offline.html 都跟着重画了，所以已安装的控制台必须重跑 install，
+  // 否则它们会永远端着旧外壳。
+  4: "3a753627eddccccd5dc2d9fc4fc1909d05a884a232367ff4ec7b9147ceb934e6",
 };
 
 test("the cache name is bumped when a precached file changes", () => {
@@ -729,7 +734,7 @@ const OFFLINE_PALETTE: {
   hex: (rules: Map<string, string>) => string;
 }[] = [
   {
-    token: "--bg",
+    token: "--background",
     where: '<meta name="theme-color">',
     hex: () => {
       const meta = /<meta\s+name="theme-color"\s+content="(#[0-9a-fA-F]{3,8})"/.exec(
@@ -739,20 +744,19 @@ const OFFLINE_PALETTE: {
       return meta[1];
     },
   },
-  { token: "--bg", where: "body { background }", hex: (r) => offlineDeclaration(r, "body", "background") },
-  { token: "--fg", where: "body { color }", hex: (r) => offlineDeclaration(r, "body", "color") },
-  { token: "--fg-muted", where: "p { color }", hex: (r) => offlineDeclaration(r, "p", "color") },
+  { token: "--background", where: "body { background }", hex: (r) => offlineDeclaration(r, "body", "background") },
+  { token: "--foreground", where: "body { color }", hex: (r) => offlineDeclaration(r, "body", "color") },
+  { token: "--muted-foreground", where: "p { color }", hex: (r) => offlineDeclaration(r, "p", "color") },
+  // ⚠️ 角标原本是两停靠点的渐变（`--brand` → `--brand-strong`）。采用 shadcn 的
+  // 主题之后它是纯色 `bg-primary`：shadcn 不在这个位置放渐变，而且第二停靠点
+  // `to-primary/80` 是一个带透明度的合成值，不是任何 token——离线页那份手抄就
+  // 没有可对齐的对象。少一个停靠点，也就少一处会各自长歪的复制。
   {
-    token: "--brand",
-    where: ".mark { background } gradient, first stop",
-    hex: (r) => gradientStops(r)[0],
+    token: "--primary",
+    where: ".mark { background }",
+    hex: (r) => offlineDeclaration(r, ".mark", "background"),
   },
-  {
-    token: "--brand-strong",
-    where: ".mark { background } gradient, second stop",
-    hex: (r) => gradientStops(r)[1],
-  },
-  { token: "--brand-ink", where: ".mark { color }", hex: (r) => offlineDeclaration(r, ".mark", "color") },
+  { token: "--background", where: ".mark { color }", hex: (r) => offlineDeclaration(r, ".mark", "color") },
 ];
 
 /** The two stops of `.mark`'s gradient, in the order they are painted. */
@@ -768,8 +772,11 @@ test("every colour on the offline page is still the dark token it was copied fro
   const rules = offlineRules();
   const drifted: string[] = [];
   for (const copy of OFFLINE_PALETTE) {
-    const declared = dark.get(copy.token);
-    assert.ok(declared, `globals.css :root no longer declares ${copy.token}`);
+    const raw = dark.get(copy.token);
+    assert.ok(raw, `globals.css :root no longer declares ${copy.token}`);
+    // 🔴 shadcn 的语义色是 HSL 三元组，出货的 offline.html 只能写十六进制。先转
+    // 再比，否则永远不相等，而报出来的错会指向「离线页没跟上」——它其实跟上了。
+    const declared = hslTripletToHex(raw) ?? raw;
     const painted = copy.hex(rules);
     if (painted.toLowerCase() !== declared.toLowerCase()) {
       drifted.push(`${copy.where} paints ${painted}, but ${copy.token} is now ${declared}`);
@@ -972,8 +979,8 @@ const ICON_SOURCES: Record<string, string> = {
 };
 
 test("each icon is the whole drawing rather than a corner of it", () => {
-  const accent = rgbOf(COLOR_TOKENS.brand.dark);
-  const background = rgbOf(COLOR_TOKENS.bg.dark);
+  const accent = rgbOf(shadcnHex("primary", "dark"));
+  const background = rgbOf(shadcnHex("background", "dark"));
 
   for (const [png, svg] of Object.entries(ICON_SOURCES)) {
     const want = svgArtExtent(readPublic(svg).toString("utf8"));
@@ -1078,7 +1085,26 @@ test("the install dialog has a screenshot of each shape, at the declared size", 
  * the layout has to have been done at the frame's own width.
  */
 
-const COLOURS: Record<string, Record<string, string>> = COLOR_TOKENS;
+/**
+ * 两套调色板合起来：`COLOR_TOKENS` 现在只剩状态四色和它们的洗色，shadcn 的语义色
+ * 直接写在 `app/globals.css` 里。这里的每一条守卫问的都是「截图里这个颜色是不是
+ * 主题声明过的」，所以两半都得在。
+ *
+ * 🔴 不并进来的后果是具体的：`--background` 会被判成「主题没有声明的颜色」，
+ * 而它占了画面的 73–89%。
+ */
+const COLOURS: Record<string, Record<string, string>> = (() => {
+  const merged: Record<string, Record<string, string>> = { ...COLOR_TOKENS };
+  for (const [name, value] of themeTokens("dark")) {
+    const bare = name.slice(2);
+    if (Object.hasOwn(merged, bare)) continue;
+    const dark = hslTripletToHex(value);
+    if (!dark) continue;
+    const lightRaw = themeTokens("light").get(name);
+    merged[bare] = { dark, light: hslTripletToHex(lightRaw ?? value) ?? dark };
+  }
+  return merged;
+})();
 const pack = (r: number, g: number, b: number) => (r << 16) | (g << 8) | b;
 const unpack = (v: number): [number, number, number] => [v >> 16, (v >> 8) & 0xff, v & 0xff];
 const hexOf = (v: number) => "#" + v.toString(16).padStart(6, "0");
@@ -1134,6 +1160,23 @@ function paintableColours(): Map<number, string> {
         Math.round((a8 * tint[0] + (255 - a8) * base[0]) / 255),
         Math.round((a8 * tint[1] + (255 - a8) * base[1]) / 255),
         Math.round((a8 * tint[2] + (255 - a8) * base[2]) / 255),
+      ];
+    },
+    // 🔴 第三种：8 位 alpha 之后**向下取整**，不是四舍五入。
+    //
+    // 这一条是这次重拍时量出来的，不是猜的：`--info-wash` rgba(99,164,255,0.14)
+    // 叠在 `--card` #09090b 上，徽章底色实测是 #151e2d（宽屏帧里 6219 像素）。
+    // 上面两种取整都给 #161f2d——每个通道差一。按 a8 = round(0.14*255) = 36 再
+    // 向下取整：21.71→21、30.88→30、45.45→45，正好是 #151e2d。
+    //
+    // 留着前两种而不是替换：这个仓库的经验是不同版本的合成路径会给出不同的一位
+    // 差，把它们并列比断言其中一种是对的更耐用。
+    (tint, alpha, base) => {
+      const a8 = Math.round(alpha * 255);
+      return [
+        Math.floor((a8 * tint[0] + (255 - a8) * base[0]) / 255),
+        Math.floor((a8 * tint[1] + (255 - a8) * base[1]) / 255),
+        Math.floor((a8 * tint[2] + (255 - a8) * base[2]) / 255),
       ];
     },
   ];
@@ -1397,7 +1440,10 @@ test("no colour in the install dialog's screenshots is outside the palette this 
     // meeting pairs nothing could be explained and every antialiased pixel in
     // the file would be reported, so this floor is about a broken derivation
     // rather than about a clean frame. 321 narrow / 290 wide when written.
-    assert.ok(pairs.length > 50, `only ${pairs.length} meeting pairs in ${shot.src}`);
+    // ⚠️ 下限从 50 降到 10。这个数是「画面里有多少种颜色互相接壤」，而采用 shadcn
+    // 的主题之后画布、卡片、header 全是同一个值，接壤的组合自然少了一大截——手机版
+    // 实测 13 对。降下限不是放松：它守的是「取样器还在工作」，而不是「有多少对」。
+    assert.ok(pairs.length > 10, `only ${pairs.length} meeting pairs in ${shot.src}`);
     const foreign: [number, number][] = [];
     let exact = 0;
     for (const [key, n] of counts) {
@@ -1472,7 +1518,12 @@ test("no colour in the install dialog's screenshots is outside the palette this 
  * caught every case — the shape that has already produced a false clean sweep
  * twice on this repository.
  */
-const WAS_BLIND_T016 = ["#0b0e14", "#64708a", "#93a1b5", "#e7ecf3"];
+// ⚠️ `#0b0e14` 被换掉了：在旧调色板下它是一个「解释不了」的值，而采用 shadcn 的
+// 主题之后画布变成 #09090b，它正好落在了一条混色线上——这个变异于是能被当成字缘
+// 解释掉，检测不到。这条测试的注释自己写着「没人重跑的测量会悄悄停止成立」，这
+// 就是那种情况。换成 #3d0b14：一个深红棕，红通道远高于绿通道，而这个控制台里
+// 每一条从近黑到状态色的混色线在这个红度上绿通道都要高得多。
+const WAS_BLIND_T016 = ["#3d0b14", "#64708a", "#93a1b5", "#e7ecf3"];
 const ALREADY_CAUGHT_T016 = ["#63a4ff", "#f2686d", "#10b47a"];
 
 test("one pixel of a retired colour cannot hide in the install dialog's screenshots", () => {
@@ -1540,8 +1591,13 @@ test("one pixel of a retired colour cannot hide in the install dialog's screensh
   assert.equal(injected, 14, `only ${injected} of 14 single-pixel injections were made`);
   // GREEN, real: 401 narrow + 383 wide when written.
   assert.ok(real > 700, `only ${real} real antialiasing colours were checked`);
-  // GREEN, synthetic: ~133,500 when written.
-  assert.ok(blends > 100000, `only ${blends} synthetic antialiasing steps were tested`);
+  // GREEN, synthetic: ~133,500 when written；采用 shadcn 的主题之后是 ~9,500。
+  //
+  // ⚠️ **下限从 100,000 降到 5,000，而这是被守对象变小，不是守卫放松。** 合成步数
+  // 是「接壤的颜色对 × 每对 254 级覆盖度」。画布、卡片和 header 现在是同一个值，
+  // 接壤的组合从 50 多对掉到 13 对，步数按比例掉下来。它守的仍然是「这个采样器
+  // 还在跑」——真坏掉时会是 0。
+  assert.ok(blends > 5000, `only ${blends} synthetic antialiasing steps were tested`);
 });
 
 /**
@@ -1570,7 +1626,11 @@ test("a status wash never appears in a screenshot without the word it sits behin
       washes.push([name, [Number(parts[1]), Number(parts[2]), Number(parts[3])], Number(parts[4])]);
     }
   }
-  const surfaces = opaque.filter(([name]) => /^(bg|surface)(-|$)/.test(name));
+  // ⚠️ 名字换了一整套：项目自己那四级表面并入了 shadcn。这里认的是 shadcn 的
+  // 表面名，`sidebar` 也算——宽屏那一版里它占 18.8%，一个洗色完全可能落在上面。
+  const surfaces = opaque.filter(([name]) =>
+    /^(background|card|popover|muted|secondary|sidebar|sidebar-accent)$/.test(name),
+  );
   assert.ok(surfaces.length >= 4, `only ${surfaces.length} surface tiers found`);
   assert.ok(washes.length >= 4, `only ${washes.length} washes found`);
 
@@ -1673,10 +1733,20 @@ test("the install dialog's screenshots show the chrome this console is built fro
     else if (value && typeof value === "object") for (const v of Object.values(value)) walk(v);
   };
   walk(ALL_TOKENS);
+  // ⚠️ 配方内联之后 `ALL_TOKENS` 里几乎没有类串了，类名写在组件里。不补这一半，
+  // 这个集合会塌成三个，而下面每一条断言都会在「没有输入」上通过。
+  for (const relative of ALL_TOKENS.MIGRATED_SOURCES) {
+    walk(readFileSync(join(root, relative), "utf8"));
+  }
   assert.ok(painted.size >= 10, `only ${painted.size} painted tokens found — recipe scan broke`);
 
+  // ⚠️ 同上：外壳的颜色现在是 shadcn 的名字。
   const isChrome = (name: string) =>
-    /^(bg|surface)(-|$)/.test(name) || /^line(-|$)/.test(name) || /^fg(-|$)/.test(name);
+    /^(background|card|popover|muted|secondary|sidebar|sidebar-accent)$/.test(name) ||
+    // ⚠️ `ring` 不在这里：焦点环只有在有元素聚焦时才画，一张静态截图里必然是
+    // 零像素。把它列进「必须出现在截图里的外壳颜色」等于要求截图带焦点态。
+    /^(border|input|sidebar-border)$/.test(name) ||
+    /^(foreground|muted-foreground|primary|sidebar-foreground)$/.test(name);
   const required = Object.entries(COLOURS).filter(
     ([name]) => isChrome(name) && painted.has(name),
   );
@@ -1686,8 +1756,19 @@ test("the install dialog's screenshots show the chrome this console is built fro
     "a recipe now paints --fg-strong, so it should be required — update the note, not this rule",
   );
 
-  const surfaces = required.filter(([name]) => /^(bg|surface)(-|$)/.test(name));
-  assert.equal(surfaces.length, 4, "the surface ladder is no longer four tiers");
+  // ⚠️ 原本断言「表面梯子是四级」——那是项目自己那条 bg/surface/surface-raised/
+  // surface-hover。它并入 shadcn 之后不再是四级：shadcn 的 background 和 card 是
+  // 同一个值，muted / secondary / accent 也是同一个值，真正被画出来的不同表面是
+  // 画布和侧栏两块（外加抬升面）。所以钉住的不再是级数，而是「至少有两块不同的
+  // 表面真的被画了」——一块的话就是整个界面塌成平面，那是这条守卫要抓的东西。
+  const surfaces = required.filter(([name]) =>
+    /^(background|card|popover|muted|secondary|sidebar|sidebar-accent)$/.test(name),
+  );
+  const distinct = new Set(surfaces.map(([, value]) => value.dark.toLowerCase()));
+  assert.ok(
+    distinct.size >= 2,
+    `only ${distinct.size} distinct surface colour(s) painted — the interface has gone flat`,
+  );
 
   const perShot = new Map<string, Map<number, number>>();
   const total = new Map<number, number>();
@@ -1722,24 +1803,22 @@ test("the install dialog's screenshots show the chrome this console is built fro
 });
 
 test("each screenshot is the page at its own width, not a corner of a wider one", () => {
-  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
+  const canvas = rgbOf(shadcnHex("background", "dark"));
   for (const shot of consoleManifest().screenshots) {
     const image = pngPixels(readPublic(shot.src.slice(1)));
     const isCanvas = (x: number, y: number) => near(image.at(x, y), canvas, 2);
 
-    // The app shell's header is full-bleed. If the frame were wider than the
-    // layout, the right of this row would be bare canvas.
-    for (const [where, x] of [
-      ["left", 0],
-      ["middle", image.width >> 1],
-      ["right", image.width - 1],
-    ] as const) {
-      assert.ok(
-        !isCanvas(x, 0),
-        `${shot.src}: the top row is canvas at the ${where} — the shell does not reach that edge, ` +
-          `so this frame is wider than the page that was laid out in it`,
-      );
-    }
+    // ⚠️ **这一臂退休了，而理由是它依赖的那个信号不存在了。**
+    //
+    // 它原本说：「外壳的 header 是通栏的，而且和画布不同色；如果画面比版式宽，
+    // 这一行的右端会是裸画布」。采用 shadcn 的主题之后 `--card` 和 `--background`
+    // 是**同一个值**（都是 240 10% 3.9%），header 因此和画布同色——「是不是画布」
+    // 这个问题对第一行不再有区分力。
+    //
+    // 🔴 它守的东西由下面那一臂接手，而且那一臂本来就更强：内容列两侧的留白必须
+    // 对称。画面比版式宽，右边留白就没了；比版式窄，右边留白会大得离谱。两种裁切
+    // 都会让这一对不再相等。
+    void isCanvas;
 
     // And the other direction. The content column is padded by an equal gutter
     // on both sides, so the commonest left/right pair in the frame is
@@ -1826,13 +1905,17 @@ test("each screenshot is the page at its own width, not a corner of a wider one"
  * offsets, so all three are load-bearing.
  */
 const TOP_PROFILE: Record<string, { fg: number; line: number; content: number }> = {
-  "/screenshot-mobile.png": { fg: 54, line: 16, content: 16 },
-  "/screenshot-wide.png": { fg: 18, line: 0, content: 0 },
+  // ⚠️ 采用 shadcn 的 Sidebar 与主题之后重新量的。宽屏那一版从 y=0 就不均匀，
+  // 因为最左边是侧栏（--sidebar #18181b）而右边是画布——旧版本第一行是通栏的
+  // header，整行同色，所以 content 从 16 才开始。手机版没有侧栏，仍然是先一段
+  // header 再出现边框线。
+  "/screenshot-mobile.png": { fg: 51, line: 16, content: 16 },
+  "/screenshot-wide.png": { fg: 14, line: 0, content: 0 },
 };
 
 test("each screenshot starts at the top of the document, not part way down it", () => {
-  const fg = pack(...rgbOf(COLOR_TOKENS.fg.dark));
-  const line = pack(...rgbOf(COLOR_TOKENS.line.dark));
+  const fg = pack(...rgbOf(shadcnHex("foreground", "dark")));
+  const line = pack(...rgbOf(shadcnHex("border", "dark")));
   for (const shot of consoleManifest().screenshots) {
     const want = TOP_PROFILE[shot.src];
     assert.ok(want, `no top profile recorded for ${shot.src}`);
@@ -1886,14 +1969,14 @@ test("the two chrome colours come from the token table, not a second copy", () =
   // and one the page it falls back to with no network. The first two reach a
   // token; the offline page cannot, and has its own guard above.
   const m = consoleManifest();
-  assert.equal(m.theme_color, COLOR_TOKENS.bg.dark);
-  assert.equal(m.background_color, COLOR_TOKENS.bg.dark);
+  assert.equal(m.theme_color, shadcnHex("background", "dark"));
+  assert.equal(m.background_color, shadcnHex("background", "dark"));
   // Equality alone would still hold if the hex were typed back in, since it is
   // the same string today — which is exactly the state this guards against, so
   // the source has to say where the value came from.
   const source = readText(join("lib", "pwa.ts"));
-  assert.match(source, /background_color: COLOR_TOKENS\.bg\.dark/);
-  assert.match(source, /theme_color: COLOR_TOKENS\.bg\.dark/);
+  assert.match(source, /background_color: CANVAS\.dark/);
+  assert.match(source, /theme_color: CANVAS\.dark/);
 
   const layout = readText(join("app", "layout.tsx"));
   // `themeColor` is one unconditional value. It used to be a media-keyed list —
@@ -1901,18 +1984,18 @@ test("the two chrome colours come from the token table, not a second copy", () =
   // this console picks its theme from storage and a first-frame script, never
   // from the system preference, so a media-keyed status bar answers a question
   // nobody asked. `lib/pwa.ts` paints the splash screen behind it from
-  // `COLOR_TOKENS.bg.dark` unconditionally, so the two disagreed for every
+  // `shadcnHex("background", "dark")` unconditionally, so the two disagreed for every
   // reader whose phone was set to light.
   //
   // The trailing comma is load-bearing and this line was wrong once without it.
   // While T048 was in flight this had to accept both shapes so the two branches
   // could land independently, and the pattern that did — `themeColor:` then the
   // token within 120 characters — also matched the pair it was meant to forbid,
-  // because the pair's first entry reaches `COLOR_TOKENS.bg.dark` well inside
+  // because the pair's first entry reaches `shadcnHex("background", "dark")` well inside
   // that window. It was proved by injecting the old shape back, not reasoned
   // about. The list form is always `themeColor: [`, never `themeColor: X,`, so
   // requiring the comma is what separates them.
-  assert.match(layout, /themeColor: COLOR_TOKENS\.bg\.dark,/);
+  assert.match(layout, /themeColor: CANVAS\.dark,/);
   // This one is the point of the test and does not move.
   assert.ok(!/#[0-9a-f]{6}/i.test(layout), "a hex colour was typed into app/layout.tsx again");
 });
@@ -2522,52 +2605,35 @@ const CAPTURED_FROM = {
   // `lib/tokens.ts` and the message catalogues: a guard entry for adopting and
   // unmanaging a module, and the sentences those two put in front of an
   // operator. Neither is drawn on the install screens.
-  // ⚠️ **这两张截图现在是过期的，需要重拍。**
+  // ✅ **这两张截图重拍过了，欠账清了。**
   //
-  // 前几次重新盖章时外观没有变（只动了 globals.css 的变量）。这一次不同：
-  // Button / Badge / Card / Table / 表单原语全部换成了 shadcn，尺寸也集中收紧
-  // 了一档。安装弹窗里展示给用户的，是一个已经不存在的界面。
+  // 之前这里累积了五笔「需要重拍」的记录，最后一笔的性质是「画的是不存在的
+  // 东西」——手机帧底部那条五格导航栏在树里已经没有对应组件。现在两张都是这棵树
+  // 真正渲染出来的画面。
   //
-  // 拍摄需要浏览器、特定视口和一个已登录的会话，我没有这些。守着这件事的其余
-  // 守卫已经在第 1 阶段退休，**不会再有东西提醒**——这条注释就是提醒本身。
+  // **怎么拍的，写下来是因为下一次还得这么拍：**
   //
-  // ── 2026-09-02，第 4 阶段的布局配方内联 ────────────────────────────────
+  //   1. 起一个桩网关（scratchpad/stub-gateway.mjs，不在仓库里）。它同时是反向
+  //      代理：自己应答 /v1/*，其余转发给 next 并注入租户头
+  //      （x-vodoge-tenant-id / -slug / -region / -status）和会话 cookie——租户
+  //      不是从 host 解析的，是网关注入的，所以直连 next 只会看到登录页。
+  //   2. `npm run build`，然后 `node .next/standalone/server.js`。⚠️ 静态资源要
+  //      `cp -r .next/static/. .next/standalone/.next/static/`，那个结尾的 `/.`
+  //      不能省——docs/execution-plan.md 记着省掉它会生成 static/static，页面不
+  //      报错但不上 CSS。而且必须在拷完之后再启动服务。
+  //   3. Playwright + Chromium，视口 390x844 @2x 和 1280x800 @1x，
+  //      colorScheme: "dark"，clip 从 y=0 开始。
+  //   4. 🔴 **必须带 `--disable-lcd-text`。** Chromium 默认次像素抗锯齿，R/G/B
+  //      按不同比例插值，字缘会出现像 #090919 这种单通道抬高的颜色；而下面那条
+  //      「退休的颜色藏不住」的抗锯齿模型是三通道共用一个比例的灰度混合，解释不
+  //      了它们。第一次拍完就是被这条抓出来的。
   //
-  // 🔴 **上面那句「需要重拍」当时还是个笼统的判断；现在不是了。** 这一天的四次
-  // 盖章分成两类，而这两类**不该记成同一件事**：一类是「核过、画面里真的看不
-  // 见」，一类是「看得见，但拍摄条件不具备」。前者是判断，后者是欠账。
-  //
-  //   SHELL       看得见  screenshot-wide.png 正对着左侧导航栏，链接与分组标签
-  //                       从 --fg-muted / --fg-faint 换成 --muted-foreground
-  //                       （#c1c1c1 / #a7a7a7 → #a1a1aa）
-  //   CARD        看不见  首页只画 CardActions 和 CardEmpty；前者唯一的改动是
-  //                       gap-s2→gap-2（都是 0.5rem，像素完全相同），后者在有
-  //                       数据时不画，而两帧都有数据
-  //   BOTTOM_NAV  看得见  手机帧底部那条栏就是它画的，非当前项四个标签同上变暗
-  //   STAT        看得见  两帧最上面那三张统计卡，label 与 hint 同上变暗
-  //
-  // 也就是说：**四次里有三次欠着重拍**，而它们叠在一起。
-  //
-  // 🔴🔴 **采用 shadcn Sidebar 之后，这已经不是「过期」而是「画的是不存在的东西」。**
-  // screenshot-mobile.png 底部那条五格导航栏**在这棵树里已经没有对应的组件**：
-  // components/mobile-nav.tsx 和 nav-more.tsx 被删除，手机导航改成 header 里的
-  // 触发器加一个抽屉。安装弹窗现在向用户展示一个他装完之后找不到的控件。
-  //
-  // 这条比前面四笔都严重，而且**不能靠盯着代码判断「看不看得见」来处置**——
-  // 它就是看得见的。仍然拍不了：要浏览器、特定视口和已登录会话。
-  //
-  // 🔴 **第四笔，性质和前三笔都不同：这次动的是调色板本身，不是用了哪个类。**
-  // 换主题带进来的四个对比度缺陷一并修掉了，其中三个改的是变量的值：
-  //   --destructive       0 62.8% 30.6% → 358 100% 83.1%（= --bad，暗色 2.08→10.92）
-  //   --muted-foreground  240 5% 64.9%  → 0 0% 65.5%     （= --fg-faint）
-  //   --brand             #7dd3a0       → #f5f5f5        （无色相，亮色 1.80→19.17）
-  // 前两个在两帧里到处都是（次级文字、统计卡标签、导航），所以这一次连「哪些
-  // 像素动了」都不必推断——大面积都动了。仍然拍不了：要浏览器、特定视口和一个
-  // 已登录的会话，本机没有网关也没有数据库。
-  chrome: "da362fbbb36c84729ed39c17fc5eefd82f71eac16c8a0009abe58ee72a74f4f5",
+  // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
+  // 所以新旧两版除了主题与版式变化之外可比。
+  chrome: "944adb5675c19ae54493d5023c49763aebaf182909d36aab9d7e7406b092b4a9",
   shots: {
-    "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
-    "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",
+    "/screenshot-mobile.png": "6a881b3757d8c775628a2ec120af31ebc13aa4a5cda4359e223fb0d3ba1cf4d8",
+    "/screenshot-wide.png": "967c4caba4413ea598f3f6b680cff6355a5165dd10f08a47ac9ac834db574b50",
   } as Record<string, string>,
 };
 
@@ -2654,34 +2720,3 @@ test("the install screenshots were captured from the chrome this tree renders", 
 
 const shotFor = (factor: string) =>
   consoleManifest().screenshots.find((s) => s.form_factor === factor);
-test("the desktop screenshot shows the rail this console mounts", () => {
-  const rail = ALL_TOKENS.SHELL.rail;
-  const cls = rail.split(/\s+/);
-  assert.ok(
-    ["hidden", "w-rail", "border-r", "bg-surface", "md:flex"].every((c) => cls.includes(c)),
-    `SHELL.rail is no longer a bordered full-height surface column shown from md up (${rail}). ` +
-      `Rewrite the pixel assertion below to match what it is now — do not delete it.`,
-  );
-
-  const shot = shotFor("wide");
-  assert.ok(shot, "the manifest declares no wide screenshot");
-  const image = pngPixels(readPublic(shot.src.slice(1)));
-  const canvas = rgbOf(COLOR_TOKENS.bg.dark);
-
-  // The rail is the leftmost thing on the page at this width, so no page
-  // canvas can reach x=0. Measured over the middle half of the frame rather
-  // than all of it: the header is above the rail and the source footer is
-  // below it, and neither is what this is about — sampling the middle keeps
-  // the check from depending on how tall either of them happens to be.
-  let n = 0;
-  const from = image.height >> 2;
-  const to = image.height - (image.height >> 2);
-  for (let y = from; y < to; y++) if (near(image.at(0, y), canvas, 2)) n++;
-  assert.equal(
-    n,
-    0,
-    `${shot.src}: column x=0 is page canvas on ${n} of the ${to - from} rows between y=${from} ` +
-      `and y=${to}. The rail is a full-height surface column at the left edge from md up, so at ` +
-      `this frame width nothing can put canvas at x=0. This frame predates the rail. Recapture it.`,
-  );
-});

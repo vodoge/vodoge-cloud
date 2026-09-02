@@ -9,7 +9,6 @@ import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialo
 import { Field, Form, FormError, FormHint, InlineField, Input } from "@/components/ui/form";
 import { SecretInput } from "@/components/ui/secret-input";
 import {
-  FORM,
   groupSettingsFields,
   settingsDocument,
   settingsFormValues,

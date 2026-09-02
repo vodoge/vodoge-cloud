@@ -112,7 +112,7 @@ export function Checkbox({
   // 真正的 input——它不会随 form 提交，而这两处调用都在受控表单里。
   return <input
       type="checkbox"
-      className={cn("size-4 min-h-4 shrink-0 cursor-pointer accent-brand disabled:opacity-50", className)}
+      className={cn("size-4 min-h-4 shrink-0 cursor-pointer accent-primary disabled:opacity-50", className)}
       {...props}
     />;
 }

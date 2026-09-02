@@ -246,11 +246,13 @@ export default {
       // colour, exactly what this line says it exists to prevent. The reset
       // states the same value, and `lib/tokens.test.ts` asserts the two agree
       // so switching preflight on cannot recolour anything.
-      borderColor: { DEFAULT: "var(--line)" },
+      // `--line` 随旧调色板并入 shadcn 的 `--border`；这里必须和
+      // `app/globals.css` 的 reset 写同一个值，否则打开 preflight 会给裸边框换色。
+      borderColor: { DEFAULT: "hsl(var(--border))" },
       // 🔴 `--accent` 现在是 shadcn 的悬停面，而且是 HSL 三元组——裸 var() 包不住它。
       // 默认环用本项目的边线强调色，那正是它一直以来的含义。
       ringColor: { DEFAULT: "var(--brand-edge)" },
-      ringOffsetColor: { DEFAULT: "var(--bg)" },
+      ringOffsetColor: { DEFAULT: "hsl(var(--background))" },
     },
   },
   // shadcn 的组件用 `data-state` 驱动进出场动画，这个插件提供它们要的
