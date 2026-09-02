@@ -56,7 +56,7 @@ import * as TOKENS from "./tokens.ts";
  *
  * **The washes are covered too, and that is what T011 added.** Type does not
  * only land on an opaque surface. It lands on a translucent wash over one —
- * `--ok-wash` behind a delivery badge, `--accent-wash` behind an outbound
+ * `--ok-wash` behind a delivery badge, `--brand-wash` behind an outbound
  * message — and on a wash over a wash, because a badge goes inside a bubble.
  * T003 measured that layer and deliberately did not assert it, because the
  * palette it would have judged was already being replaced. The sweeps at the
@@ -121,7 +121,7 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
 /**
  * Every colour token, sorted into the role it plays, by name.
  *
- * The order matters and is not alphabetical: `--accent-wash` is a wash before
+ * The order matters and is not alphabetical: `--brand-wash` is a wash before
  * it is an accent and `--bad-ink` is ink before it is a status tone, so the
  * two qualified roles are tried before the family they are qualified out of.
  *
@@ -132,12 +132,16 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
  * excluded it, but because no list included it and nothing complained.
  */
 const ROLES: readonly (readonly [string, RegExp])[] = [
-  ["text", /^fg(-|$)/],
-  ["surface", /^(bg|surface)(-|$)/],
-  ["line", /^line(-|$)/],
+  // 🔴 **这两条必须排在 `-foreground$` 那条前面。** shadcn 的 `--foreground` 和
+  // `--muted-foreground` 是正文与次级正文，画在表面上；其余 `*-foreground` 是墨，
+  // 只画在自己那块填充上。名字长得一样，角色完全不同——把 muted-foreground 判成墨
+  // 会让它退出这个 sweep，而它正是四个缺陷里被漏掉最久的那个。
+  ["text", /^(fg(-|$)|foreground$|muted-foreground$)/],
+  ["surface", /^(bg|surface)(-|$)|^(background|card|popover|muted|secondary)$/],
+  ["line", /^line(-|$)|^(border|input|ring)$/],
   ["wash", /-wash$/],
-  ["ink", /-ink$/],
-  ["fill", /^(accent|ok|warn|bad|info)(-|$)/],
+  ["ink", /-ink$|-foreground$/],
+  ["fill", /^(brand|ok|warn|bad|info)(-|$)|^(primary|destructive|accent)$/],
 ];
 
 function roleOf(name: string): string | null {
@@ -145,7 +149,95 @@ function roleOf(name: string): string | null {
   return null;
 }
 
-const COLOURS: Record<string, Record<string, string>> = TOKENS.COLOR_TOKENS;
+/**
+ * shadcn 的语义变量，**从 `app/globals.css` 读出来**而不是在这里再抄一张表。
+ *
+ * 🔴 它们为什么必须进来：这个 sweep 的取值口原本只有 `COLOR_TOKENS`，而 shadcn
+ * 那一套是直接写在 globals.css 里的，于是 `--destructive`、`--muted-foreground`、
+ * `--brand` 在结构上就是这份守卫**看不见**的。四个已经上线的对比度缺陷全部落在
+ * 这个盲区里——不是有人把它们排除掉，而是没有任何清单包含它们，也没有任何东西
+ * 抱怨。这正是这份文件开头记的 `--fg-faint` 那次事故，只是升了一层。
+ *
+ * 值是 HSL 三元组（Tailwind 用 `hsl(var(--x) / <alpha>)` 包它们），这里转成
+ * 十六进制交给上面那套算术。
+ */
+function hslTripletToHex(triplet: string): string | null {
+  const parsed = /^([\d.]+)\s+([\d.]+)%\s+([\d.]+)%$/.exec(triplet.trim());
+  if (!parsed) return null;
+  const hue = Number(parsed[1]);
+  const saturation = Number(parsed[2]) / 100;
+  const lightness = Number(parsed[3]) / 100;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const second = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const base = lightness - chroma / 2;
+  const [r, g, b] = (
+    [
+      [chroma, second, 0],
+      [second, chroma, 0],
+      [0, chroma, second],
+      [0, second, chroma],
+      [second, 0, chroma],
+      [chroma, 0, second],
+    ] as const
+  )[Math.floor(hue / 60) % 6];
+  const byte = (channel: number) =>
+    Math.round((channel + base) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${byte(r)}${byte(g)}${byte(b)}`;
+}
+
+function themeBlock(css: string, selector: string): string {
+  const at = css.indexOf(`${selector} {`);
+  assert.ok(at >= 0, `app/globals.css no longer has a ${selector} block`);
+  const open = css.indexOf("{", at);
+  let depth = 0;
+  for (let i = open; i < css.length; i += 1) {
+    if (css[i] === "{") depth += 1;
+    else if (css[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return css.slice(open + 1, i);
+    }
+  }
+  throw new Error(`${selector} is unterminated`);
+}
+
+const GLOBALS: string = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "app/globals.css"),
+  "utf8",
+);
+
+function declarationsIn(selector: string): Map<string, string> {
+  const found = new Map<string, string>();
+  // 后声明的胜，和浏览器一样。**不要**改成 first-wins：`--accent` 曾经在同一条
+  // 规则里被声明两次，而正是「后者胜」把一个 HSL 三元组换成了十六进制，让
+  // `hsl(var(--accent) / 1)` 变成非法值。下面那条守卫现在拦着这种事。
+  for (const match of themeBlock(GLOBALS, selector).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+    found.set(match[1], match[2].trim());
+  }
+  return found;
+}
+
+function shadcnColours(): Record<string, Record<string, string>> {
+  const dark = declarationsIn(":root");
+  const light = declarationsIn(':root[data-theme="light"]');
+  const out: Record<string, Record<string, string>> = {};
+  for (const [name, value] of dark) {
+    const bare = name.slice(2);
+    if (Object.hasOwn(TOKENS.COLOR_TOKENS, bare)) continue; // 已经在表里的不重复
+    const darkHex = hslTripletToHex(value);
+    if (!darkHex) continue; // 不是颜色三元组（--radius 这类）
+    const lightHex = hslTripletToHex(light.get(name) ?? value);
+    if (!lightHex) continue;
+    out[bare] = { dark: darkHex, light: lightHex };
+  }
+  return out;
+}
+
+const COLOURS: Record<string, Record<string, string>> = {
+  ...TOKENS.COLOR_TOKENS,
+  ...shadcnColours(),
+};
 const NAMES: readonly string[] = Object.keys(COLOURS);
 
 /** Which colours the recipes actually paint with a `text-…` utility. */
@@ -159,10 +251,31 @@ function everyRecipeString(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * 🔴 **必须同时读 `.tsx` 源码，不能只读配方对象。**
+ *
+ * 这个 sweep 原本只走 `everyRecipeString(TOKENS)`——即 `lib/tokens.ts` 里的配方
+ * 字符串。第 4 阶段正在把这些字符串逐个内联进 `app/` 和 `components/`，所以只看
+ * 配方的话，**这份守卫的视野会随着迁移推进而逐步缩小**，而且是静悄悄地缩：它不
+ * 会变红，只会measure得越来越少。等 cloud-shadcn.md 计划里的「删掉 tokens.ts」
+ * 执行，它就一个颜色也看不到了，同时三条非空断言仍然全绿——因为那时配方一个
+ * 都不剩，`painted.length >= 6` 会先炸，这是唯一拦着的东西，而它拦的是崩溃不是
+ * 漏测。
+ *
+ * 所以取值口是两者的并集：仍然读配方（还没内联完的那些），也读每一个已迁移的
+ * 源文件。注释里出现的 `text-…` 会被一并收进来，这是**朝安全方向偏**：多扫一个
+ * 已经在表里的颜色不会误报，漏扫一个才会。
+ */
 function paintedAsType(): string[] {
   const found = new Set<string>();
-  for (const recipe of everyRecipeString(TOKENS)) {
-    for (const match of recipe.matchAll(TEXT_UTILITY)) {
+  const corpus = [
+    ...everyRecipeString(TOKENS),
+    ...TOKENS.MIGRATED_SOURCES.map((relative) =>
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", relative), "utf8"),
+    ),
+  ];
+  for (const text of corpus) {
+    for (const match of text.matchAll(TEXT_UTILITY)) {
       if (Object.hasOwn(COLOURS, match[1])) found.add(match[1]);
     }
   }
@@ -241,6 +354,53 @@ test("every colour token has a role, so a new one cannot arrive unnoticed", () =
 });
 
 /**
+ * ④ 同一条规则里，一个自定义属性只能被声明一次。
+ *
+ * 🔴 **这条是 `--accent` 那次事故直接换来的，而现有的守卫一条都抓不到它。**
+ *
+ * 两套调色板并存时，`--accent` 在同一个 `:root` 里被声明了两次：shadcn 的 HSL
+ * 三元组 `240 3.7% 15.9%` 在前，本项目的十六进制 `#f5f5f5` 在后。CSS 是后者胜，
+ * 而 Tailwind 把这个名字包成 `hsl(var(--accent) / <alpha>)`，于是浏览器拿到
+ * `hsl(#f5f5f5 / 1)` —— 非法，在计算值阶段整条声明作废。后果是下拉菜单、选择器
+ * 和 ghost/outline 按钮**全部没有悬停背景**，而 header 的品牌角标因为渐变
+ * from 停失效变成黑底黑字，在两个主题里都看不见。
+ *
+ * ⚠️ **`tokens.test.ts` 那条「每个用到的类必须真的产出 CSS」抓不到这一类。**
+ * 那些类确实产出了规则——`.bg-accent { background-color: hsl(var(--accent) / …) }`
+ * 一字不差地在样式表里。坏掉的是变量的**运行时取值**，而那不在任何构建产物里。
+ * 一条守卫只看它自己能看见的层，这就是那一层的盲区。
+ *
+ * 这条断言不看值，只看名字出现几次。值相等的重复也不放行：`--radius` 曾经两条
+ * 都等于 8px，无害，但它和 `--accent` 是同一个形状，而下一次两条值不相等的时候
+ * 没有人会记得回来看。
+ */
+test("no custom property is declared twice in the same rule", () => {
+  const offenders: string[] = [];
+  for (const selector of [":root", ':root[data-theme="light"]']) {
+    const seen = new Map<string, string[]>();
+    for (const match of themeBlock(GLOBALS, selector).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+      seen.set(match[1], [...(seen.get(match[1]) ?? []), match[2].trim()]);
+    }
+    for (const [name, values] of seen) {
+      if (values.length > 1) {
+        offenders.push(`${selector} declares ${name} ${values.length} times: ${values.join(" then ")}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "a later declaration silently wins, and if the two spellings disagree the utility that wraps the name computes to nothing",
+  );
+
+  // 非空对照：解析器坏掉的话上面会一个都找不到而静静通过。
+  assert.ok(
+    themeBlock(GLOBALS, ":root").match(/--[\w-]+\s*:/g)!.length > 40,
+    "the declaration parse found almost nothing; it is the parse that broke, not the palette",
+  );
+});
+
+/**
  * ② The swept list is as large as the two derivations that feed it.
  *
  * The realistic regression is not somebody deleting this file. It is somebody
@@ -250,8 +410,21 @@ test("every colour token has a role, so a new one cannot arrive unnoticed", () =
  * disagree with itself.
  */
 test("the sweep covers every colour used as type, not a hand-written subset", () => {
-  const familyByPrefix = NAMES.filter((name) => name === "fg" || name.startsWith("fg-"));
-  const usedByRole = paintedAsType().filter((name) => !name.endsWith("-ink"));
+  const familyByPrefix = NAMES.filter(
+    (name) =>
+      name === "fg" ||
+      name.startsWith("fg-") ||
+      name === "foreground" ||
+      name === "muted-foreground",
+  );
+  // 墨有两种拼法，因为有两套调色板：本项目写 `--bad-ink`，shadcn 写
+  // `--destructive-foreground`。两者都是「画在自己那块填充上」，都由
+  // lib/tokens.test.ts 按填充去扫，所以两者都不属于这个 sweep。
+  // `--foreground` 和 `--muted-foreground` 是例外——它们是正文层级，不是墨——
+  // 而它们由上面的 familyByPrefix 补回来，所以这里一律排除是安全的。
+  const usedByRole = paintedAsType().filter(
+    (name) => !name.endsWith("-ink") && !name.endsWith("-foreground"),
+  );
   const expected = [...new Set([...familyByPrefix, ...usedByRole])].sort();
 
   assert.deepEqual(TEXT, expected);
@@ -259,12 +432,17 @@ test("the sweep covers every colour used as type, not a hand-written subset", ()
   assert.equal(TEXT.length, new Set(TEXT).size);
 
   const surfacesByPrefix = NAMES.filter(
-    (name) => name === "bg" || name === "surface" || name.startsWith("surface-"),
+    (name) =>
+      name === "bg" ||
+      name === "surface" ||
+      name.startsWith("surface-") ||
+      ["background", "card", "popover", "muted", "secondary"].includes(name),
   );
   assert.deepEqual(SURFACES, surfacesByPrefix);
 
-  assert.ok(TEXT.length >= 6, `only ${TEXT.length} colours swept as type; the derivation collapsed`);
-  assert.ok(SURFACES.length >= 4, `only ${SURFACES.length} surfaces found`);
+  // 下限跟着两套调色板一起抬高：只剩六个就说明其中一套整个掉出了 sweep。
+  assert.ok(TEXT.length >= 10, `only ${TEXT.length} colours swept as type; the derivation collapsed`);
+  assert.ok(SURFACES.length >= 9, `only ${SURFACES.length} surfaces found`);
   assert.deepEqual(THEMES, ["dark", "light"]);
 });
 
@@ -393,7 +571,7 @@ test("the compositor is alpha compositing and not a passthrough", () => {
  * role pattern is a convention and narrowing one is the realistic regression.
  *
  * Hand-writing this list is the move the whole file is against, and it is not
- * hypothetical here: `lib/tokens.test.ts` hand-writes `["accent-wash",
+ * hypothetical here: `lib/tokens.test.ts` hand-writes `["brand-wash",
  * "ok-wash"]` as the pair a *green* sits on, which was right for the card that
  * wrote it and is not a list of every wash in the console. There are five.
  */
@@ -450,10 +628,10 @@ function washedBackdrops(theme: string, depth: number): { name: string; hex: str
  *
  * A **chip** is a colour a recipe paints as text *in the same recipe that
  * paints a wash behind it* — `BADGE.tone.ok` is `bg-ok-wash text-ok`,
- * `SHELL.navLinkCurrent` is `bg-accent-wash … text-fg-accent`. A chip is a
+ * `SHELL.navLinkCurrent` is `bg-brand-wash … text-fg-accent`. A chip is a
  * self-contained tinted thing, and a chip can be put inside another tinted
  * thing: `components/conversation.tsx:377` renders a `Badge` inside
- * `INBOX.messageOut`, which is `bg-accent-wash`. **Two layers is a real
+ * `INBOX.messageOut`, which is `bg-brand-wash`. **Two layers is a real
  * constraint for a chip**, and `lib/tokens.test.ts` sweeps it as such.
  *
  * ⚠️ **Where the second layer stops being observed and starts being
@@ -480,7 +658,7 @@ function washedBackdrops(theme: string, depth: number): { name: string; hex: str
  *
  * The split is by **use and never by name**, which is the whole point of
  * deriving it. `--fg-accent` is an `fg-*` token and lands in `CHIP` anyway,
- * because `SHELL.navLinkCurrent` paints it on `bg-accent-wash`; `--ok`,
+ * because `SHELL.navLinkCurrent` paints it on `bg-brand-wash`; `--ok`,
  * `--warn`, `--bad` and `--info` land there for the same reason and not
  * because of what they are called. Sorting colours by the family in their name
  * is the move that lost `--fg-faint`, and nothing here does it.
@@ -514,7 +692,7 @@ test("the wash list is derived from both the roles and the recipes", () => {
   /**
    * 🔴 The by-name half must agree with the **role table**, not merely with
    * itself. Found by mutation, and it was a genuine hole: narrowing the `wash`
-   * role to one literal lets `--accent-wash` and the rest fall through to
+   * role to one literal lets `--brand-wash` and the rest fall through to
    * `fill` rather than becoming unclassified, so the role test stays green —
    * and the by-use half of the union above quietly puts them back, so the
    * sweep stays the same size and every other assertion here is satisfied.
@@ -570,7 +748,7 @@ test("every colour painted as type is either a chip or ladder text", () => {
    * family**, which is derived from names and so cannot absorb the change:
    * *which type tiers do the recipes paint on a wash?*
    *
-   * Exactly one may, and it is `--fg-accent`, because `--accent-wash` exists
+   * Exactly one may, and it is `--fg-accent`, because `--brand-wash` exists
    * precisely to carry it — `SHELL.navLinkCurrent` is the current navigation
    * item. Any *second* tier appearing here means a tier has become chip text,
    * which is the recipe-visible half of the falsification condition written out
@@ -606,7 +784,7 @@ test("every colour painted as type is either a chip or ladder text", () => {
  * wash is a *badge*, which contains a status word and never contains metadata.
  * In `components/conversation.tsx` this is visible directly: `INBOX.metaTime`
  * and `INBOX.binaryNote` are **siblings of the `Badge`, not children of it**,
- * so they sit on the one `accent-wash` of the bubble and no deeper. Two layers
+ * so they sit on the one `brand-wash` of the bubble and no deeper. Two layers
  * is a real constraint for a chip and an **unreachable** superset for ladder
  * text.
  *
@@ -625,13 +803,13 @@ test("every colour painted as type is either a chip or ladder text", () => {
  * palette current as this is written the ladder's worst cell at two layers is
  * `--fg-faint` at **3.831** on `--ok-wash over --ok-wash over --surface-hover`
  * (`#284f3e`), and the next one down is **3.893** on `--ok-wash over
- * --accent-wash over --surface-hover` (`#364b42`). Both are short. So this
+ * --brand-wash over --surface-hover` (`#364b42`). Both are short. So this
  * exception is load-bearing: it is the only reason the ladder is green, and
  * the number it is holding back is printed beside it every time the suite
  * runs.
  *
  * ⚠️ **`#364b42` used to be described here as "the *real* nesting rather than
- * the superset" — an `ok-wash` badge inside the `accent-wash` bubble on a
+ * the superset" — an `ok-wash` badge inside the `brand-wash` bubble on a
  * hovered row. It is not.** Its third layer is `--surface-hover`, so it needs
  * a row that can be hovered, and §456-465 above has already struck exactly
  * that claim: the conversation is an `ol`/`li` with no hover variant, and the
@@ -641,7 +819,7 @@ test("every colour painted as type is either a chip or ladder text", () => {
  *
  * The conclusion is unchanged, and that is worth saying plainly rather than
  * quietly deleting a sentence. Take only stacks that really are painted — no
- * hover — and the same cell is `--ok-wash over --accent-wash over --surface`
+ * hover — and the same cell is `--ok-wash over --brand-wash over --surface`
  * at 4.757, which passes, but `… over --surface-raised` at **4.341**, which
  * still does not. The exception is holding something real either way; it was
  * only the label that was wrong.

@@ -17,7 +17,7 @@ export default async function LoginPage({
       <div className={CENTERED.card}>
         <div className={CENTERED.brand}>
           <span
-            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
             aria-hidden="true"
           >
             V

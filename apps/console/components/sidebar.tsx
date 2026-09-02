@@ -29,7 +29,7 @@ export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string
     <aside className="hidden w-rail shrink-0 flex-col border-r border-border bg-surface md:flex">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-base font-semibold tracking-tight text-foreground">
         <span
-          className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+          className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
           aria-hidden="true"
         >
           V
@@ -62,7 +62,7 @@ export function Sidebar({ locale, pathname }: { locale: Locale; pathname: string
                   aria-current={state === "page" ? "page" : undefined}
                   className={cn(
                     "flex min-h-touch items-center gap-2 rounded px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground",
-                    state ? "bg-accent-wash font-semibold text-foreground" : undefined,
+                    state ? "bg-brand-wash font-semibold text-foreground" : undefined,
                   )}
                 >
                   <NavIcon d={item.icon} />

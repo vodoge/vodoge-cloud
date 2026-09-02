@@ -101,9 +101,9 @@ export const COLOR_TOKENS = {
   // both sides, and the ink keeps 13.937 / 13.965 on it. Deriving it the other
   // way — toward the canvas — would be a smaller move than the eye can hold at
   // these luminances.
-  accent: { dark: "#f5f5f5", light: "#0f0f0f" },
-  "accent-strong": { dark: "#d3d3d3", light: "#2c2c2c" },
-  "accent-ink": { dark: "#010102", light: "#ffffff" },
+  brand: { dark: "#f5f5f5", light: "#0f0f0f" },
+  "brand-strong": { dark: "#d3d3d3", light: "#2c2c2c" },
+  "brand-ink": { dark: "#010102", light: "#ffffff" },
   // The accent when it has to be *seen as a line* rather than filled or read:
   // the focus outline, the current tab's rule, an input's focused edge. Its
   // bar is the 3:1 that WCAG 1.4.11 sets for non-text. T049 needed a third
@@ -112,7 +112,7 @@ export const COLOR_TOKENS = {
   // 12.180 light on the worst backdrop a focused control sits against — so
   // this equals the fill in both themes. The entry stays for the same reason
   // the readable one does: the role is real even when two roles agree today.
-  "accent-edge": { dark: "#f5f5f5", light: "#0f0f0f" },
+  "brand-edge": { dark: "#f5f5f5", light: "#0f0f0f" },
   // The accent as a tint, behind the current navigation item and an outbound
   // message. Neutral now, because its colour is the accent's.
   //
@@ -135,7 +135,7 @@ export const COLOR_TOKENS = {
   // dark theme, a little heavier in the light one, neither by enough to change
   // what the tint is for. It is not tuned to match the old weight — the bar
   // above is what picks it.
-  "accent-wash": { dark: "rgba(245, 245, 245, 0.1)", light: "rgba(15, 15, 15, 0.06)" },
+  "brand-wash": { dark: "rgba(245, 245, 245, 0.1)", light: "rgba(15, 15, 15, 0.06)" },
 
   // Status. These carry meaning, so they are never used decoratively.
   // Each is only ever read, never filled — what sits behind it is the separate
@@ -162,7 +162,7 @@ export const COLOR_TOKENS = {
   // ⚠️ **#284f3e is the guard's deliberate superset and not a stack anyone has
   // ever seen.** An earlier draft of this comment described it as a red
   // delivery badge inside a green outbound bubble on a hovered row. That site
-  // does not exist: the outbound bubble is `--accent-wash`, which T001 made
+  // does not exist: the outbound bubble is `--brand-wash`, which T001 made
   // neutral, and nothing in that subtree has a hover state. The worst stack
   // really painted is that same red badge inside the neutral bubble, #413030,
   // where the old red measured 4.127 — still short, so the defect was real and
@@ -1052,11 +1052,11 @@ export const TABLE = {
 } as const;
 
 export const BUTTON = {
-  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-all active:translate-y-px focus-visible:outline-none focus-visible:ring focus-visible:ring-accent-edge focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
+  base: "inline-flex cursor-pointer items-center justify-center gap-s2 whitespace-nowrap rounded border border-transparent font-semibold transition-all active:translate-y-px focus-visible:outline-none focus-visible:ring focus-visible:ring-brand-edge focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
   variant: {
-    primary: "bg-accent text-accent-ink hover:bg-accent-strong",
+    primary: "bg-brand text-brand-ink hover:bg-brand-strong",
     ghost:
-      "border-line-strong bg-transparent text-fg-muted hover:border-accent-edge hover:bg-surface-hover hover:text-fg",
+      "border-line-strong bg-transparent text-fg-muted hover:border-brand-edge hover:bg-surface-hover hover:text-fg",
     subtle: "bg-transparent text-fg-muted hover:bg-surface-hover hover:text-fg",
     /**
      * Colour is a hint, never the safeguard. The confirmation is. This fleet
@@ -1223,7 +1223,7 @@ export const SHELL = {
    */
   brandName: "sr-only sm:not-sr-only",
   brandMark:
-    "flex size-s5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink",
+    "flex size-s5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink",
   side: "ml-auto flex flex-wrap items-center gap-s2",
   tenant:
     "inline-flex items-center gap-s2 rounded-pill border border-line bg-surface-hover px-s3 py-s1 text-xs text-fg-muted",
@@ -1281,7 +1281,7 @@ export const SHELL = {
   /** Full touch height, and a glyph in front of the word. */
   navLink:
     "flex min-h-touch items-center gap-s2 rounded px-s3 text-sm text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg",
-  navLinkCurrent: "bg-accent-wash font-semibold text-fg-accent",
+  navLinkCurrent: "bg-brand-wash font-semibold text-fg-accent",
   /**
    * The glyph itself, at both sizes it is drawn.
    *
@@ -1490,7 +1490,7 @@ export const BOTTOM_NAV = {
   sheetLabel: "px-s2 py-s1 font-mono text-xs font-medium uppercase tracking-eyebrow text-fg-faint",
   sheetLink:
     "flex min-h-touch items-center gap-s3 rounded px-s3 text-sm text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg",
-  sheetLinkCurrent: "bg-accent-wash font-semibold text-fg-accent",
+  sheetLinkCurrent: "bg-brand-wash font-semibold text-fg-accent",
   /**
    * The gutter, and the reason it is an element rather than padding.
    *
@@ -1621,7 +1621,7 @@ export const FORM = {
   root: "flex flex-col gap-s3",
   label: "flex flex-col gap-s1 text-sm font-medium text-fg-muted",
   input:
-    "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent-edge disabled:opacity-50",
+    "min-h-touch w-full rounded border border-line-strong bg-bg px-s3 text-sm text-fg placeholder:text-fg-faint focus:border-brand-edge disabled:opacity-50",
   /**
    * The same box as `input`, minus the placeholder a `select` cannot have.
    * The native arrow is left alone: removing it means drawing and positioning
@@ -1629,7 +1629,7 @@ export const FORM = {
    * is the kind of polish that costs an operator a tap.
    */
   select:
-    "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-accent-edge disabled:opacity-50",
+    "min-h-touch w-full cursor-pointer rounded border border-line-strong bg-bg px-s3 text-sm text-fg focus:border-brand-edge disabled:opacity-50",
   /**
    * A `select` inside a table cell rather than inside a field.
    *
@@ -1649,7 +1649,7 @@ export const FORM = {
    * change of type scale; a `min-h-*` here would not.
    */
   textarea:
-    "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-accent-edge disabled:opacity-50",
+    "w-full resize-y rounded border border-line-strong bg-bg p-s3 text-sm text-fg placeholder:text-fg-faint focus:border-brand-edge disabled:opacity-50",
   error: "m-0 text-sm text-bad",
   /** Not an error. `.hint` in the old stylesheet: a note under a control. */
   hint: "m-0 text-sm text-fg-muted",
@@ -1675,7 +1675,7 @@ export const FORM = {
    * cell, which is the same defect as the `width: 100%` one, on the other axis.
    * Found by measuring, not by reading.
    */
-  checkbox: "size-s4 min-h-s4 shrink-0 cursor-pointer accent-accent disabled:opacity-50",
+  checkbox: "size-s4 min-h-s4 shrink-0 cursor-pointer accent-brand disabled:opacity-50",
   /**
    * A field and its own submit, side by side — sixteen of these across four
    * components, five in `device-console.tsx` alone, and no recipe until now.
@@ -1795,7 +1795,7 @@ export const TABS = {
   list: "flex flex-wrap items-center gap-x-s4 border-0 border-b border-solid border-line",
   tab: "inline-flex min-h-touch cursor-pointer items-center whitespace-nowrap rounded-none border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-s1 text-sm font-semibold text-fg-muted transition-colors hover:text-fg",
   /** The underline, not a fill: a filled tab competes with the primary button. */
-  tabCurrent: "border-accent-edge text-fg",
+  tabCurrent: "border-brand-edge text-fg",
   panel: "pt-s4",
 } as const;
 
@@ -1946,7 +1946,7 @@ export const INBOX = {
   /** Received: at the left, on the page's own surface. */
   messageIn: "self-start rounded-bl bg-surface",
   /** Sent: at the right, tinted with the accent. */
-  messageOut: "self-end rounded-br bg-accent-wash",
+  messageOut: "self-end rounded-br bg-brand-wash",
   /**
    * Breaking the word is for the same reason as `lastBody`, and it was measured
    * here too: with only the `overflow-wrap` utility, the outbound bubble

@@ -743,16 +743,16 @@ const OFFLINE_PALETTE: {
   { token: "--fg", where: "body { color }", hex: (r) => offlineDeclaration(r, "body", "color") },
   { token: "--fg-muted", where: "p { color }", hex: (r) => offlineDeclaration(r, "p", "color") },
   {
-    token: "--accent",
+    token: "--brand",
     where: ".mark { background } gradient, first stop",
     hex: (r) => gradientStops(r)[0],
   },
   {
-    token: "--accent-strong",
+    token: "--brand-strong",
     where: ".mark { background } gradient, second stop",
     hex: (r) => gradientStops(r)[1],
   },
-  { token: "--accent-ink", where: ".mark { color }", hex: (r) => offlineDeclaration(r, ".mark", "color") },
+  { token: "--brand-ink", where: ".mark { color }", hex: (r) => offlineDeclaration(r, ".mark", "color") },
 ];
 
 /** The two stops of `.mark`'s gradient, in the order they are painted. */
@@ -972,7 +972,7 @@ const ICON_SOURCES: Record<string, string> = {
 };
 
 test("each icon is the whole drawing rather than a corner of it", () => {
-  const accent = rgbOf(COLOR_TOKENS.accent.dark);
+  const accent = rgbOf(COLOR_TOKENS.brand.dark);
   const background = rgbOf(COLOR_TOKENS.bg.dark);
 
   for (const [png, svg] of Object.entries(ICON_SOURCES)) {
@@ -1113,7 +1113,7 @@ function paintableColours(): Map<number, string> {
   assert.ok(opaque.length > 0 && washes.length > 0, "COLOR_TOKENS parsed to nothing");
 
   // Two roundings, because the browser and the arithmetic disagree by one.
-  // Chromium quantises alpha to 8 bits BEFORE compositing, so `--accent-wash`
+  // Chromium quantises alpha to 8 bits BEFORE compositing, so `--brand-wash`
   // at 0.1 is 26/255 and lands on #252525 over `--surface`, where exact
   // arithmetic says #242424. Measured off the real capture, not assumed —
   // #252525 covers 1,876 px of the wide frame and was the largest colour the
@@ -2540,7 +2540,16 @@ const CAPTURED_FROM = {
   //   STAT        看得见  两帧最上面那三张统计卡，label 与 hint 同上变暗
   //
   // 也就是说：**四次里有三次欠着重拍**，而它们叠在一起。
-  chrome: "f63f5e64b3d857fb1b721e7932b6be7c4272efaaaed33392455ca391209b94f6",
+  //
+  // 🔴 **第四笔，性质和前三笔都不同：这次动的是调色板本身，不是用了哪个类。**
+  // 换主题带进来的四个对比度缺陷一并修掉了，其中三个改的是变量的值：
+  //   --destructive       0 62.8% 30.6% → 358 100% 83.1%（= --bad，暗色 2.08→10.92）
+  //   --muted-foreground  240 5% 64.9%  → 0 0% 65.5%     （= --fg-faint）
+  //   --brand             #7dd3a0       → #f5f5f5        （无色相，亮色 1.80→19.17）
+  // 前两个在两帧里到处都是（次级文字、统计卡标签、导航），所以这一次连「哪些
+  // 像素动了」都不必推断——大面积都动了。仍然拍不了：要浏览器、特定视口和一个
+  // 已登录的会话，本机没有网关也没有数据库。
+  chrome: "aed47a2de88be9c1cf2d9d8acbc8e4c2a07da42c6b6c6f392d202d762a90089e",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

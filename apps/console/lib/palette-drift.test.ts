@@ -133,7 +133,7 @@ const ICON_PAINT: { file: string; where: string; token: string; read: (svg: stri
   {
     file: "icon.svg",
     where: "icon.svg <path stroke>",
-    token: "--accent",
+    token: "--brand",
     read: (svg) => attribute(svg, "path", "stroke"),
   },
   {
@@ -145,7 +145,7 @@ const ICON_PAINT: { file: string; where: string; token: string; read: (svg: stri
   {
     file: "icon-maskable.svg",
     where: "icon-maskable.svg <path stroke>",
-    token: "--accent",
+    token: "--brand",
     read: (svg) => attribute(svg, "path", "stroke"),
   },
 ];
@@ -340,7 +340,7 @@ test("the install screenshots still carry the rest of the dark ramp", () => {
   const missing: string[] = [];
   for (const name of SCREENSHOTS) {
     const counts = histogram(name);
-    for (const token of ["--line", "--fg", "--fg-muted", "--accent"]) {
+    for (const token of ["--line", "--fg", "--fg-muted", "--brand"]) {
       const value = dark.get(token);
       assert.ok(value, `globals.css :root no longer declares ${token}`);
       const seen = counts.get(normalise(value)) ?? 0;

@@ -742,16 +742,16 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
 });
 
 /**
- * `--accent-ink` is the only colour this design paints *on top of* the
+ * `--brand-ink` is the only colour this design paints *on top of* the
  * accent, and it is painted on two different accents, not one.
- * `BUTTON.variant.primary` is `bg-accent` at rest and `bg-accent-strong` on
+ * `BUTTON.variant.primary` is `bg-accent` at rest and `bg-brand-strong` on
  * hover while the ink stays where it is, and `SHELL.brandMark` runs a
- * gradient between the same two. `--accent-strong` is the darker of the pair
+ * gradient between the same two. `--brand-strong` is the darker of the pair
  * in both themes, so it is the binding case — and it is the one that a check
  * of the rest state alone silently misses.
  *
  * 🔴 The light theme failed this until this card. The ink was `#ffffff`:
- * 2.681 on `--accent` and 3.596 on `--accent-strong`, so the rest state did
+ * 2.681 on `--accent` and 3.596 on `--brand-strong`, so the rest state did
  * not reach even the 3:1 floor that large text gets, and the hover state did
  * not reach 4.5 either. The button's label is `text-sm`/`font-semibold`,
  * which is body text, so 4.5 is the bar for both. The fix was the ink and not
@@ -761,7 +761,7 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
  * the thing to get right before editing these two values again. While the ink
  * was white, a *darker* fill helped. Now that the ink is `#06251a`, contrast
  * falls monotonically as the fill darkens: `--accent` itself is 6.084, the
- * old `--accent-strong` `#0d9a68` was 4.536, and two points darker again is
+ * old `--brand-strong` `#0d9a68` was 4.536, and two points darker again is
  * 3.976. So the hover fill was moved *up* to `#0fa36f` (5.041) rather than
  * down. It is still darker than `--accent` — hover still reads as hover, the
  * two fills being 1.207:1 apart — but the margin over 4.5 is now half a point
@@ -772,15 +772,15 @@ test("the contrast helper reproduces ratios the specification fixes", () => {
  * fill for contrast, which is precisely backwards, and this goes red when
  * they do.
  */
-const ACCENT_BACKGROUNDS = ["accent", "accent-strong"] as const;
+const ACCENT_BACKGROUNDS = ["brand", "brand-strong"] as const;
 
-test("--accent-ink clears 4.5:1 on every accent it is painted on, in both themes", () => {
+test("--brand-ink clears 4.5:1 on every accent it is painted on, in both themes", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const failures: string[] = [];
 
   for (const theme of ["dark", "light"] as const) {
-    const ink = colours["accent-ink"][theme];
+    const ink = colours["brand-ink"][theme];
     for (const name of ACCENT_BACKGROUNDS) {
       const background = colours[name][theme];
       const ratio = contrastRatio(ink, background);
@@ -795,7 +795,7 @@ test("--accent-ink clears 4.5:1 on every accent it is painted on, in both themes
 
 /**
  * The two accent ratios, pinned to the digit, so that a later edit to
- * `--accent`, `--accent-strong` or either ink cannot move them at all without
+ * `--brand`, `--brand-strong` or either ink cannot move them at all without
  * saying so here rather than drifting quietly toward the threshold above.
  *
  * 🔴 **These were 9.49 and 7.2 until T001 took the hue out of the accent.**
@@ -809,21 +809,21 @@ test("--accent-ink clears 4.5:1 on every accent it is painted on, in both themes
  */
 test("the accent contrast in both themes is exactly what T001 set", () => {
   const colours = TOKENS.COLOR_TOKENS;
-  const at = (theme: "dark" | "light", fill: "accent" | "accent-strong") =>
-    Number(contrastRatio(colours["accent-ink"][theme], colours[fill][theme]).toFixed(2));
+  const at = (theme: "dark" | "light", fill: "brand" | "brand-strong") =>
+    Number(contrastRatio(colours["brand-ink"][theme], colours[fill][theme]).toFixed(2));
 
   assert.deepEqual(
     {
-      "dark ink on accent": at("dark", "accent"),
-      "dark ink on accent-strong": at("dark", "accent-strong"),
-      "light ink on accent": at("light", "accent"),
-      "light ink on accent-strong": at("light", "accent-strong"),
+      "dark ink on brand": at("dark", "brand"),
+      "dark ink on brand-strong": at("dark", "brand-strong"),
+      "light ink on brand": at("light", "brand"),
+      "light ink on brand-strong": at("light", "brand-strong"),
     },
     {
-      "dark ink on accent": 19.14,
-      "dark ink on accent-strong": 13.94,
-      "light ink on accent": 19.17,
-      "light ink on accent-strong": 13.97,
+      "dark ink on brand": 19.14,
+      "dark ink on brand-strong": 13.94,
+      "light ink on brand": 19.17,
+      "light ink on brand-strong": 13.97,
     },
   );
 });
@@ -848,7 +848,7 @@ test("the accent contrast in both themes is exactly what T001 set", () => {
  *    this file's text tiers, so a fourth `--fg-*` entry is text by
  *    construction, and everything under `--accent-*` is a fill, a border or a
  *    tint. `--accent-text` would instead have sat one letter from
- *    `--accent-ink` in meaning-space — ink is what you paint *on* the accent,
+ *    `--brand-ink` in meaning-space — ink is what you paint *on* the accent,
  *    text is the accent *as* type — and `text-accent-text` stutters where
  *    `text-fg-accent` reads like `text-fg-muted`.
  *
@@ -868,7 +868,7 @@ test("the accent contrast in both themes is exactly what T001 set", () => {
  */
 const GREEN_TEXT: RegExp = /(?:^|\s)(?:[a-z-]+:)*text-([a-z0-9-]+)/g;
 /** A recipe that paints an opaque accent fill: its text is ink, tested above. */
-const ACCENT_FILL: RegExp = /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-accent(?:-strong)?(?:\s|$)/;
+const ACCENT_FILL: RegExp = /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-brand(?:-strong)?(?:\s|$)/;
 
 function hueAndSaturation(hex: string): [number, number] {
   const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
@@ -902,7 +902,7 @@ function over(wash: string, backdrop: string): string {
 }
 
 const OPAQUE_SURFACES = ["bg", "surface", "surface-raised", "surface-hover"] as const;
-const WASHES = ["accent-wash", "ok-wash"] as const;
+const WASHES = ["brand-wash", "ok-wash"] as const;
 
 /**
  * Every backdrop a green word can end up on — deliberately a superset of the
@@ -912,7 +912,7 @@ const WASHES = ["accent-wash", "ok-wash"] as const;
  * One stacked entry is real and the description of it used to be wrong twice
  * over. `components/conversation.tsx:377` does put a `bg-ok-wash` delivery
  * badge inside `INBOX.messageOut`, so a badge inside a bubble is a genuine
- * nesting — but T001 took the hue out of `--accent-wash`, so **it is a green
+ * nesting — but T001 took the hue out of `--brand-wash`, so **it is a green
  * pill on a NEUTRAL bubble, not "a green pill on a green bubble"**, and that
  * is a lighter backdrop than the phrase implies.
  *
@@ -979,7 +979,7 @@ function washesForTextToken(token: string): string[] {
  * below instead of quietly outside it.
  *
  * A recipe that also paints an opaque accent fill is excluded: its text is
- * `--accent-ink`, which is painted on the accent and not on a surface, and
+ * `--brand-ink`, which is painted on the accent and not on a surface, and
  * that pair is the test further up.
  */
 function greensPaintedAsTextOnASurface(): string[] {
@@ -1035,7 +1035,7 @@ test("the green painted as text on a surface is the one T001 left with a hue", (
  * table only ever composited a wash over white. `#0a704c` is the lightest
  * green on the brand's exact hue (158.78°) and saturation (83.7%) whose worst
  * backdrop clears 4.5 by the same half-point margin T046 itself insisted on
- * when it moved `--accent-strong` up rather than down.
+ * when it moved `--brand-strong` up rather than down.
  */
 test("every green painted as text clears 4.5:1 on every backdrop, in both themes", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
@@ -1065,7 +1065,7 @@ test("every green painted as text clears 4.5:1 on every backdrop, in both themes
  *
  * Painting `--accent` as text is the defect being repaired, and painting
  * `--fg-accent` as a fill is its mirror image: at `#0a704c` the button's
- * `--accent-ink` would sit on it at 2.668, which is worse than what was there
+ * `--brand-ink` would sit on it at 2.668, which is worse than what was there
  * before. Neither can be expressed in a recipe after this test.
  */
 test("the fill green is never text and the text green is never a fill", () => {
@@ -1099,7 +1099,7 @@ test("the dark theme's green-on-surface contrast is exactly what T001 set", () =
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   // The readable accent is the accent, which is the text colour.
-  assert.equal(colours["fg-accent"].dark, colours.accent.dark);
+  assert.equal(colours["fg-accent"].dark, colours.brand.dark);
   assert.equal(colours["fg-accent"].dark, colours.fg.dark);
   // The status green is untouched by this card, stated as the hex because a
   // ratio can be held still by two compensating edits.
@@ -1140,7 +1140,7 @@ test("the dark theme's green-on-surface contrast is exactly what T001 set", () =
  * three numbers edited. T049 measured these over the two washes a *green* sits
  * on, and every one of the three was worse than that said. The washes
  * themselves did not move — they are literal `rgba()` and do not follow the
- * colour, exactly as `--accent-wash` did not follow the green — so the pale
+ * colour, exactly as `--brand-wash` did not follow the green — so the pale
  * pills behind these words look the same and only the words darkened.
  */
 const STATUS_TEXT_TOKENS = ["warn", "bad", "info"] as const;
@@ -1219,7 +1219,7 @@ test("every status colour painted as text clears 4.5:1 on every backdrop it has,
  *    real looks here first, and stops searching.
  *
  * ② **The neutral accent is four identities, not four coincidences.** A green
- *    accent needed `--fg-accent` and `--accent-edge` to be separate values in
+ *    accent needed `--fg-accent` and `--brand-edge` to be separate values in
  *    the light theme; a neutral one does not, and the risk swaps round — the
  *    next editor gives one of them a hue of its own and the console quietly
  *    grows a brand colour back. Written as equalities so that landing a hue on
@@ -1246,15 +1246,15 @@ test("the status four are pinned as hexes and the accent is four identities", ()
   );
 
   for (const theme of ["dark", "light"] as const) {
-    assert.equal(colours.accent[theme], colours.fg[theme], `${theme}: --accent is not --fg`);
-    assert.equal(colours["fg-accent"][theme], colours.accent[theme], `${theme}: --fg-accent`);
-    assert.equal(colours["accent-edge"][theme], colours.accent[theme], `${theme}: --accent-edge`);
-    assert.equal(colours["accent-ink"][theme], colours.bg[theme], `${theme}: --accent-ink`);
+    assert.equal(colours.brand[theme], colours.fg[theme], `${theme}: --brand is not --fg`);
+    assert.equal(colours["fg-accent"][theme], colours.brand[theme], `${theme}: --fg-accent`);
+    assert.equal(colours["brand-edge"][theme], colours.brand[theme], `${theme}: --brand-edge`);
+    assert.equal(colours["brand-ink"][theme], colours.bg[theme], `${theme}: --brand-ink`);
     // A neutral has no hue to have, so this is the whole of "no brand colour".
     assert.equal(
-      hueAndSaturation(colours.accent[theme])[1],
+      hueAndSaturation(colours.brand[theme])[1],
       0,
-      `${theme}: the accent has grown a hue back`,
+      `${theme}: the brand colour has grown a hue back`,
     );
   }
 });
@@ -1267,7 +1267,7 @@ test("the status four are pinned as hexes and the accent is four identities", ()
  * part worth carrying forward.** A sweep of the four bare surfaces reports
  * 6.931 for the old `--bad` and 8.231 for the old `--info` — both comfortable,
  * and both what three earlier contrast cards saw. `washesForTextToken` unions a
- * token's own wash with `WASHES` (`--accent-wash` and `--ok-wash`), and
+ * token's own wash with `WASHES` (`--brand-wash` and `--ok-wash`), and
  * `everyBackdrop` then stacks them **twice**, which is 52 backdrops rather than
  * four. On the worst of those, `--ok-wash` over `--ok-wash` over
  * `--surface-hover` — hex **#284f3e** — the same two colours were **3.062** and
@@ -1276,7 +1276,7 @@ test("the status four are pinned as hexes and the accent is four identities", ()
  *
  * ⚠️ **The stacked entries are a deliberate superset and were not narrowed to
  * make this pass.** The literal red site today is a `bg-bad-wash text-bad`
- * badge inside `INBOX.messageOut` (`bg-accent-wash`), which composites to
+ * badge inside `INBOX.messageOut` (`bg-brand-wash`), which composites to
  * #413030 and is easier than #284f3e. Trimming the set to the sites that exist
  * this month is the move that produced the defect in the first place, one
  * level further out, so the superset stands and the colours were moved to meet
@@ -1378,23 +1378,23 @@ test("the dark theme's status colours clear the bar on every backdrop they have"
  * brand's exact hue and saturation clearing 3:1 by half a point.
  *
  * Light 2.035 -> **3.527** on the worst backdrop, 2.414-2.681 -> 4.184-4.648
- * on the four surfaces. `--accent-strong` was measured as a candidate first
+ * on the four surfaces. `--brand-strong` was measured as a candidate first
  * and rejected at **3.046** on the page — a margin of 0.046, which is the
  * margin T046 refused to ship a fill at.
  */
 const NON_TEXT_BAR = 3;
 
-test("--accent-edge clears 3:1 on every backdrop, in both themes", () => {
+test("--brand-edge clears 3:1 on every backdrop, in both themes", () => {
   const colours: Record<string, { readonly dark: string; readonly light: string }> =
     TOKENS.COLOR_TOKENS;
   const failures: string[] = [];
 
   for (const theme of ["dark", "light"] as const) {
     for (const backdrop of everyBackdrop(colours, theme)) {
-      const ratio = contrastRatio(colours["accent-edge"][theme], backdrop.hex);
+      const ratio = contrastRatio(colours["brand-edge"][theme], backdrop.hex);
       if (ratio < NON_TEXT_BAR) {
         failures.push(
-          `${theme}: --accent-edge ${colours["accent-edge"][theme]} on ${backdrop.name} ` +
+          `${theme}: --brand-edge ${colours["brand-edge"][theme]} on ${backdrop.name} ` +
             `${backdrop.hex} = ${ratio.toFixed(3)}:1`,
         );
       }
@@ -1413,20 +1413,20 @@ test("the focus outline is drawn in the edge green, not the fill green", () => {
   assert.equal(rules.length, 1, "expected exactly one :focus-visible rule in globals.css");
   const outline = /outline:\s*([^;]+);/.exec(rules[0].body);
   assert.notEqual(outline, null, ":focus-visible sets no outline");
-  assert.match(outline![1], /var\(--accent-edge\)/);
+  assert.match(outline![1], /var\(--brand-edge\)/);
   assert.doesNotMatch(outline![1], /var\(--accent\)/);
 });
 
 /**
- * The mirror of T049's role guard, for the role it added. `--accent-edge` is a
+ * The mirror of T049's role guard, for the role it added. `--brand-edge` is a
  * line: it is never read as type, and the bare fill green is never drawn as a
  * line again, which is the regression this whole section exists to prevent.
  */
 test("the edge green is only ever a line, and no line is drawn in the fill green", () => {
   const offenders = everyRecipeString(TOKENS).filter(
     (recipe) =>
-      /(?:^|\s)(?:[a-z-]+:)*text-accent-edge(?:\s|$)/.test(recipe) ||
-      /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-accent-edge(?:\s|$)/.test(recipe) ||
+      /(?:^|\s)(?:[a-z-]+:)*text-brand-edge(?:\s|$)/.test(recipe) ||
+      /(?:^|\s)(?:[a-z-]+:)*(?:bg|from|to|via)-brand-edge(?:\s|$)/.test(recipe) ||
       /(?:^|\s)(?:[a-z-]+:)*(?:border|ring|outline|divide)-accent(?:\s|$)/.test(recipe),
   );
   assert.deepEqual(offenders, []);
@@ -1450,7 +1450,7 @@ test("the edge green is only ever a line, and no line is drawn in the fill green
  * files now carry. Nothing was asserting either number, which is how one of
  * them stayed wrong; the sweep below asserts the bar rather than the digits.
  *
- * ⚠️ **`--bad-ink` is themed where `--accent-ink` is not, and that is the
+ * ⚠️ **`--bad-ink` is themed where `--brand-ink` is not, and that is the
  * whole content of the decision.** The accent is a light green in both themes,
  * so one dark ink serves both. This red is pale in the dark theme and deep in
  * the light one — it has to be, because the same token is *read* on a dark
@@ -1462,9 +1462,9 @@ test("the edge green is only ever a line, and no line is drawn in the fill green
  * filled status button is covered without anyone remembering to come back.
  */
 const OPAQUE_STATUS_FILLS = [
-  "accent",
-  "accent-strong",
-  "accent-edge",
+  "brand",
+  "brand-strong",
+  "brand-edge",
   "ok",
   "warn",
   "bad",
@@ -1491,7 +1491,7 @@ test("a recipe that fills with a status or accent colour carries an ink chosen a
   // console have to be in here, or the sweep has stopped seeing the recipes.
   assert.deepEqual(
     [...new Set(pairs.map((p) => `${p.ink} on ${p.fill}`))].sort(),
-    ["accent-ink on accent", "accent-ink on accent-strong", "bad-ink on bad"],
+    ["bad-ink on bad", "brand-ink on brand", "brand-ink on brand-strong"],
   );
 
   const failures: string[] = [];

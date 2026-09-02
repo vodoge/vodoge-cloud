@@ -67,7 +67,7 @@ export function Shell({
               className="flex items-center gap-2 text-base font-semibold tracking-tight text-foreground md:hidden"
             >
               <span
-                className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-accent to-accent-strong text-xs font-bold text-accent-ink"
+                className="flex size-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-brand to-brand-strong text-xs font-bold text-brand-ink"
                 aria-hidden="true"
               >
                 V

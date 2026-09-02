@@ -157,8 +157,6 @@ const SHADCN_COLORS = {
   border: "hsl(var(--border) / <alpha-value>)",
   input: "hsl(var(--input) / <alpha-value>)",
   ring: "hsl(var(--ring) / <alpha-value>)",
-  /** 这个产品自己的强调色，从 accent 让位之后的名字。 */
-  brand: "var(--brand)",
 } as const;
 
 export default {
@@ -241,7 +239,9 @@ export default {
       // states the same value, and `lib/tokens.test.ts` asserts the two agree
       // so switching preflight on cannot recolour anything.
       borderColor: { DEFAULT: "var(--line)" },
-      ringColor: { DEFAULT: "var(--accent)" },
+      // 🔴 `--accent` 现在是 shadcn 的悬停面，而且是 HSL 三元组——裸 var() 包不住它。
+      // 默认环用本项目的边线强调色，那正是它一直以来的含义。
+      ringColor: { DEFAULT: "var(--brand-edge)" },
       ringOffsetColor: { DEFAULT: "var(--bg)" },
     },
   },

@@ -68,7 +68,7 @@ export function NavMore({
               onClick={() => setOpen(false)}
               className={cn(
                 "flex min-h-touch items-center gap-3 rounded px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground",
-                item.current ? "bg-accent-wash font-semibold text-foreground" : undefined,
+                item.current ? "bg-brand-wash font-semibold text-foreground" : undefined,
               )}
             >
               <NavIcon d={item.icon} />

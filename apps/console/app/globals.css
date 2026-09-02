@@ -77,19 +77,25 @@
   --secondary: 240 3.7% 15.9%;
   --secondary-foreground: 0 0% 98%;
   --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
+  /* = --fg-faint #a7a7a7。shadcn 的 240 5% 64.9% 是照它自己的两层表面调的，
+     而这个控制台有四层：亮色下它在抬升面上掉到 3.91。这里指回本项目已经
+     针对这条梯子推导过的那一层，最差 7.007。 */
+  --muted-foreground: 0 0% 65.5%;
   --accent: 240 3.7% 15.9%;
   --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
+  /* = --bad #ffa9ac。shadcn 的 0 62.8% 30.6% 是**填充色**，它自己的组件成对用
+     `bg-destructive text-destructive-foreground`；这个控制台把它当前景用，
+     于是暗色下 2.08、亮色下 3.04，危险区标题压在 bad-wash 上只有 1.64。
+     不另造一个红：--bad 就是这个控制台的警告红，已经推导过、在 COLOR_TOKENS
+     里因而受对比度守卫覆盖、而且在跨仓库 token 一致性之下。 */
+  --destructive: 358 100% 83.1%;
+  /* = --bad-ink #52070a。跟着 --destructive 一起动：实心的 destructive 变体
+     现在没有调用点，但留一个 1.75 的配对就是给下一个人埋雷。 */
+  --destructive-foreground: 358 84% 17.5%;
   --border: 240 3.7% 15.9%;
   --input: 240 3.7% 15.9%;
   --ring: 240 4.9% 83.9%;
-  --radius: 0.5rem;
 
-  /* 这个产品自己的强调色，从 --accent 让位后改叫 --brand。
-     值和让位前一致，所以品牌识别没有变，变的只是名字。 */
-  --brand: #7dd3a0;
 
 
   /* Surfaces, from furthest back to nearest the reader. Four distinct values,
@@ -115,16 +121,16 @@
   /* One accent, and it has no hue: it is the text colour, inked with the
      background. Hue belongs to the four status colours, so the only coloured
      thing on this console is device state. */
-  --accent: #f5f5f5;
-  --accent-strong: #d3d3d3;
-  --accent-ink: #010102;
+  --brand: #f5f5f5;
+  --brand-strong: #d3d3d3;
+  --brand-ink: #010102;
   /* The accent when it has to be seen as a line rather than filled or read:
      the focus outline below, the current tab's rule, an input's focused edge.
      Its bar is the 3:1 WCAG 1.4.11 sets for non-text, not a text tier. A
      neutral accent clears it everywhere, so this equals the fill in both
      themes; the entry stays because the role does. */
-  --accent-edge: #f5f5f5;
-  --accent-wash: rgba(245, 245, 245, 0.1);
+  --brand-edge: #f5f5f5;
+  --brand-wash: rgba(245, 245, 245, 0.1);
 
   /* Status. These carry meaning, so they are never used decoratively, and
      they are the only hue left in the console.
@@ -219,11 +225,11 @@
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
   --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
+  --muted-foreground: 0 0% 29.4%;   /* = --fg-faint #4b4b4b */
   --accent: 240 4.8% 95.9%;
   --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
+  --destructive: 355 64% 37%;       /* = --bad #9b222c */
+  --destructive-foreground: 0 0% 100%;  /* = --bad-ink #ffffff */
   --border: 240 5.9% 90%;
   --input: 240 5.9% 90%;
   --ring: 240 5.9% 10%;
@@ -248,11 +254,11 @@
   --fg-muted: #393939;
   --fg-faint: #4b4b4b;
   --fg-accent: #0f0f0f;
-  --accent: #0f0f0f;
-  --accent-strong: #2c2c2c;
-  --accent-ink: #ffffff;
-  --accent-edge: #0f0f0f;
-  --accent-wash: rgba(15, 15, 15, 0.06);
+  --brand: #0f0f0f;
+  --brand-strong: #2c2c2c;
+  --brand-ink: #ffffff;
+  --brand-edge: #0f0f0f;
+  --brand-wash: rgba(15, 15, 15, 0.06);
   /* These four are the same hue and saturation as the dark theme's, at the
      lightness their new backdrops need: the light surfaces darken as they
      rise, so the worst pairing is darker than the one T049 and T051 derived
@@ -424,7 +430,7 @@ a {
  * the ring is left to trace whatever the element already is.
  */
 :focus-visible {
-  outline: 2px solid var(--accent-edge);
+  outline: 2px solid var(--brand-edge);
   outline-offset: 2px;
 }
 
