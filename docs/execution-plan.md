@@ -52,20 +52,38 @@
 | --- | --- | --- |
 | **工作站** | 本机 macOS | 写代码、交叉编译、跑测试。**不要在这里跑 dev server** |
 | **云主机** | `root@43.108.53.126` | 网关 + 控制台 + PostgreSQL + Redis，Docker Compose |
-| **边缘机** | `root@192.168.6.83 -p 2222` | Ubuntu，VMware 虚机，三根 EC20 模组经 usbip 挂进来 |
+| **边缘机** | `root@192.168.6.83`（端口 **22**） | 裸机 Ubuntu 26.04，主机名 `aabb`，i5-12400F / 30G。模组**直插 USB，不再有 usbip** |
 | 基础域名 | `vodoge.com` | 公开控制台 |
 | 首个租户 | `a.vodoge.com` | 这个租户就是我们自己 |
 | 设备上行 | `wss://43.108.53.126:444/v1/edge` | mTLS，TLS 1.3 only |
 
-### 三个仓库
+### 两个仓库
 
-| 仓库 | 路径 | 内容 |
-| --- | --- | --- |
-| `vodoge-cloud` | `~/Documents/local/vodoge-cloud` | Go 网关 + Next.js 控制台 + 迁移 |
-| `vodoge-edge` | `~/Documents/local/vodoge-edge` | Rust 边缘代理 |
-| `vodoge` | `~/Documents/local/vodoge` | **旧版单机 Go 产品，只读参考** |
+| 仓库 | 路径 | 远端 | 内容 |
+| --- | --- | --- | --- |
+| `vodoge-cloud` | `~/Documents/local/vodoge-cloud` | `github.com/vodoge/vodoge-cloud` | Go 网关 + Next.js 控制台 + 迁移 |
+| `vodoge-edge` | `~/Documents/local/vodoge-edge` | `github.com/vodoge/vodoge-edge` | Rust 边缘代理 |
 
-旧版是查"以前怎么做的"的地方，尤其是 `vowifihost`（1904 行 Go，阶段 4 要重写它）。
+> 🔴 **旧版单机 Go 产品（`vodoge`）已经没有任何可查的副本了。**
+> 本文档此前把它列为"只读参考"，指向 `~/Documents/local/vodoge`。那个目录
+> 2026-09-02 已删除，而它**从来没有推到过 GitHub** —— `vodoge` 组织下只有
+> cloud、edge 和 `.github` 三个仓，`gyyx` 组织、个人账号、以及全局搜索都没有
+> 同名仓库（`gh search repos vodoge` 只返回这两个）。云主机上的
+> `/srv/vodoge-export/vodoge` 是个 8.2 MB 的**数据库导出**，不是源码树；
+> 本机与两台服务器上都搜不到 `vowifihost`。
+>
+> **两处依赖它的地方因此失去了依据：**
+>
+> - **阶段 4** 原文写"参考旧版 `vowifihost`（1904 行 Go）"。那份代码不在了，
+>   IMS 栈只能照 3GPP 规范和 VoCat 从头写。这不是排期问题而是范围问题 ——
+>   原来"重写已有实现"的估算，现在是"没有参照物地实现"。
+> - **[feature-matrix.md](feature-matrix.md) 的「旧 VoDoge」一列不再可复核。**
+>   那一列声称来自 `internal/api/routes.go` 的 107 条路由，而那个文件已无从查证。
+>   它仍然有参考价值（记录了当初对比出的结论），但**不能再当作可验证的事实**，
+>   也无法再补充或纠正。
+>
+> 如果哪台机器上还留着副本（NAS 备份、旧笔记本、Time Machine），**先把它推到
+> `github.com/vodoge/` 下再说**，然后回来改这一段。
 
 ### 云主机的硬性约束
 
@@ -124,22 +142,29 @@ cd ~/Documents/local/vodoge-cloud/apps/console && NEXT_TELEMETRY_DISABLED=1 VODO
 同步源码到**边缘机**：
 
 ```bash
-cd ~/Documents/local/vodoge-edge && rsync -a --delete -e "ssh -p 2222" --exclude target --exclude .git ./ root@192.168.6.83:/root/vodoge-edge-build/
+cd ~/Documents/local/vodoge-edge && rsync -a --delete --exclude target --exclude .git ./ root@192.168.6.83:/root/vodoge-edge-build/
 ```
 
 在**边缘机**上检查、测试、构建、部署：
 
 ```bash
-ssh -p 2222 root@192.168.6.83 'set -e; cd /root/vodoge-edge-build; export PATH=$PATH:/root/.cargo/bin; cargo check -p edge-bin; cargo test; cargo build --release -p edge-bin; cp -a /usr/local/bin/vodoge-edge /root/vodoge-edge-binary-before-$(date -u +%Y%m%dT%H%M%SZ); install -m 0755 target/release/vodoge-edge /usr/local/bin/vodoge-edge; systemctl restart vodoge-edge'
+ssh root@192.168.6.83 'set -e; cd /root/vodoge-edge-build; cargo check -p edge-bin; cargo test; cargo build --release -p edge-bin; cp -a /usr/local/bin/vodoge-edge /root/vodoge-edge-binary-before-$(date -u +%Y%m%dT%H%M%SZ); install -m 0755 target/release/vodoge-edge /usr/local/bin/vodoge-edge; systemctl restart vodoge-edge'
 ```
 
 看日志（**边缘机**）：
 
 ```bash
-ssh -p 2222 root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep -v "poll /dev"'
+ssh root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep -v "poll /dev"'
 ```
 
-`grep -v "poll /dev"` 很有用 —— 三根棒子每 8 秒各刷一行，不滤掉看不见别的。
+`grep -v "poll /dev"` 很有用 —— 每根棒子每 8 秒刷一行，不滤掉看不见别的。
+
+> **2026-09-02 在边缘机上实测过的三件事**（迁裸机后这一节整段改过）：
+> ssh 在 **22** 不是 2222；`cargo` 是发行版包，在 **`/usr/bin/cargo`**，
+> **没有 rustup**，所以不要再 `export PATH=$PATH:/root/.cargo/bin` —— 那个路径
+> 已经不存在，加上去只会让人以为工具链没装。当时机器上只枚举到 **一个**
+> `/dev/cdc-wdm0`（迁移记录里说的是 5 根直插），所以"几根棒子"这个数
+> **每次都要现看**，不要照抄文档里的数字。
 
 > 🔴 **给上行的 APN blob 加字段后，必须清一次边缘缓存。**
 > `fill_apn_contexts` 只在换卡时重读模组（键是 ICCID），所以老设备会一直复用
@@ -565,7 +590,10 @@ Club 卡那种套餐限制悄悄掩盖掉。
 
 ### 阶段 4 —— VoWiFi 与语音（约 4 周 · **依赖阶段 3**）
 
-最大的一块。旧版 `vowifihost` 是 1904 行 Go；**Rust 边缘目前零 IMS 支持**。
+最大的一块，而且 2026-09-02 起**比原估算更大**：旧版那 1904 行 Go 的
+`vowifihost` 是这一阶段唯一的参照实现，**源码已经不存在了**（见 §1 的红框）。
+原来的四周估算隐含着"照着一个能跑的实现重写"，现在是"没有参照物地实现"。
+**Rust 边缘目前零 IMS 支持。**
 
 范围**限定美国卡**：E911 是美国的法定要求，为没有对应义务的市场实现一套
 用不上的地址登记只会增加攻击面。
@@ -578,7 +606,9 @@ Club 卡那种套餐限制悄悄掩盖掉。
 #### 4.2 IMS 栈
 
 - IKEv2 / ePDG 隧道、EAP-AKA 认证、IMS 注册。后面所有 VoWiFi 功能的地基。
-- 参考旧版 `vodoge/` 里的 `vowifihost`。
+- **没有内部参照实现可抄了。** 现在只能照 3GPP 规范（TS 33.402 的 ePDG /
+  EAP-AKA、TS 24.229 的 IMS 注册）和 VoCat 的对应部分来写。
+  开工前先重新估一次工期，别沿用那个假定有参照物的四周。
 
 #### 4.3 VoWiFi 启停与重连
 

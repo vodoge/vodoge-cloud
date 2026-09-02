@@ -6,9 +6,21 @@
 
 | 来源 | 位置 | 规模 |
 | --- | --- | --- |
-| 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 |
+| 旧版 VoDoge | `internal/api/routes.go` | 107 条路由 —— ⚠️ **源码已不存在，见下** |
 | VoCat | [github.com/MengMengCode/VoCat](https://github.com/MengMengCode/VoCat)（master，2026-08-22） | — |
 | 我们的云端 | `apps/gateway`（schema 51） | 见下方命令自行统计 |
+
+> 🔴 **「旧 VoDoge」这一列已经无法复核，2026-09-02 起是只读的历史记录。**
+> 旧版单机 Go 产品的源码在那天被删除，而它**从未推到过 GitHub** —— `vodoge`
+> 组织下只有 cloud、edge、`.github`，`gyyx` 组织、个人账号和全局搜索都没有
+> 同名仓库；本机与两台服务器上也搜不到 `vowifihost`（云主机的
+> `/srv/vodoge-export/vodoge` 是数据库导出，不是源码）。
+>
+> 这一列**当初是照着 `internal/api/routes.go` 逐条对出来的**，所以内容可信；
+> 但从现在起**它既不能被验证，也不能被补充或纠正**。
+> 用它来回答"旧版有没有这个功能"仍然可以，用它来推断"旧版是怎么实现的"
+> 就没有依据了 —— 后者以前是 [execution-plan.md](execution-plan.md) 阶段 4
+> 的主要参照物，现在不是了。
 
 云端路由数可以自己数：
 
