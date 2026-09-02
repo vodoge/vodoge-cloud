@@ -2536,7 +2536,11 @@ const CAPTURED_FROM = {
   // CardActions 的唯一改动是 gap-s2→gap-2（两者都是 0.5rem，像素完全相同），
   // CardEmpty 在有数据时根本不画，而两帧都有数据。CardDisclosure / CARD.stack /
   // 危险区那几处不在首页上。
-  chrome: "97491fc6b46b20357be5bf65b229592952dffc8348a7a86d178614ef87f70227",
+  //
+  // BOTTOM_NAV 内联（同日）又回到「看得见但拍不了」那一侧，而且比 SHELL 那次更
+  // 直接：手机帧底部那条栏就是它画的，非当前项的标签从 --fg-muted 换成
+  // --muted-foreground（#c1c1c1 → #a1a1aa），四个字都在画面里。
+  chrome: "7020f8ae125188409ea2be5dc2036a6ce0f468aa054d8845def7bdb54d8ea3fe",
   shots: {
     "/screenshot-mobile.png": "08d8ea54d20ee139825fa35d32114b0821754d130f7d87d06ddf397437dde0f6",
     "/screenshot-wide.png": "d7d8a9b5f16b5a1ee31330974efef012a10fe81679c317bd7a59b8ec0b5f096b",

@@ -5042,12 +5042,19 @@ test("a label on the phone bar is clipped rather than allowed to widen its cell"
     ...openingTags(readSource("components/nav-more.tsx")),
   ];
 
-  // 🔴 The lookahead is not decoration. `BOTTOM_NAV.cellCurrent` and
-  // `BOTTOM_NAV.cellLabel` both contain `BOTTOM_NAV.cell`, so a plain substring
-  // test counts three cells where there is one — the "one string is a substring
-  // of another" miscount this repo has already been bitten by twice.
-  const cells = tags.filter((tag) => /BOTTOM_NAV\.(?:cell|moreTrigger)(?![A-Za-z])/.test(tag.text));
-  const labels = tags.filter((tag) => /BOTTOM_NAV\.cellLabel(?![A-Za-z])/.test(tag.text));
+  // 配方内联之后按类列表认，而不是按配方名。**这里原来那条「子串误数」的坑没有
+  // 消失，只是换了形状**：以前是 `BOTTOM_NAV.cell` 被 `cellCurrent` / `cellLabel`
+  // 当子串数进去，现在是 `min-h-touch` 这类类名同时出现在格子、缓冲块和面板链接
+  // 上。所以认的是**组合**而不是单个类：格子 = flex-col + justify-center +
+  // text-xs + min-h-touch 四个同时成立。面板里的链接没有 flex-col 也不是 text-xs，
+  // 缓冲块没有 flex-col——两者都不会被误数。
+  const classesOf = (tag: { text: string }) => new Set(classesIn(classListsIn(tag.text)));
+  const isCell = (tag: { text: string }) => {
+    const names = classesOf(tag);
+    return ["min-h-touch", "flex-col", "justify-center", "text-xs"].every((n) => names.has(n));
+  };
+  const cells = tags.filter(isCell);
+  const labels = tags.filter((tag) => classesOf(tag).has("truncate"));
 
   assert.ok(
     cells.length >= 2,
@@ -5078,22 +5085,27 @@ test("a label on the phone bar is clipped rather than allowed to widen its cell"
     return properties;
   };
 
-  const clipping = await propertiesOf(BOTTOM_NAV.cellLabel);
+  // 🔴 问的是**组件真正写着的那串类**，不是 tokens.ts 里的配方。内联之后从配方
+  // 对象读会一直绿着却什么也没守——它量的是没人用的字符串。
+  const labelClasses = [...classesOf(labels[0])].join(" ");
+  const clipping = await propertiesOf(labelClasses);
   for (const property of ["overflow", "text-overflow", "white-space", "max-width"]) {
     assert.ok(
       clipping.has(property),
-      `BOTTOM_NAV.cellLabel sets no ${property}: it is ${JSON.stringify(BOTTOM_NAV.cellLabel)}, which ` +
+      `the bar's label sets no ${property}: it is ${JSON.stringify(labelClasses)}, which ` +
         "does not contain a label that outgrows its cell",
     );
   }
 
   // The negative arm. Without it the reading above would pass just as well if
-  // `propertiesOf` returned every property in Tailwind.
-  const notClipping = await propertiesOf(BOTTOM_NAV.more);
+  // `propertiesOf` returned every property in Tailwind. 用格子自己那串类做对照：
+  // 它是活代码，而裁切是标签的职责不是格子的。
+  const cellClasses = [...classesOf(cells[0])].join(" ");
+  const notClipping = await propertiesOf(cellClasses);
   for (const property of ["text-overflow", "white-space"]) {
     assert.ok(
       !notClipping.has(property),
-      `reading BOTTOM_NAV.more reports ${property}, so the reading above decides nothing`,
+      `reading the cell's own classes reports ${property}, so the reading above decides nothing`,
     );
   }
 });
@@ -5240,7 +5252,9 @@ test("the phone bar is drawn after the source footer, and its gutter last of all
   // just as quietly: the gutter has to be the last thing the component draws.
   const { code: nav } = scan(readSource("components/mobile-nav.tsx"));
   const closes = [...nav.matchAll(/<\/nav>/g)];
-  const gutters = [...nav.matchAll(/BOTTOM_NAV\.spacer\b/g)];
+  // 缓冲块按它独有的类认：整个文件里只有它是 border-transparent（栏是
+  // border-border，格子不画边框）。
+  const gutters = [...nav.matchAll(/\bborder-transparent\b/g)];
   assert.equal(closes.length, 1, `components/mobile-nav.tsx closes a nav ${closes.length} times, not once`);
   assert.equal(
     gutters.length,
@@ -5292,13 +5306,19 @@ test("the phone bar and its gutter both carry the inset no class can express", (
   // Asserted on the elements, not merely somewhere in the file — the header's
   // version of this check was once satisfied by a comment.
   const tags = openingTags(readSource("components/mobile-nav.tsx"));
-  for (const recipe of ["bar", "spacer"]) {
-    const tag = tags.find((candidate) => candidate.text.includes(`className={BOTTOM_NAV.${recipe}}`));
-    assert.ok(tag, `the element carrying BOTTOM_NAV.${recipe} is gone`);
+  // 配方内联之后：栏按元素名认（这个文件只有一个 <nav>），缓冲块按它独有的
+  // border-transparent 认。两者都仍然是「断言在元素上」，而不是「文件里有这个名字」。
+  const subjects: [string, (tag: { name: string; text: string }) => boolean][] = [
+    ["the bar", (tag) => tag.name === "nav"],
+    ["the gutter", (tag) => /\bborder-transparent\b/.test(tag.text)],
+  ];
+  for (const [what, matches] of subjects) {
+    const tag = tags.find(matches);
+    assert.ok(tag, `${what} is gone`);
     assert.match(
       tag.text,
       /style=\{SAFE_AREA\.fixedBottom\}/,
-      `the inset is not applied to BOTTOM_NAV.${recipe}`,
+      `the inset is not applied to ${what}`,
     );
   }
   assert.match(SAFE_AREA.fixedBottom.paddingBottom, /env\(safe-area-inset-bottom\)/);
@@ -5307,8 +5327,8 @@ test("the phone bar and its gutter both carry the inset no class can express", (
 test("the overflow trigger says it opens something, and does not sink when pressed", () => {
   // 触发器搬到了 components/nav-more.tsx：那段 `<details>` 换成了 Radix 的
   // Sheet，客户端边界因此收在这一个组件里，而不是爬到整棵导航树上。
-  const trigger = openingTags(readSource("components/nav-more.tsx")).find((tag) =>
-    tag.text.includes("className={BOTTOM_NAV.moreTrigger}"),
+  const trigger = openingTags(readSource("components/nav-more.tsx")).find(
+    (tag) => tag.name === "SheetTrigger",
   );
   assert.ok(trigger, "the overflow trigger is gone");
   // 以前断言它是 `<summary>`，理由是「`<details>` 才让面板在无脚本时可用」。
@@ -5322,7 +5342,7 @@ test("the overflow trigger says it opens something, and does not sink when press
   // it, which this system rejects everywhere, so it is expressed by the
   // trigger having a recipe of its own that never picked the press up.
   assert.ok(
-    !BOTTOM_NAV.moreTrigger.includes("translate-y"),
+    !classesIn(classListsIn(trigger.text)).some((name) => name.includes("translate-y")),
     "the overflow trigger sinks when pressed, and the thing it opens moves with it",
   );
   // The positive control: the press is real, and is what is being kept away

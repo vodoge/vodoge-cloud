@@ -10,7 +10,6 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
-import { BOTTOM_NAV } from "@/lib/tokens";
 
 /**
  * 底部导航里放不下的那些目的地。
@@ -48,9 +47,12 @@ export function NavMore({
     <Sheet open={open} onOpenChange={setOpen}>
       {/* `aria-haspopup` 说明这是「打开某物」而不是「去某处」。触发器保持不动，
           动的是被打开的面板。 */}
-      <SheetTrigger className={BOTTOM_NAV.moreTrigger} aria-haspopup="menu">
+      <SheetTrigger
+        className="flex min-h-touch w-full cursor-pointer list-none flex-col items-center justify-center gap-1 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        aria-haspopup="menu"
+      >
         <NavIcon d={MORE_ICON} />
-        <span className={BOTTOM_NAV.cellLabel}>{triggerLabel}</span>
+        <span className="max-w-full truncate">{triggerLabel}</span>
       </SheetTrigger>
       <SheetContent side="bottom" className="rounded-t-lg">
         <SheetHeader>
@@ -65,8 +67,8 @@ export function NavMore({
               // 点了就关：Sheet 不知道路由变了，不关的话它会盖在刚打开的页面上。
               onClick={() => setOpen(false)}
               className={cn(
-                BOTTOM_NAV.sheetLink,
-                item.current ? BOTTOM_NAV.sheetLinkCurrent : undefined,
+                "flex min-h-touch items-center gap-3 rounded px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground",
+                item.current ? "bg-accent-wash font-semibold text-foreground" : undefined,
               )}
             >
               <NavIcon d={item.icon} />

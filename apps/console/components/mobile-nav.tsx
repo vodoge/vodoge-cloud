@@ -4,7 +4,6 @@ import { NavIcon } from "@/components/sidebar";
 import { cn } from "@/lib/cn";
 import { t, type Locale } from "@/lib/i18n";
 import {
-  BOTTOM_NAV,
   NAV_MORE,
   SAFE_AREA,
   bottomNavItems,
@@ -40,11 +39,11 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
           app/globals.css puts the inset on, so without this it renders under
           the home indicator on an installed console. */}
       <nav
-        className={BOTTOM_NAV.bar}
+        className="fixed inset-x-0 bottom-0 z-10 border-0 border-t border-solid border-border bg-surface md:hidden"
         style={SAFE_AREA.fixedBottom}
         aria-label={t("nav.label", locale)}
       >
-        <div className={BOTTOM_NAV.row}>
+        <div className="relative mx-auto flex w-full max-w-page items-stretch">
           {bottomNavItems().map((item) => {
             const state = navState(pathname, item.href);
             return (
@@ -52,10 +51,13 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
                 key={item.href}
                 href={item.href}
                 aria-current={state === "page" ? "page" : undefined}
-                className={cn(BOTTOM_NAV.cell, state ? BOTTOM_NAV.cellCurrent : undefined)}
+                className={cn(
+                  "flex min-h-touch min-w-touch flex-1 flex-col items-center justify-center gap-1 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
+                  state ? "font-semibold text-foreground" : undefined,
+                )}
               >
                 <NavIcon d={item.icon} />
-                <span className={BOTTOM_NAV.cellLabel}>{t(item.shortKey, locale)}</span>
+                <span className="max-w-full truncate">{t(item.shortKey, locale)}</span>
               </Link>
             );
           })}
@@ -75,11 +77,15 @@ export function MobileNav({ locale, pathname }: { locale: Locale; pathname: stri
 
       {/* The gutter the bar would otherwise cover. It is drawn here, after the
           source footer, because that footer is the last thing on the page and
-          the one thing on it addressed to people who are not signed in — see
-          BOTTOM_NAV.spacer for why padding on the shell root cannot reach it.
+          the one thing on it addressed to people who are not signed in —
+          padding on the shell root cannot reach past it.
           Same height as the bar, by carrying the same border, the same touch
           minimum and the same inset. */}
-      <div className={BOTTOM_NAV.spacer} style={SAFE_AREA.fixedBottom} aria-hidden="true" />
+      <div
+        className="box-content min-h-touch border-0 border-t border-solid border-transparent md:hidden"
+        style={SAFE_AREA.fixedBottom}
+        aria-hidden="true"
+      />
     </>
   );
 }
