@@ -44,7 +44,6 @@ import { operatorName } from "@/lib/plmn";
 import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
   AT_COMMAND_GUARDS,
-  LOG,
   atCommandGuard,
   deviceCommandGuard,
   toneForCommandStatus,
@@ -1457,10 +1456,10 @@ function CommandLogCard({ commands, labels }: { commands: CommandRow[]; labels: 
   }
   return (
     <CardPanel title={labels.logTitle} note={labels.logNote}>
-      <ol className={LOG.list}>
+      <ol className="m-0 flex list-none flex-col gap-3 p-0">
         {commands.map((row) => (
-          <li key={row.id} className={LOG.entry}>
-            <div className={LOG.head}>
+          <li key={row.id} className="rounded bg-muted p-3">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs tabular-nums">{commandLabel(labels, row.kind)}</span>
               <Badge tone={toneForCommandStatus(row.status)}>{row.status}</Badge>
               <span className="text-muted-foreground">

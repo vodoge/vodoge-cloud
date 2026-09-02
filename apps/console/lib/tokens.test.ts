@@ -7459,10 +7459,17 @@ test("the danger zone says so without a border, and the buttons in it are red", 
   const zoneTitle = zoneTags.find((tag) => tag.name === "CardTitle");
   assert.ok(zoneHeader && zoneTitle, "the danger zone lost its header or its title");
 
+  // 日志条目和危险区不在一起，但它一直搭在这条「每个类都必须产出 CSS」的检查上。
+  // 它的类串同样从组件里取，理由和上面那两个一样：从配方对象读会一直绿着量一个
+  // 没人用的字符串。
+  const logEntry = openingTags(readSource(CONSOLE_SOURCE)).find(
+    (tag) => tag.name === "li" && /\bbg-muted\b/.test(tag.text),
+  );
+  assert.ok(logEntry, "the log entry is gone");
   const classes = classesIn([
     ...classListsIn(zoneHeader.text),
     ...classListsIn(zoneTitle.text),
-    LOG.entry,
+    ...classListsIn(logEntry.text),
   ]);
   const generated = await generatedClasses([...classes, "p-s4"]);
   assert.deepEqual(
