@@ -1,8 +1,8 @@
 # 边缘端：Leptos + WASM + Thaw UI
 
-> 时效：2026-09-03 在边缘机本机复核过一遍。**未开工。**
-> 云端那一半已经做完（见 [cloud-shadcn.md](cloud-shadcn.md)），所以
-> [README.md](README.md) 定的「云端先做，边缘端后做」现在轮到这一半了。
+> 时效：2026-09-03。**阶段 0 已完成**（vodoge-edge `8979b4f` + `0d9df15`），
+> 两条验收都过了；阶段 1 起未开工。
+> 云端那一半已经做完（见 [cloud-shadcn.md](cloud-shadcn.md)）。
 
 ## 为什么值得
 
@@ -13,11 +13,24 @@
 Leptos 能让面板**直接复用 `vodoge-contract` 的 serde 类型**。上行结构改了字段，
 前端编译不过。
 
-⚠️ **地基还没实测。** 这份文档原先写着
-`cargo build -p vodoge-contract --target wasm32-unknown-unknown` 「已验证」通过。
-诚实的版本是：**这台机器上没有 wasm32 std，这条命令现在跑不了**。可说的只是——
-那个 crate 只依赖 serde + serde_json、没有 I/O，理论上能干净地编到 wasm32。
-装完 rustup 和 target 之后**第一件事就是真跑一次这条命令**，那才是地基。
+🔴 **但上面这个理由守错了边界，2026-09-03 更正。**
+
+`edge-panel` **从来就没有依赖过 `vodoge-contract`**（lib.rs 与 Cargo.toml 各 0 处
+引用）。`vodoge-contract` 是**边缘↔云端的上行协议**；面板自己的 API 是另一套，
+25 个 struct 私有定义在 `edge-panel/src/lib.rs` 里，外面谁也叫不出它们的名字。
+复用 contract 类型不会让面板对**自己的** API 漂移有任何抵抗力。
+
+好处是真的，机制换了：新建 `edge-panel-api`（无 I/O，只依赖 serde 和 edge-core），
+服务端与 wasm 前端共用同一批类型。**实测**：把 `ModemBody.network` 改名，
+两端同时编译不过——
+
+```
+前端   error[E0609]: no field `network` on type `ModemBody`
+服务端 error[E0560]: struct `ModemBody` has no field named `network`
+```
+
+✅ 地基那条命令也真跑过了（装完 rustup + wasm32 target 之后）：
+`cargo build -p vodoge-contract --target wasm32-unknown-unknown` 4 秒编完。
 
 ## 现状
 
@@ -56,27 +69,45 @@ edge-panel/src/**            6 个单元测试（不读 HTML，不受这次搬�
 现在已经不成立。同一天多次掉线的记录保留在这里作为历史，开长任务前仍值得先确认
 它稳定。）
 
-所以开工前只剩三步：
+✅ **三步都做完了（2026-09-03）：**
 
-1. **装 rustup**，在发行版的 Rust 之外。⚠️ 这会给这台机器放第二套工具链，装完
-   要先确认**现有 workspace 仍然能编、39 个测试二进制（657 个测试）仍然全绿**，
-   再往下走。
-2. `rustup target add wasm32-unknown-unknown`，然后立刻实测上面那条
-   `cargo build -p vodoge-contract --target wasm32-unknown-unknown`。
-3. `cargo install trunk` —— trunk 自己要编十来分钟。
+1. rustup 1.29.1（用 `--no-modify-path` 装的，没有改 shell 配置；rustc 1.98.0）。
+   按要求复核过：发行版 cargo 下 **39 个测试二进制、657 个测试仍全绿**，第二套
+   工具链没有干扰原有的。
+2. `wasm32-unknown-unknown` target 已装，地基命令实测通过。
+3. trunk 0.21.14。
+
+⚠️ **构建有顺序**：`edge-panel` 用 `include_bytes!` 嵌入 trunk 的产物，所以必须
+先 `cd edge-ui && trunk build --release --public-url /next/`，再
+`cargo build -p edge-panel`。产物**不进仓库**（README 定的），缺 dist 时 cargo 只
+会报 include_bytes! 找不到文件、不会提示你该跑 trunk。
+
+🔴 **版本取舍已拍板：Leptos 钉回 0.7，用 Thaw 稳定版**（leptos 0.7.8 +
+leptos_router/meta 0.7.8 + thaw 0.4.8）。代价是具体的、现在就存在的：编译期有一条
+`proc-macro-error2 v2.0.1`「包含未来版本 Rust 会拒绝的代码」的警告，追下去来自
+`leptos_macro 0.7.9 ← leptos 0.7.8` 自己。现在只是警告。**阶段 3 切换完成时必须
+重新评估一次**——届时 Thaw 0.5 可能已转正，升级成本也已知。
 
 ## 阶段
 
-### 阶段 0：脚手架
+### ✅ 阶段 0：脚手架（已完成）
 
-新 crate `edge-ui`，`crate-type = ["cdylib"]`，依赖 `leptos` + `thaw` +
-`vodoge-contract`。
+`edge-panel-api`（共享类型）+ `edge-ui`（`cdylib` + `rlib`，leptos 0.7.8 +
+thaw 0.4.8 + `edge-panel-api`）。trunk 产出由 `edge-panel` 嵌入并在 `/next` 提供。
 
-trunk 产出 `index.html` + glue `.js` + `.wasm`，由 `edge-panel` 用 `include_str!` /
-`include_bytes!` 嵌入并提供。
+**两条验收都过了：**
 
-**验收**：浏览器打开新路径，能显示一行从 `/api/status` 拿到并用 `contract` 类型
-反序列化的文字。
+- 正向：浏览器打开 `/next`，显示「本地模式（无上行）」（`PanelMode::Local` 经
+  JSON 往返）和两行模组，其中 `UFI103S` 正确显示「回退」。
+- 🔴 负向：改一个响应字段名，**两端同时编译不过**。这条比原来写的验收强——
+  原文只要求前端编译不过。
+
+**尺寸基线**：wasm 495.0 KB → gzip **180.1 KB**，glue 36.6 KB → gzip 7.0 KB，
+合计约 gzip 188 KB。对照现有单文件面板 340.4 KB（未压缩）。比「风险」一节估的
+300 KB–1 MB 好，而且框架本身的重量已经付在这个数里了。
+
+顺带把 `edge-panel/examples/serve.rs` 作为开发工具提交——用可信数据把面板渲染
+出来看一眼，后面九个功能区每一个都要用到。
 
 ### 阶段 1：新旧并存
 
