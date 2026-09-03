@@ -2621,16 +2621,20 @@ const CAPTURED_FROM = {
   // They diverge again the moment someone re-stamps `chrome` alone, and that
   // divergence is not a defect — it is the re-stamp claim, made visible.
   //
-  // ⚠️ That reshoot is also the first one whose PNGs did NOT come out
-  // byte-identical: 0.607% of the phone frame and 0.845% of the desktop frame
-  // moved, scattered over 346 and 141 rows with at most 169 differing pixels
-  // in any one of them. That distribution is text antialiasing, not a layout
-  // shift — a shift shows a contiguous band of near-full-width rows and moves
-  // the bounding box. The stylesheet was byte-identical across the reshoot
-  // (43,261 bytes, 7d09d96e2196fd2f.css), and the capture ran against a newer
-  // Chromium than the previous one, which is the likelier cause. Recorded
-  // rather than smoothed over, because "the hashes changed and I decided it
-  // was fine" is exactly the move this block exists to make expensive.
+  // ⚠️ One reshoot earlier the same day did NOT come out byte-identical —
+  // 0.607% of the phone frame and 0.845% of the desktop frame moved — and the
+  // reading given then was "text antialiasing under a newer Chromium, not a
+  // layout shift". **The next reshoot confirmed it**: with the browser version
+  // now pinned by a declared `playwright` devDependency, the desktop frame
+  // reproduced BIT FOR BIT (0 differing pixels) while the phone frame moved
+  // 3.79% — which is the SN-T036 column drop, and only exists below `sm`.
+  //
+  // 🔴 Keep both numbers, because together they are a usable test. Antialiasing
+  // scatters: many rows, a few dozen pixels each, none of them wide. A layout
+  // change concentrates: 103 of the phone frame's 294 changed rows were more
+  // than a quarter of the frame wide. "The hashes moved and I decided it was
+  // fine" is the move this block exists to make expensive; measuring the
+  // distribution is what makes it answerable instead.
   //
   // ⚠️ The frames were shot against two different builds of the same chrome,
   // and they came out byte-identical. That is the evidence this stamp rests on,
@@ -2785,7 +2789,7 @@ const CAPTURED_FROM = {
   // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
-  chrome: "600efd588f8efdef570698c6ad66db8653915df4f308e418b6ab876f992fd888",
+  chrome: "273d11032fa6678a28eaa151fa721fb42e98e4aecaa35fe03d23d3e9938ba90e",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2795,9 +2799,9 @@ const CAPTURED_FROM = {
   // element — the CSS does not move, the photographed layout does. This digest
   // ignores comment prose and nothing else, so markup, classes and layout code
   // can only be answered by pointing a browser at the page again.
-  recipe: "5fa99524f5e79c89c0b0eb4e27f3404feedbd3cd818437ee26a854c9768f740a",
+  recipe: "9a6e84cb4476d80b1d25f327e4f2abad47b4e1951ea61078a98e49bc61060eb1",
   shots: {
-    "/screenshot-mobile.png": "71dd2fe2dfe93e393b152682393848536d640f1e6bd59f0a8cb763e3daf3757f",
+    "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",
   } as Record<string, string>,
 };

@@ -5509,15 +5509,17 @@ const TABLES_WITH_NOTHING_TO_DROP: Record<string, string> = {
  * The assertions below let this map only shrink: an entry whose table has
  * since gained a dropped column fails until the entry is deleted.
  */
-const NARROW_SCREEN_DEFECTS: Record<string, string> = {
-  "app/page.tsx#0":
-    "DEFECT: `inbox.colReceived` — the identical column key — is secondary " +
-    "in app/inbox/page.tsx table 1, whose comment calls it context and the " +
-    "widest fixed column. Here the same column does not drop. The body cell " +
-    "also lacks `wrap`, which app/sessions/page.tsx gives the same content " +
-    "and which TableCell's own docblock names an SMS body as the case for. " +
-    "This is the landing page: the first screen on a phone.",
-};
+// Empty, and empty because the one entry was fixed rather than because nobody
+// has looked. `app/page.tsx#0` sat here recording that `inbox.colReceived` was
+// `secondary` in the thread view but not on the landing page, and that the SMS
+// body lacked `wrap` — on the first screen a phone shows. SN-T036 (5c907c9)
+// fixed it on a branch that never reached main; ported 2026-09-03.
+//
+// 🔴 The emptiness is checked, not assumed. The two `deepEqual`s below run in
+// both directions: a table that drops nothing and is listed nowhere fails, and
+// an entry here whose table now drops something fails until it is deleted.
+// That second one is what removed this entry — the guard asked for it by name.
+const NARROW_SCREEN_DEFECTS: Record<string, string> = {};
 
 /**
  * ⚠️ Not measured, and here is why none of them can be from a test.

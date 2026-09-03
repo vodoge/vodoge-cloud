@@ -125,14 +125,19 @@ export default async function OverviewPage() {
                   <TableHead>{t("inbox.colPeer", locale)}</TableHead>
                   <TableHead>{t("inbox.colBody", locale)}</TableHead>
                   <TableHead>{t("inbox.colBearer", locale)}</TableHead>
-                  <TableHead>{t("inbox.colReceived", locale)}</TableHead>
+                  {/* 到达时刻是上下文而不是答案——这个单元格的 `faint` 已经这么说了
+                      ——而它 19 个字符宽且永远不会变窄，是这张表里最宽的固定列。
+                      所以它在手机上让位，和 /inbox 线程视图里同一个列键的做法一致。
+                      时间信息并没有因此丢失：这些行本来就按它排序，顺序仍然说明了
+                      刚刚发生什么。（移植自 SN-T036 / 5c907c9。） */}
+                  <TableHead secondary>{t("inbox.colReceived", locale)}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {recent.map((message) => (
                   <TableRow key={message.id}>
                     <TableCell mono>{message.peer}</TableCell>
-                    <TableCell>{message.body}</TableCell>
+                    <TableCell wrap>{message.body}</TableCell>
                     <TableCell>
                       {/* The bearer is which transport carried the message —
                           a category, not a state, so it keeps the tone the
@@ -145,7 +150,7 @@ export default async function OverviewPage() {
                         {message.bearer}
                       </Badge>
                     </TableCell>
-                    <TableCell mono faint>
+                    <TableCell mono faint secondary>
                       {new Date(message.receivedAt).toISOString().replace("T", " ").slice(0, 19)}
                     </TableCell>
                   </TableRow>
