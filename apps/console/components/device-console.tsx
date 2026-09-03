@@ -41,7 +41,6 @@ import {
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
 import { operatorName } from "@/lib/plmn";
-import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
   AT_COMMAND_GUARDS,
   atCommandGuard,
@@ -267,13 +266,6 @@ function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
-  // "unknown" until the gateway has been asked, and the controls are drawn for
-  // "write" only. Closed by default on purpose: this component is rendered on
-  // the server before it can ask anything, and an account's controls appearing
-  // for one paint and then being taken away is a worse answer than appearing
-  // one paint late. What it costs is a moment of empty console for an operator
-  // who does have the rights.
-  const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
   // Polling stops once nothing is outstanding, so an idle page costs nothing.
   const outstanding = commands.some((row) => !TERMINAL.has(row.status));
   const mounted = useRef(true);
@@ -282,26 +274,6 @@ function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
     mounted.current = true;
     return () => {
       mounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const response = await fetch(SESSION_ENDPOINT, { cache: "no-store" });
-        if (!alive) return;
-        // A session the gateway will not confirm gets the smaller page. The
-        // buttons would only produce a refusal anyway.
-        setPermission(
-          response.ok && mayWrite(roleFromSessionBody(await response.json())) ? "write" : "read",
-        );
-      } catch {
-        if (alive) setPermission("read");
-      }
-    })();
-    return () => {
-      alive = false;
     };
   }, []);
 
@@ -382,7 +354,7 @@ function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
     void runNow(kind, extra);
   }, [pending, runNow]);
 
-  return { commands, busy, error, permission, pending, request, proceed, cancelPending };
+  return { commands, busy, error, pending, request, proceed, cancelPending };
 }
 
 /**
@@ -431,20 +403,23 @@ export function DeviceDiagnostics({
   modems,
   labels,
   locale,
+  writable,
 }: {
   deviceId: string;
   modems: ModemRow[];
   labels: Labels;
   locale: Locale;
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
 }) {
   const [imei, setImei] = useState(modems[0]?.imei ?? "");
-  const { busy, commands, error, permission, pending, request, proceed, cancelPending } =
+  const { busy, commands, error, pending, request, proceed, cancelPending } =
     useDeviceCommands(deviceId, imei, labels);
 
   return (
     <>
       <CardPanel title={labels.diagTitle} note={labels.diagNote}>
-        {permission !== "write" ? (
+        {!writable ? (
           <FormHint>{t("role.readOnlyDevice", locale)}</FormHint>
         ) : (
           <div className="flex flex-col gap-4">
@@ -500,12 +475,15 @@ export function DeviceConsole({
   candidates,
   labels,
   locale,
+  writable,
 }: {
   deviceId: string;
   modems: ModemRow[];
   /** Already narrowed to this device by the caller. */
   candidates: CandidateRow[];
   labels: Labels;
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
   /**
    * The locale of the request, resolved on the server.
    *
@@ -525,25 +503,28 @@ export function DeviceConsole({
    *
    * Taking the locale as a prop -- the same fix EsimPanel already carries
    * (T066) -- is what removes it, because a prop exists before the first
-   * render. The permission still resolves after mount, and it has to: nothing
+   * render. The role no longer resolves after mount — it arrives as a prop —
    * on the server knows it. What changes is that the sentence it produces is
    * now in the language that was asked for.
    */
   locale: Locale;
 }) {
   const [imei, setImei] = useState(modems[0]?.imei ?? "");
-  const { busy, commands, error, permission, pending, request, proceed, cancelPending } =
+  const { busy, commands, error, pending, request, proceed, cancelPending } =
     useDeviceCommands(deviceId, imei, labels);
 
   // Every control in this component issues POST /v1/commands, which the
   // gateway refuses for a read-only session, so there is nothing here for one
   // to press — but the history of what the device has done is exactly what
   // such an account is for. The log stays.
-  if (permission !== "write") {
+  if (!writable) {
     return (
       <>
         <CardPanel title={labels.console} note={labels.consoleNote}>
-          {permission === "read" ? <FormHint>{t("role.readOnlyDevice", locale)}</FormHint> : null}
+          {/* Always shown now. It used to be drawn only once the answer had
+              arrived, because "unknown" and "read-only" were different states;
+              the answer arrives with the props. */}
+          <FormHint>{t("role.readOnlyDevice", locale)}</FormHint>
         </CardPanel>
         <CommandLogCard commands={commands} labels={labels} />
       </>

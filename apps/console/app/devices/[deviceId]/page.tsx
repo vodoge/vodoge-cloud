@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { Tab, TabList, TabPanel } from "@/components/ui/tabs";
 import {
+  fetchConsoleRole,
   fetchDevices,
   type ApnContextRow,
   fetchEsimProfiles,
@@ -47,6 +48,7 @@ import {
   type UptimeHourRow,
   uptimeRatio,
 } from "@/lib/catalog";
+import { mayWrite } from "@/lib/session";
 import { t, type Locale } from "@/lib/i18n";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -127,6 +129,18 @@ export default async function DevicePage({
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
+  /**
+   * 🔴 Resolved here, once, and handed down as a required prop.
+   *
+   * The three cards on this page each used to ask `GET /v1/auth/session` from
+   * an effect and start closed — safe, but it meant three identical lookups per
+   * load and every control arriving a paint late. The card that wrote that shape
+   * said a server-resolved `writable` was the better end state and that it could
+   * not have it, because this page was being rewritten wholesale on another
+   * branch and adding an argument to a moving call site is how a guard gets
+   * dropped in a merge. That rewrite landed; the reason expired with it.
+   */
+  const writable = mayWrite(await fetchConsoleRole(host, token));
 
   let devices: DeviceRow[] = [];
   let modems: ModemRow[] = [];
@@ -176,6 +190,7 @@ export default async function DevicePage({
       case "diagnostics":
         return (
           <DiagnosticsPanel
+            writable={writable}
             deviceId={deviceId}
             device={device}
             modems={own}
@@ -185,6 +200,7 @@ export default async function DevicePage({
       case "console":
         return (
           <ConsolePanel
+            writable={writable}
             deviceId={deviceId}
             device={device}
             modems={own}
@@ -203,6 +219,7 @@ export default async function DevicePage({
         // and a card inside a card is how a heading stops meaning anything.
         return (
           <EsimPanel
+            writable={writable}
             deviceId={deviceId}
             profiles={esim}
             modems={own.map((modem) => ({ imei: modem.imei }))}
@@ -460,12 +477,15 @@ function OverviewPanel({
  * this console — is not this card's to weaken.
  */
 function ConsolePanel({
+  writable,
   deviceId,
   device,
   modems,
   candidates,
   locale,
 }: {
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
   deviceId: string;
   device: DeviceRow | undefined;
   modems: ModemRow[];
@@ -476,6 +496,7 @@ function ConsolePanel({
   return (
     <>
       <DeviceConsole
+        writable={writable}
         deviceId={deviceId}
         modems={modems}
         candidates={candidates}
@@ -490,6 +511,7 @@ function ConsolePanel({
         </CardHeader>
         <CardContent>
           <DeviceAdmin
+            writable={writable}
             deviceId={deviceId}
             name={device?.name ?? deviceId}
             labels={{
@@ -515,11 +537,14 @@ function ConsolePanel({
  * another's.
  */
 function DiagnosticsPanel({
+  writable,
   deviceId,
   device,
   modems,
   locale,
 }: {
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
   deviceId: string;
   device: DeviceRow | undefined;
   modems: ModemRow[];
@@ -617,6 +642,7 @@ function DiagnosticsPanel({
         of these only read: a diagnostic report, and an ES10c profile listing.
       */}
       <DeviceDiagnostics
+        writable={writable}
         deviceId={deviceId}
         modems={modems}
         labels={deviceLabels(locale)}

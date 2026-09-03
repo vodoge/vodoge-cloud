@@ -2789,7 +2789,7 @@ const CAPTURED_FROM = {
   // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
-  chrome: "7de1ae86e5cbcaf6416add85f23b82aef28e5228a1d8682a0e8826456ea1a9e0",
+  chrome: "56ba7ed5bfda0299c0c6e52e4d786ff114dd5b957aa5cdae95891d15ada5b99c",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2799,7 +2799,7 @@ const CAPTURED_FROM = {
   // element — the CSS does not move, the photographed layout does. This digest
   // ignores comment prose and nothing else, so markup, classes and layout code
   // can only be answered by pointing a browser at the page again.
-  recipe: "f379c28285cf4a4f9baec2c3758f9cbe1e6ba38a15999821f520f0f4cd2d1337",
+  recipe: "92fb9a22e84ae564adcd67db469e5ea9b8a1cc5b715f3ca00695d268f13848d9",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

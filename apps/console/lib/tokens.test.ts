@@ -31,7 +31,7 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -143,7 +143,13 @@ import {
  * mutation, not by reading, and that is the point: **an assertion that has
  * never been seen red is not evidence.** Every guard below has been shown to
  * fail against the specific defect it claims to catch, and the mutations are
- * listed in `notes/T027-cloud-guards.md` so the next card can re-run them.
+ * were run against each.
+ *
+ * ⚠️ This used to end by saying the mutations were listed in a file under
+ * `notes/` so the next card could re-run them. **That file has never existed**, so the
+ * mutations were run and never written down — the next card cannot re-run what
+ * nobody recorded. Saying so is weaker than the promise and it is the true
+ * state; a pointer at nothing was the stronger-sounding of the two.
  */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -2818,7 +2824,14 @@ function conditionalArms(
  * were **lost in the merge that brought T032 to main** — `git show f8cdece`
  * has them, `af2fe6a` does not, and nothing failed, because a deleted guard is
  * indistinguishable from a guard that was never written. T034 put them back and
- * extended them; see `notes/T034-devices-role-gating.md` §2.
+ * extended them.
+ *
+ * ⚠️ That last sentence used to point at a file under `notes/` for the full
+ * account. **No such file has ever existed** — not deleted, never written; there
+ * is no `notes/` directory in this repository and no commit ever added one. A pointer to an account of a guard going
+ * missing, itself missing, is a joke this file should not be telling. The
+ * evidence that matters is two lines up and it is checkable: `git show f8cdece`
+ * (2026-08-25) holds these helpers, `af2fe6a` (2026-08-26, the merge) does not.
  */
 function drawnOnlyWhen(masked: string, at: number, gate: string): boolean {
   const braces = braceMap(masked);
@@ -3023,6 +3036,10 @@ const ROLE_GATED_PAGES = [
   "app/inbox/[peer]/page.tsx",
   "app/proxy/page.tsx",
   "app/devices/page.tsx",
+  // Sixth since 2026-09-03, when this page stopped letting its three cards each
+  // ask for themselves. It was the one page that gated writes without resolving
+  // a role, and it was absent from this list for exactly as long.
+  "app/devices/[deviceId]/page.tsx",
 ];
 
 /**
@@ -3047,12 +3064,18 @@ function assertFailsClosed(body: string, where: string) {
 }
 
 test("every page that gates a write reads the role from the gateway and fails closed", () => {
-  // The extracted one. `/proxy` and `/devices` call it rather than keeping a
-  // copy; the other three still have their own, and the home for all of them is
-  // `lib/session.ts` beside `mayWrite`, which no card has owned yet. Both
-  // shapes are held to the same two returns here, which is the whole point of
-  // the test — a page that calls the shared function and a page that pasted it
-  // must not be able to disagree about what "cannot ask" means.
+  // ✅ All five call the extracted one now. There used to be three pasted
+  // copies — `/settings`, `/inbox` and `/inbox/[peer]` — each byte-for-byte the
+  // shared implementation, kept because "the home for all of them is
+  // `lib/session.ts`, which no card has owned yet". That premise was already
+  // false: the shared function had been sitting in `lib/catalog.ts` since
+  // `/proxy` and `/devices` started calling it. Removed 2026-09-03.
+  //
+  // 🔴 The loop below still handles both shapes, and that is deliberate. It is
+  // what stops the next paste from being a silent one: a page with its own
+  // `currentRole` is held to exactly the same two returns as the shared one, so
+  // a copy cannot disagree about what "cannot ask" means — it can only be
+  // redundant, which the reader can see.
   const shared = functionBody(readSource("lib/catalog.ts"), "fetchConsoleRole");
   assert.ok(shared, "lib/catalog.ts no longer has the shared role lookup");
   assertFailsClosed(shared, "fetchConsoleRole");
@@ -3142,6 +3165,55 @@ test("the inbox draws no write control for an account that may not write", () =>
  * and the function is what a keyboard, a stale tab or a replayed handler
  * reaches. Both, or neither counts.
  */
+/**
+ * A comment that sends the reader somewhere sends them somewhere real.
+ *
+ * 🔴 Two comments ended by sending the reader to a file under `notes/` for
+ * the account of an incident whose subject was *a guard going missing without
+ * anything turning red*. That file had never existed: not deleted, never
+ * written. A dangling pointer to the record of a disappearance is that same rot
+ * one level up, and nothing here was checking. The scan found three more of the
+ * same shape once it was written.
+ *
+ * ⚠️ **Only directive references are checked** — "see X", "in X", "per X" — and
+ * deliberately not every path a comment mentions. This codebase names deleted
+ * files on purpose and often: `components/mobile-nav.tsx` went with the phone
+ * bar, `scripts/check-token-parity.cjs` was retired, and the comments that say
+ * so are doing their job. Naming a thing that is gone is history; *sending the
+ * reader to it* is a broken promise, and only the second is a defect.
+ */
+test("a comment that sends the reader to a file sends them to one that exists", () => {
+  const DIRECTIVE =
+    /\b(?:see|See|in|per|from)\s+`([\w./[\]@-]+\/[\w.[\]@-]+\.(?:tsx?|mjs|cjs|css|json|md|sql|go|rs|ya?ml|sh))`/g;
+  const repoRoot = join(root, "..", "..");
+  const broken: string[] = [];
+  let seen = 0;
+
+  const files = [
+    ...MIGRATED_SOURCES,
+    ...readdirSync(join(root, "lib"))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => `lib/${name}`),
+  ];
+  for (const relative of files) {
+    for (const match of readSource(relative).matchAll(DIRECTIVE)) {
+      const named = match[1];
+      if (/[*<>]|NNNN/.test(named)) continue;
+      seen += 1;
+      const here = join(root, relative, "..");
+      const exists = [join(root, named), join(repoRoot, named), join(here, named)].some(existsSync);
+      if (!exists) broken.push(`${relative}: ${named}`);
+    }
+  }
+
+  assert.ok(seen > 10, `only ${seen} directives found — the scanner is broken, not the comments`);
+  assert.deepEqual(
+    broken,
+    [],
+    "a comment sends the reader to a file that does not exist",
+  );
+});
+
 test("every write on the confirmation ledger checks the role before it sends", () => {
   /**
    * ⚠️ One shape is exempt, and only one: a component that is **never rendered**
@@ -3417,41 +3489,77 @@ test("the read-only note names what is gone from the card policies", () => {
  * drift.
  */
 
-/** Components on the device page that establish the role for themselves. */
-const SELF_ASKING_CONTROLS = [
+/**
+ * The three cards on the device page, all handed the role rather than asking.
+ *
+ * This list used to be called `SELF_ASKING_CONTROLS` and held them to four
+ * lines of effect apiece. They are told now; the list survived the change
+ * because a list is what stops the next card from taking a fourth shape.
+ */
+const DEVICE_PAGE_CARDS = [
   "components/device-console.tsx",
   "components/device-admin.tsx",
-  // T036. The eSIM tab had no role gate at all — T010 and T011 each reported
-  // it — and it is on this same page, so it takes this shape rather than a
-  // fourth one. Added to the list rather than checked beside it: a third copy
-  // held to the same four lines is the whole point of there being a list.
   "components/esim-panel.tsx",
 ];
 
-test("all three device page controls ask the gateway themselves, and all start closed", () => {
-  for (const relative of SELF_ASKING_CONTROLS) {
-    const code = codeOnly(readSource(relative));
-    assert.match(
-      code,
-      /import \{ mayWrite, roleFromSessionBody, SESSION_ENDPOINT \} from "@\/lib\/session";/,
-      `${relative} reads the role its own way`,
+/**
+ * The device page resolves the role once, on the server, and hands it down.
+ *
+ * 🔴 This replaces a guard that pinned the opposite shape. The three cards here
+ * — admin, console, eSIM — each asked `GET /v1/auth/session` from an effect and
+ * started closed until the answer came back. That was safe, and it was three
+ * identical lookups per page load with every control arriving a paint late.
+ *
+ * The card that wrote it said so at the time: a server-resolved `writable` is
+ * the better end state, and it could not be had that day because this page was
+ * being rewritten wholesale on another branch, and adding an argument to a call
+ * site that is moving is how a guard gets dropped in a merge. The rewrite
+ * landed; the reason expired with it, and the debt sat for a week because
+ * nothing was checking whether its premise still held.
+ *
+ * What is asserted is the whole chain, because any one link alone is satisfiable
+ * without the others: the page asks, the components require an answer, and none
+ * of them can quietly go back to asking for itself.
+ */
+test("the device page resolves the role on the server and hands it to every card", () => {
+  const page = readSource(DEVICE_PAGE);
+  const code = codeOnly(page);
+
+  // 1. The page asks, and asks the shared way — the same function `/settings`,
+  //    `/inbox`, `/proxy` and `/devices` call, which `assertFailsClosed` holds
+  //    to returning "readonly" for both a refusal and an unreachable gateway.
+  assert.match(
+    code,
+    /const writable = mayWrite\(await fetchConsoleRole\(host, token\)\)/,
+    "the device page no longer resolves the role on the server",
+  );
+
+  // 2. Every card requires it. A required prop is what makes a forgotten call
+  //    site a type error rather than a control drawn for a read-only account.
+  for (const relative of DEVICE_PAGE_CARDS) {
+    const source = codeOnly(readSource(relative));
+    assert.match(source, /\bwritable: boolean;/, `${relative} does not require the role`);
+    assert.ok(
+      !/SESSION_ENDPOINT/.test(source),
+      `${relative} asks the gateway for the role itself again instead of being told`,
     );
-    assert.match(
-      code,
-      /useState<"unknown" \| "write" \| "read">\("unknown"\)/,
-      `${relative} decides what to draw before it has asked`,
-    );
-    assert.match(
-      code,
-      /response\.ok && mayWrite\(roleFromSessionBody\(await response\.json\(\)\)\) \? "write" : "read"/,
-      `${relative} treats a refused session lookup as permission to write`,
-    );
-    assert.match(
-      code,
-      /catch \{\s*if \(alive\) setPermission\("read"\);\s*\}/,
-      `${relative} fails open when the gateway cannot be reached`,
+    assert.ok(
+      !/useState<"unknown" \| "write" \| "read">/.test(source),
+      `${relative} has gone back to resolving the role after mount`,
     );
   }
+
+  // 3. And it is actually passed. A required prop the page satisfies with a
+  //    literal would type-check and mean nothing.
+  const passes = [...code.matchAll(/writable=\{writable\}/g)];
+  assert.ok(
+    passes.length >= 4,
+    `the page passes the role to ${passes.length} cards, not the four that need it`,
+  );
+  assert.ok(
+    !/writable=\{(?:true|false)\}/.test(code),
+    "a card is handed a hardcoded answer instead of the one the gateway gave",
+  );
 });
 
 /**
@@ -3472,11 +3580,10 @@ test("the device admin card draws no rename box and no delete button for a read-
   const source = readSource("components/device-admin.tsx");
   const { masked, code } = scan(source);
 
-  // `code`, not `masked`: the literal is the whole point of the condition and
-  // `masked` blanks it, so the same search on `masked` would find
-  // `if (permission !== "     ")` and keep matching after somebody changed
-  // which state opens the card.
-  const guardAt = code.indexOf('if (permission !== "write") {');
+  // `code`, not `masked`: the condition is the whole point and `masked` blanks
+  // literals, so the same search there would keep matching after somebody
+  // changed which state opens the card.
+  const guardAt = code.indexOf("if (!writable) {");
   assert.notEqual(guardAt, -1, "the device admin card no longer gates on what the account may do");
   const guardEnd = closingBracket(masked, masked.indexOf("{", guardAt));
   assert.notEqual(guardEnd, -1, "the read-only branch has no end");
@@ -3523,11 +3630,11 @@ test("both device admin writes refuse without the role, before they ask for anyt
     assert.ok(/fetch\s*\(/.test(body), `${name} does not perform the request it is guarded for`);
     assert.match(
       body,
-      /if \(permission !== "write"\) return;/,
+      /if \(!writable\) return;/,
       `${name} runs for an account that may not write`,
     );
     assert.ok(
-      body.indexOf('permission !== "write"') < body.indexOf("fetch("),
+      body.indexOf("!writable") < body.indexOf("fetch("),
       `${name} checks the role after it has already sent the request`,
     );
   }
@@ -3538,7 +3645,7 @@ test("both device admin writes refuse without the role, before they ask for anyt
   // gateway answer 403, is all of the cost and none of the outcome.
   const remove = functionBody(source, "remove") as string;
   assert.ok(
-    remove.indexOf('permission !== "write"') < remove.indexOf("window.prompt("),
+    remove.indexOf("!writable") < remove.indexOf("window.prompt("),
     "a read-only account is made to type the device name out before it is refused",
   );
 });
@@ -3601,14 +3708,20 @@ test("the eSIM tab draws no write control for an account that may not write", ()
   const source = readSource(ESIM_SOURCE);
   const { masked, code } = scan(source);
 
-  // 🔴 The derivation itself, pinned. `permission !== "read"` reads as writable
-  // for the `"unknown"` this panel starts in — the one state the whole shape
-  // exists in order to draw nothing for — and it would satisfy every check
-  // below, because every check below asks about the word and not the answer.
+  // 🔴 The gate itself, pinned. It is a **required prop** now, not a value this
+  // panel derives from a three-state it resolved for itself — so the answer
+  // exists before the first paint and TypeScript refuses a caller that forgets
+  // it. Every check below asks about the word `writable`; this is the one that
+  // asks where the word comes from, and without it they would all pass on a
+  // local `const writable = true`.
   assert.match(
     code,
-    /const writable = permission === "write";/,
-    "the eSIM panel's gate is no longer the answer the gateway gave",
+    /\bwritable: boolean;/,
+    "the eSIM panel no longer takes the role as a required prop",
+  );
+  assert.ok(
+    !/const writable =/.test(code),
+    "the eSIM panel derives its own gate again instead of being told",
   );
 
   const drawn = [...masked.matchAll(ESIM_PANEL_CONTROLS)];
@@ -6782,7 +6895,8 @@ test("deleting a device still means typing its name", () => {
  * So the decision is data now (`DEVICE_COMMAND_GUARDS`, `AT_COMMAND_GUARDS`),
  * and these are the checks that keep it wired to the two components. Each one
  * has been shown red against the specific defect it claims to catch; the
- * mutations are listed in `notes/T011-device-console-esim-danger.md`.
+ * mutations were run at the time and, like T027's above, never written down —
+ * the file this sentence used to name has never existed.
  */
 
 const CONSOLE_SOURCE = "components/device-console.tsx";

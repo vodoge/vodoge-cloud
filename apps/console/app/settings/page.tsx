@@ -2,17 +2,12 @@ import { PasswordForm, SettingsForm, type ChannelTest } from "@/components/setti
 import { Badge } from "@/components/ui/badge";
 import { CardDisclosure, CardPanel as Card } from "@/components/ui/card";
 import { SpecRow, SpecTable, TableBody } from "@/components/ui/table";
-import { fetchSettings, type SettingsBySection } from "@/lib/catalog";
+import { fetchConsoleRole, fetchSettings, type SettingsBySection } from "@/lib/catalog";
 import { MISSING_KEY_PATTERN, t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import {
-  bearerHeader,
   mayWrite,
-  roleFromSessionBody,
-  SESSION_ENDPOINT,
-  type ConsoleRole,
 } from "@/lib/session";
-import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import {
   NOTIFICATION_FIELDS,
@@ -55,7 +50,7 @@ export default async function SettingsPage() {
   } catch {
     loadError = true;
   }
-  const role = await currentRole(host, token);
+  const role = await fetchConsoleRole(host, token);
   const writable = mayWrite(role);
 
   const labels = fieldLabels(locale);
@@ -167,23 +162,6 @@ export default async function SettingsPage() {
  * form: the account may lose a Save button it was entitled to, which is
  * recoverable by reloading, and the gateway is the thing that actually decides.
  */
-async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
-  try {
-    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
-      headers: {
-        accept: "application/json",
-        "x-forwarded-host": host,
-        ...bearerHeader(token),
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!response.ok) return "readonly";
-    return roleFromSessionBody(await response.json());
-  } catch {
-    return "readonly";
-  }
-}
 
 /**
  * One confirmation per channel, written on the server.

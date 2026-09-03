@@ -1451,42 +1451,20 @@ export function cardPolicyPatch(edit: Exclude<CardPolicyEdit, { kind: "remove" }
  * the right way round: the card that writes the confirmation adds the line.
  */
 
-/* ── Modules this console will not send a message from ───────────────────
+/* ── Where the send-block list went ─────────────────────────────────────
  *
- * Not a policy invented here, and — this is the part that keeps being got
- * wrong — **not "SMS is broken on that stick"**.
+ * `SMS_BLOCKED_MODULES`, `CONFIRMED_WRITES` and `sendHold` moved to
+ * `lib/sms-safety.ts` in T032. What stayed behind until 2026-09-03 was
+ * thirty-four lines of prose about them, and a one-line docblock for an
+ * `IMEI → …` map that documents nothing, because the map is not here.
  *
- * `867018069509705` stalls its own QMI interrupt endpoint on every MO submit:
- * the USB/IP session is torn down and the module leaves the bus for tens of
- * seconds. Both transports trigger it, and a full `AT+CFUN=1,1` does not clear
- * it. `edge-bin/src/main.rs:537-560` is the primary record, and it says the
- * opposite of what this board believed until T006 checked:
- *
- * > The submit itself is not undone by that -- the SIM's own MO reference
- * > counter in `EF_SMSS` advanced by 34 over a day of sends the console
- * > recorded as failures, and 10086 kept replying to them. Told "failed", an
- * > operator resends and the recipient gets it twice.
- *
- * So the cost is not a lost message. It is a lost module, and the copy in
- * `messages/*.json` has to say that: telling an operator the message cannot be
- * sent is the exact lie that daemon comment exists to stop, and it produces
- * duplicate messages at the far end.
- *
- * ⚠️ **Keyed by IMEI, and matched against a whole device.** The console's send
- * takes a `device_id` and no module, so which module carries the message is
- * decided at the edge — and with nothing to aim it, the edge takes the first
- * entry out of its modem map. A device holding one of these is therefore a
- * device this console cannot promise anything about, which is why the whole
- * device is refused rather than one option in a picker this form does not have.
- *
- * ⚠️ **This does not belong in the design system**, and it is here because the
- * card that had to write it could edit exactly one file under `lib/`. A `.tsx`
- * cannot be tested in this app, so the alternative was not a better home; it
- * was no test at all. Move it to its own module the moment a card owns one.
+ * 🔴 Leaving it here was not merely untidy. This file is a **Tailwind
+ * content file** (`tailwind.config.ts` lists it), and ordinary English in a
+ * content file has leaked rules into the shipped stylesheet four times on
+ * this repository — once from the word `transition` sitting in a comment.
+ * Prose about a thing that lives elsewhere is exactly the prose that has no
+ * reason to be scanned.
  */
-
-/** IMEI → the message keys that say why, and what the cost really is. */
-
 /* ── The free-text AT box ────────────────────────────────────────────────
  *
  * 🔴 **This is the hole T021's twenty-three-row survey of dangerous actions

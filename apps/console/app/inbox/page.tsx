@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  fetchConsoleRole,
   fetchContacts,
   fetchDevices,
   fetchModems,
@@ -34,14 +35,9 @@ import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import {
-  bearerHeader,
   mayWrite,
-  roleFromSessionBody,
-  SESSION_ENDPOINT,
-  type ConsoleRole,
 } from "@/lib/session";
 import { blockedSendModules } from "@/lib/sms-safety";
-import { gatewayBaseUrl } from "@/lib/tenant";
 
 /**
  * The inbox: send a message, name a number, open a conversation.
@@ -94,7 +90,7 @@ export default async function InboxPage({
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
-  const writable = mayWrite(await currentRole(host, token));
+  const writable = mayWrite(await fetchConsoleRole(host, token));
   let threads: ThreadRow[] = [];
   let contacts: ContactRow[] = [];
   let devices: { id: string; name: string }[] = [];
@@ -373,20 +369,3 @@ export default async function InboxPage({
  * file yet; `lib/tokens.test.ts` holds all three to the same two returns until
  * one does.
  */
-async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
-  try {
-    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
-      headers: {
-        accept: "application/json",
-        "x-forwarded-host": host,
-        ...bearerHeader(token),
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!response.ok) return "readonly";
-    return roleFromSessionBody(await response.json());
-  } catch {
-    return "readonly";
-  }
-}

@@ -6,7 +6,6 @@ import { ButtonRow } from "@/components/ui/button-row";
 import { Button } from "@/components/ui/button";
 import { Field, FormError, FormHint, InlineForm, Input } from "@/components/ui/form";
 import { SpecRow, SpecTable, TableBody } from "@/components/ui/table";
-import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 
 type Labels = Record<string, string>;
 
@@ -33,16 +32,21 @@ type Labels = Record<string, string>;
  *
  * ## Why it asks for itself rather than being told
  *
- * `/settings`, `/inbox` and `/devices` each resolve the role on the server and
- * hand a required `writable` prop down, and that is the better shape: a prop
- * exists before the first render, so there is no paint in which the controls
- * are present. This component cannot have it today. Its only caller is
+ * ✅ `/settings`, `/inbox`, `/devices` and — since 2026-09-03 — this page all
+ * resolve the role on the server and hand a required `writable` prop down. A
+ * prop exists before the first render, so there is no paint in which the
+ * controls are present, and TypeScript refuses a caller that forgets it.
+ *
+ * ⚠️ What follows is the reason this component could not have that shape when
+ * it was written, kept because the reason expiring is the interesting part. Its only caller is
  * `app/devices/[deviceId]/page.tsx`, which is being rewritten wholesale on
  * another branch — the card that holds this component has already moved into a
  * different card shell there — and adding an argument to a call site that has
  * moved is how a guard gets dropped in a merge. That is not hypothetical here:
  * the assertions holding the inbox's gate were lost in exactly that way and
- * nothing went red. See `notes/T034-devices-role-gating.md`.
+ * nothing went red — `git show f8cdece` holds them, `af2fe6a` is the merge that
+ * dropped them, and no test failed in between. (This used to point at a file
+ * under `notes/` for the details; that file has never existed.)
  *
  * So it uses the *other* shape this page already has. `device-console.tsx`,
  * rendered a few hundred pixels above this, asks `GET /v1/auth/session` from an
@@ -61,43 +65,25 @@ export function DeviceAdmin({
   deviceId,
   name,
   labels,
+  writable,
 }: {
   deviceId: string;
   name: string;
   labels: Labels;
+  /** Whether this account may change anything. Resolved on the server. */
+  writable: boolean;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const response = await fetch(SESSION_ENDPOINT, { cache: "no-store" });
-        if (!alive) return;
-        // A session the gateway will not confirm gets the smaller card. The
-        // controls would only ever produce a refusal anyway.
-        setPermission(
-          response.ok && mayWrite(roleFromSessionBody(await response.json())) ? "write" : "read",
-        );
-      } catch {
-        if (alive) setPermission("read");
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   async function rename(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // Not only the missing control. The form is not drawn for a read-only
     // account, and this is the half of the guard that survives it being drawn
     // again by a later change.
-    if (permission !== "write") return;
+    if (!writable) return;
     setBusy(true);
     setError(null);
     const response = await fetch(`/v1/devices/${deviceId}`, {
@@ -117,7 +103,7 @@ export function DeviceAdmin({
     // Before the prompt, not after it. Making an account that cannot delete
     // anything type a device's name out and then having the gateway refuse it
     // is the worst of both: all of the friction, none of the outcome.
-    if (permission !== "write") return;
+    if (!writable) return;
     // Typing the name is the confirmation. A device's journal is the record of
     // everything it ever reported and none of it comes back, so a dialog
     // someone can dismiss by reflex is not enough friction.
@@ -146,7 +132,7 @@ export function DeviceAdmin({
   // shipped twice. The page is not silent — `device-console.tsx` draws that
   // exact sentence above this card from the same answer — but this card should
   // say it too, on the day it is handed a locale.
-  if (permission !== "write") {
+  if (!writable) {
     return (
       <div className="flex flex-col gap-6">
         <SpecTable>

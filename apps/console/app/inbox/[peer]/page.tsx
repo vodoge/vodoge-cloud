@@ -3,17 +3,12 @@ import { Conversation } from "@/components/conversation";
 import { Badge } from "@/components/ui/badge";
 import { CardPanel as Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
-import { fetchThread, fetchThreads, type ThreadMessage } from "@/lib/catalog";
+import { fetchConsoleRole, fetchThread, fetchThreads, type ThreadMessage } from "@/lib/catalog";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import {
-  bearerHeader,
   mayWrite,
-  roleFromSessionBody,
-  SESSION_ENDPOINT,
-  type ConsoleRole,
 } from "@/lib/session";
-import { gatewayBaseUrl } from "@/lib/tenant";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 
 /**
@@ -42,7 +37,7 @@ export default async function ThreadPage({
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
-  const writable = mayWrite(await currentRole(host, token));
+  const writable = mayWrite(await fetchConsoleRole(host, token));
 
   let messages: ThreadMessage[] = [];
   let name = "";
@@ -133,20 +128,3 @@ export default async function ThreadPage({
  * copies is one too many and the home for it is `lib/session.ts`, which no card
  * has owned yet. `lib/tokens.test.ts` holds all three to the same two returns.
  */
-async function currentRole(host: string, token: string | undefined): Promise<ConsoleRole> {
-  try {
-    const response = await fetch(`${gatewayBaseUrl()}${SESSION_ENDPOINT}`, {
-      headers: {
-        accept: "application/json",
-        "x-forwarded-host": host,
-        ...bearerHeader(token),
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!response.ok) return "readonly";
-    return roleFromSessionBody(await response.json());
-  } catch {
-    return "readonly";
-  }
-}

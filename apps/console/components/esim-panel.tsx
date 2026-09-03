@@ -37,7 +37,6 @@ import {
   type RetrievedNotification,
 } from "@/lib/catalog";
 import { t, type Locale } from "@/lib/i18n";
-import { mayWrite, roleFromSessionBody, SESSION_ENDPOINT } from "@/lib/session";
 import {
   deviceCommandGuard,
   esimSwitchVerdict,
@@ -98,10 +97,22 @@ export function EsimPanel({
   profiles,
   modems,
   locale,
+  writable,
 }: {
   deviceId: string;
   profiles: EsimProfileRow[];
   modems: { imei: string }[];
+  /**
+   * Whether this account may change anything, resolved on the server.
+   *
+   * 🔴 A prop, not an effect. This panel used to ask `GET /v1/auth/session`
+   * itself and start closed until the answer arrived — safe, but it meant this
+   * page issued three identical session lookups per load (here, the console tab
+   * and the admin card) and every control appeared a paint late. The page
+   * resolves it once now, which is the shape `/settings`, `/inbox`, `/proxy`
+   * and `/devices` already had.
+   */
+  writable: boolean;
   /**
    * The locale of the request, resolved on the server.
    *
@@ -140,12 +151,6 @@ export function EsimPanel({
   // a conditional, so the state is up here and only the markup is gated.
   const [renameIccid, setRenameIccid] = useState("");
   const [renameNickname, setRenameNickname] = useState("");
-  // "unknown" until the gateway has been asked, and every control on this
-  // tab is drawn for "write" only. Closed by default on purpose: this panel
-  // renders on the server before it can ask anything, and a Switch button
-  // that appears for one paint and is then taken away is a worse answer than
-  // one that appears a paint late.
-  const [permission, setPermission] = useState<"unknown" | "write" | "read">("unknown");
   // Held only until the request goes out. An activation code is a one-time
   // credential, so it lives in this component and nowhere else -- not in the
   // URL, not in a form that survives a reload, and not in the command result
@@ -204,31 +209,6 @@ export function EsimPanel({
     return () => clearInterval(timer);
   }, [reading, authPending, downloadPending, refresh]);
 
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const response = await fetch(SESSION_ENDPOINT, { cache: "no-store" });
-        if (!alive) return;
-        // A session the gateway will not confirm gets the smaller panel. The
-        // controls would only ever produce a refusal anyway.
-        setPermission(
-          response.ok && mayWrite(roleFromSessionBody(await response.json())) ? "write" : "read",
-        );
-      } catch {
-        if (alive) setPermission("read");
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // The gate every control below is drawn behind. A boolean rather than the
-  // three-state value, so the condition in front of a control is the word
-  // `writable` and nothing else -- which is what a test can walk out of, and
-  // what the four pages that are handed their answer already call it.
-  const writable = permission === "write";
 
   /**
    * The request itself, and the only function in this file that performs one.
