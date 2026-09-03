@@ -87,10 +87,19 @@
 
 ### 云主机的硬性约束
 
-**云主机是 2 vCPU / 1.6 GB 内存，它编译不动这套软件。**
-在那上面跑 `go build` 会把 sshd 饿死，机器好几分钟不接受连接；`next build` 更重。
+🔴 **云主机是 2 vCPU / 1.6 GB 内存，它编译不动这套软件。绝不在云端构建。**
 
-**所有编译在工作站或边缘机上做，云主机只接收二进制。**
+**所有编译在本机做，云主机只接收产物。** 上传的是编译好的二进制和打包好的
+`console-dist.tgz`，不是源码。
+
+在云主机上构建会怎样，具体到症状，免得下次有人"先试一下"：
+
+- `go build` 把 sshd 饿死，机器**好几分钟不接受 SSH 连接**——包括你想连上去
+  把它停掉的那一次。
+- `next build` 更重，直接 OOM。
+- 因此 `docker compose ... up -d` **必须带 `--no-build`**。省掉它，Compose 会
+  回退到从源码构建的 `Dockerfile.gateway`，于是上面两条一起发生。用于部署的是
+  `Dockerfile.gateway.prebuilt`，它只是把已经传上去的二进制装进镜像。
 
 ---
 
@@ -99,13 +108,13 @@
 ### 2.1 网关（Go）
 
 ```bash
-cd ~/Documents/local/vodoge-cloud/apps/gateway && go test ./... && go vet ./...
+cd /run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-cloud/apps/gateway && go test ./... && go vet ./...
 ```
 
 交叉编译并上传（**工作站**）：
 
 ```bash
-cd ~/Documents/local/vodoge-cloud/apps/gateway && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/vodoge-gateway ./cmd/gateway && scp /tmp/vodoge-gateway root@43.108.53.126:/opt/vodoge-cloud/deploy/
+cd /run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-cloud/apps/gateway && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/vodoge-gateway ./cmd/gateway && scp /tmp/vodoge-gateway root@43.108.53.126:/opt/vodoge-cloud/deploy/
 ```
 
 在**云主机**上重建并重启：
@@ -122,7 +131,7 @@ ssh root@43.108.53.126 'cd /opt/vodoge-cloud/deploy && docker build -q -t vodoge
 在**工作站**上构建、打包、上传：
 
 ```bash
-cd ~/Documents/local/vodoge-cloud/apps/console && NEXT_TELEMETRY_DISABLED=1 VODOGE_GATEWAY_URL=http://gateway:8080 npm run build && rm -rf .next/standalone/node_modules/@img && rm -rf dist && mkdir -p dist/public && cp -r .next/standalone/. dist/ && rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. dist/.next/static/ && cp -r public/. dist/public/ && tar -czf console-dist.tgz -C dist . && scp console-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
+cd /run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-cloud/apps/console && NEXT_TELEMETRY_DISABLED=1 VODOGE_GATEWAY_URL=http://gateway:8080 npm run build && rm -rf .next/standalone/node_modules/@img && rm -rf dist && mkdir -p dist/public && cp -r .next/standalone/. dist/ && rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. dist/.next/static/ && cp -r public/. dist/public/ && tar -czf console-dist.tgz -C dist . && scp console-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
 ```
 
 > **`.next/static` 每次都要拷进一个全新目录。** `cp -r a b` 在 `b` 已存在时
@@ -147,7 +156,7 @@ rustup）。换回一台非 Linux 的工作站时，上面那个坑会原样回�
 同步源码到**边缘机**：
 
 ```bash
-cd ~/Documents/local/vodoge-edge && rsync -a --delete --exclude target --exclude .git ./ root@192.168.6.83:/root/vodoge-edge-build/
+cd /run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-edge && rsync -a --delete --exclude target --exclude .git ./ root@192.168.6.83:/root/vodoge-edge-build/
 ```
 
 在**边缘机**上检查、测试、构建、部署：
@@ -267,7 +276,7 @@ ssh root@192.168.6.83 'journalctl -u vodoge-edge -n 40 --no-pager | grep -v "pol
 应用一条新迁移（从**工作站**发起）：
 
 ```bash
-cd ~/Documents/local/vodoge-cloud && scp packages/db/migrations/NNNN_your_change.sql root@43.108.53.126:/tmp/m.sql && ssh root@43.108.53.126 'docker cp /tmp/m.sql vodoge-cloud-postgres-1:/tmp/m.sql && docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 -f /tmp/m.sql'
+cd /run/media/yuanshuai/数据/justworkhere/play/vodoge/vodoge-cloud && scp packages/db/migrations/NNNN_your_change.sql root@43.108.53.126:/tmp/m.sql && ssh root@43.108.53.126 'docker cp /tmp/m.sql vodoge-cloud-postgres-1:/tmp/m.sql && docker exec vodoge-cloud-postgres-1 psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 -f /tmp/m.sql'
 ```
 
 **应用成功后必须登记版本号**，否则追踪表会和现实脱节：
