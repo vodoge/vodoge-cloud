@@ -26,15 +26,37 @@ import { cn } from "@/lib/cn";
  * Class strings live in `lib/tokens.ts`. See the note in `button.tsx`.
  */
 
-export function TabList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div
-      role="tablist"
+/**
+ * The strip these tabs sit in.
+ *
+ * 🔴 **A `<nav>`, not a `role="tablist"`.** Every `Tab` in this console
+ * navigates — the device page keeps its selection in `?tab=` so a reload
+ * during a slow command does not lose the operator's place, which is the
+ * reason this console kept link-style tabs instead of taking shadcn's Radix
+ * `Tabs`. `role="tablist"` promises the opposite: a screen reader announces
+ * "tab", then offers arrow-key traversal of panes inside the same document.
+ * What it gets is a link that leaves the page. The roles said one thing and
+ * the elements did another.
+ *
+ * `label` is required rather than optional because an unnamed `<nav>` is
+ * announced as just "navigation", and this page has two of them once the
+ * sidebar is counted.
+ */
+export function TabList({
+  label,
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLElement> & { label: string }) {
+  return (
+    <nav
+      aria-label={label}
       className={cn(
         "flex flex-wrap items-center gap-x-4 border-0 border-b border-solid border-border",
         className,
       )}
       {...props}
-    />;
+    />
+  );
 }
 
 export type TabProps = {
@@ -59,12 +81,17 @@ export function Tab({ href, current, className, children, ...props }: TabProps) 
   if (href !== undefined) {
     const { disabled, ...anchorProps } = props;
     return (
-      <Link href={href} role="tab" aria-current={current ? "page" : undefined} className={classes} {...anchorProps}>
+      // No `role="tab"`: this is a link, and `aria-current="page"` is how a
+      // navigation says which one you are on.
+      <Link href={href} aria-current={current ? "page" : undefined} className={classes} {...anchorProps}>
         {children}
       </Link>
     );
   }
   return (
+    // ⚠️ The pane-switching variant, which has no caller today. If one
+    // appears it needs a `role="tablist"` parent — `TabList` above is a
+    // `<nav>` and will not supply one.
     <button type="button" role="tab" aria-selected={current ?? false} className={classes} {...props}>
       {children}
     </button>

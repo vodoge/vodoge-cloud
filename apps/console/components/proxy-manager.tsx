@@ -42,6 +42,7 @@ import { interpolate } from "@/lib/i18n";
  * is the defect the dialog exists to stop.
  */
 export type ProxyLabelKey =
+  | "colActions"
   | "upstreams"
   | "instances"
   | "noUpstreams"
@@ -287,7 +288,7 @@ function UpstreamList({
               {/* Diagnostics rather than identity: the column an operator on a
                   phone can do without, and the one that carries a sentence. */}
               <TableHead secondary>{labels.colProbe}</TableHead>
-              <TableHead />
+              <TableHead label={labels.colActions} />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -488,7 +489,7 @@ function InstanceList({
                   already in the listener's name on a phone-sized screen. */}
               <TableHead secondary>{labels.colModem}</TableHead>
               <TableHead>{labels.colUpstream}</TableHead>
-              <TableHead />
+              <TableHead label={labels.colActions} />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -826,7 +827,7 @@ function ExportPanel({ busy, labels }: { busy: boolean; labels: Labels }) {
                   <TableRow head>
                     <TableHead>{labels.colName}</TableHead>
                     <TableHead>{labels.colAddress}</TableHead>
-                    <TableHead />
+                    <TableHead label={labels.colActions} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -981,7 +982,7 @@ function CountryRuleList({
             <TableRow head>
               <TableHead>{labels.colCountry}</TableHead>
               <TableHead>{labels.colUpstream}</TableHead>
-              <TableHead />
+              <TableHead label={labels.colActions} />
             </TableRow>
           </TableHeader>
           <TableBody>

@@ -2865,6 +2865,62 @@ function functionBody(source: string, name: string): string | null {
   return close === -1 ? null : code.slice(open, close + 1);
 }
 
+/**
+ * A write whose answer is thrown away.
+ *
+ * 🔴 `await fetch(...)` as a bare statement discards the response, and every
+ * one of them in this console was followed by `router.refresh()` or
+ * `router.push(...)` — so a refused or failed write rendered **exactly** like
+ * a completed one. Five of them sat in `components/conversation.tsx`, two of
+ * which delete rows from the gateway for everyone.
+ *
+ * This console already refuses to draw a failed load and an empty list as the
+ * same screen; `lib/catalog.ts` carries a docblock about the day it did. This
+ * is that same rule on the writing side, and it is checked here because a
+ * `.tsx` cannot be run by a test in this app.
+ *
+ * The rule is "the answer is read", not "the answer is shown": a background
+ * write may legitimately decide a failure needs no message, but it may not
+ * refresh as though the server agreed.
+ */
+test("no component throws away the answer to a write", () => {
+  const allowed = new Map<string, string>([
+    [
+      "components/sign-out.tsx",
+      "wrapped in try/catch with its reasoning written next to it: the login " +
+        "page is the right destination whether or not the POST landed",
+    ],
+  ]);
+
+  const discarded: string[] = [];
+  for (const relative of MIGRATED_SOURCES) {
+    if (allowed.has(relative)) continue;
+    const code = codeOnly(readSource(relative));
+    for (const match of code.matchAll(/(^|\n)[ \t]*await fetch\(/g)) {
+      const line = code.slice(0, match.index).split("\n").length;
+      discarded.push(`${relative}:${line}`);
+    }
+  }
+  assert.deepEqual(
+    discarded,
+    [],
+    "a fetch result is discarded, so a refused write is indistinguishable from a completed one",
+  );
+
+  // Not vacuous: the scan finds the shape when the shape is there.
+  const probe = "async function f() {\n  await fetch(\"/v1/x\", { method: \"DELETE\" });\n}";
+  assert.equal([...probe.matchAll(/(^|\n)[ \t]*await fetch\(/g)].length, 1);
+
+  // And every name on the allowlist exists and still says why.
+  for (const [relative, why] of allowed) {
+    assert.ok(
+      (MIGRATED_SOURCES as readonly string[]).includes(relative),
+      `${relative} is allowed but not on the ledger`,
+    );
+    assert.ok(why.length > 30, `${relative} is allowed without a reason`);
+  }
+});
+
 test("a dangerous write is reachable only from a confirmation", () => {
   const notDeclared: string[] = [];
   const notAWrite: string[] = [];
@@ -3165,8 +3221,20 @@ test("the device list draws no card policy control for an account that may not w
   // Header and cells together. A column kept for actions nobody has leaves the
   // table one column wider than it has values for, which no count of controls
   // would show.
-  const actionsHeaderAt = masked.indexOf("<TableHead />");
-  assert.notEqual(actionsHeaderAt, -1, "the actions column lost its header cell");
+  // ⚠️ Matched as "a self-closing TableHead" rather than the literal
+  // `<TableHead />`: the header now carries a `label` giving it an accessible
+  // name, and a pattern pinned to the empty form would have read that
+  // improvement as the column disappearing.
+  const actionsHeader = /<TableHead\b[^>]*\/>/.exec(masked);
+  assert.notEqual(actionsHeader, null, "the actions column lost its header cell");
+  const actionsHeaderAt = actionsHeader!.index;
+  // 🔴 And it has to keep its name. The column shows no text, so a screen
+  // reader has nothing but this to say which column a button sits in.
+  assert.match(
+    actionsHeader![0],
+    /\blabel=/,
+    "the actions column header lost its accessible name, so its buttons announce no column",
+  );
   assert.ok(
     drawnOnlyWhen(masked, actionsHeaderAt, "writable"),
     "the actions column keeps its header for an account that has no actions",
@@ -3501,8 +3569,14 @@ test("the eSIM tab draws no write control for an account that may not write", ()
   // nobody has leaves a table one heading wider than it has values for, which
   // no count of controls would show — the same check the card policy table
   // carries, twice over because this tab has two tables with an actions column.
-  const headers = [...masked.matchAll(/<TableHead \/>/g)];
+  // Same shape as the card policy table's check, matched the same way:
+  // self-closing rather than literally empty, because these headers now carry
+  // an accessible name.
+  const headers = [...masked.matchAll(/<TableHead\b[^>]*\/>/g)];
   assert.equal(headers.length, 2, "the two actions columns are not both still here");
+  for (const named of headers) {
+    assert.match(named[0], /\blabel=/, "an actions column header lost its accessible name");
+  }
   for (const header of headers) {
     assert.ok(
       drawnOnlyWhen(masked, header.index, "writable"),

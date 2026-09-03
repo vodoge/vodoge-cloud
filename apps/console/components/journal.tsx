@@ -143,7 +143,7 @@ export function Journal({
             {/* The toggle column has no heading, as it had none before. The
                 cell itself stays, so the header row still has one cell per
                 column. */}
-            <TableHead />
+            <TableHead label={labels.colActions} />
           </TableRow>
         </TableHeader>
         <TableBody>

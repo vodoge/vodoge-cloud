@@ -8,7 +8,12 @@ const Table = React.forwardRef<
 >(({ className, wrapperClassName, ...props }, ref) => (
   // `wrapperClassName` 是这个项目加的：包裹层负责横向滚动，而有几张表需要
   // 给它设最大高度做纵向滚动。shadcn 的版本把这层写死，调用方够不着。
-  <div className={cn("relative w-full overflow-auto", wrapperClassName)}>
+  // 🔴 `tabIndex={0}` because this div scrolls. A region that scrolls and
+  // cannot be focused is scrollable only with a pointer — a keyboard reaches
+  // the rows before it and the rows after it, with the columns that overflowed
+  // unreachable in between. WCAG 2.1.1, and on this console it bites hardest
+  // exactly where the data is widest.
+  <div className={cn("relative w-full overflow-auto", wrapperClassName)} tabIndex={0}>
     <table
       ref={ref}
       className={cn("w-full caption-bottom text-sm", className)}
@@ -71,10 +76,24 @@ const TableRow = React.forwardRef<
 ))
 TableRow.displayName = "TableRow"
 
+/**
+ * A column heading.
+ *
+ * 🔴 `label` names a column that shows no text — the eight `<TableHead />`
+ * that head an actions or toggle column. Empty is right *visually*: a heading
+ * over a row of buttons is noise. It is wrong to a screen reader, which reads
+ * the column header when it reads a cell, and for these columns read nothing
+ * at all — so a button in the last column announced itself with no indication
+ * of which column it belonged to.
+ *
+ * The name goes here rather than as a bare `<span className="sr-only">` at
+ * each site so the eight cannot drift into eight different spellings, and so
+ * a ninth is a prop away rather than a pattern to remember.
+ */
 const TableHead = React.forwardRef<
   HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement> & { secondary?: boolean }
->(({ className, secondary, ...props }, ref) => (
+  React.ThHTMLAttributes<HTMLTableCellElement> & { secondary?: boolean; label?: string }
+>(({ className, secondary, label, children, ...props }, ref) => (
   <th
     ref={ref}
     className={cn(
@@ -83,7 +102,10 @@ const TableHead = React.forwardRef<
       className
     )}
     {...props}
-  />
+  >
+    {label !== undefined ? <span className="sr-only">{label}</span> : null}
+    {children}
+  </th>
 ))
 TableHead.displayName = "TableHead"
 

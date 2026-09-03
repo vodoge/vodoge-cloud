@@ -227,7 +227,7 @@ export default async function DevicePage({
 
       {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("devices.loadError", locale)}</p> : null}
 
-      <TabList>
+      <TabList label={t("device.tabsLabel", locale)}>
         {DEVICE_TABS.map((tab) => (
           <Tab
             key={tab.id}

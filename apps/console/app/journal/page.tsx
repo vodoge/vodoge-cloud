@@ -67,6 +67,7 @@ export default async function JournalPage() {
               events={events}
               kinds={kinds}
               labels={{
+                colActions: t("table.expand", locale),
                 all: t("journal.all", locale),
                 colAt: t("journal.colAt", locale),
                 colKind: t("journal.colKind", locale),

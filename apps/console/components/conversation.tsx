@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonRow } from "@/components/ui/button-row";
 import { ConfirmDialog, type ConfirmLabels } from "@/components/ui/confirm-dialog";
-import { Input } from "@/components/ui/form";
+import { FormError, Input } from "@/components/ui/form";
 import type { ThreadMessage } from "@/lib/catalog";
 import { cn } from "@/lib/cn";
 import { interpolate } from "@/lib/i18n";
@@ -75,6 +75,18 @@ export function Conversation({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  /**
+   * 🔴 Why a failed write needs its own state here.
+   *
+   * These calls used to be a bare `await fetch(...)` with the response thrown
+   * away, followed by `router.refresh()` or `router.push("/inbox")`. A refused
+   * or failed DELETE therefore looked exactly like a completed one: the dialog
+   * closed, the page navigated, and the row reappeared on the next render with
+   * no explanation. This console already refuses to draw a failed load and an
+   * empty list as the same screen — a failed delete and a completed delete are
+   * that same rule on the writing side.
+   */
+  const [error, setError] = useState<string | null>(null);
   /** Which deletion has been asked for and not yet answered. */
   const [pending, setPending] = useState<{ kind: "thread" } | { kind: "message"; id: string } | null>(
     null,
@@ -98,11 +110,15 @@ export function Conversation({
     if (!writable || !unread || marked.current) return;
     marked.current = true;
     void (async () => {
-      await fetch("/v1/messages/thread/read", {
+      // The one write here nobody asked for, so a failure gets no message —
+      // but it must not refresh as though the server agreed, or the unread
+      // badge quietly disagrees with the thread it is counting.
+      const response = await fetch("/v1/messages/thread/read", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ peer }),
       });
+      if (!response.ok) return;
       router.refresh();
     })();
   }, [peer, unread, router, writable]);
@@ -112,13 +128,19 @@ export function Conversation({
     setBusy(true);
     // The number travels in the body, not the URL: a phone number in a path
     // ends up in every access log between here and the browser.
-    await fetch("/v1/messages/thread", {
+    setError(null);
+    const response = await fetch("/v1/messages/thread", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ peer }),
     });
     setBusy(false);
     setPending(null);
+    if (!response.ok) {
+      // Stay here. Navigating to /inbox would be the page saying it is gone.
+      setError((await response.text()).trim() || labels.writeFailed);
+      return;
+    }
     router.push("/inbox");
     router.refresh();
   }
@@ -126,9 +148,14 @@ export function Conversation({
   async function removeMessage(id: string) {
     if (!writable) return;
     setBusy(true);
-    await fetch(`/v1/messages/${id}`, { method: "DELETE" });
+    setError(null);
+    const response = await fetch(`/v1/messages/${id}`, { method: "DELETE" });
     setBusy(false);
     setPending(null);
+    if (!response.ok) {
+      setError((await response.text()).trim() || labels.writeFailed);
+      return;
+    }
     router.refresh();
   }
 
@@ -169,6 +196,8 @@ export function Conversation({
         // as a page that failed to finish loading.
         <p className="m-0 text-sm text-muted-foreground">{labels.readOnly}</p>
       )}
+
+      {error ? <FormError>{error}</FormError> : null}
 
       <ol className="m-0 flex list-none flex-col gap-3 p-0">
         {messages.map((message) => (
@@ -263,19 +292,27 @@ function ContactName({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const [asking, setAsking] = useState(false);
+  /** Same reason as the thread above: a refused PUT/DELETE looked like a done one. */
+  const [error, setError] = useState<string | null>(null);
 
   async function forgetContact() {
     if (!writable) return;
     setBusy(true);
     // A blank name would render as an empty heading where the number was, so
     // an emptied field removes the record instead of storing nothing.
-    await fetch("/v1/messages/contact", {
+    setError(null);
+    const response = await fetch("/v1/messages/contact", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ peer }),
     });
     setBusy(false);
     setAsking(false);
+    if (!response.ok) {
+      // The editor stays open, holding what the operator typed.
+      setError((await response.text()).trim() || labels.writeFailed);
+      return;
+    }
     setEditing(false);
     router.refresh();
   }
@@ -283,12 +320,17 @@ function ContactName({
   async function rename(trimmed: string) {
     if (!writable) return;
     setBusy(true);
-    await fetch("/v1/messages/contact", {
+    setError(null);
+    const response = await fetch("/v1/messages/contact", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ peer, name: trimmed }),
     });
     setBusy(false);
+    if (!response.ok) {
+      setError((await response.text()).trim() || labels.writeFailed);
+      return;
+    }
     setEditing(false);
     router.refresh();
   }
@@ -339,6 +381,8 @@ function ContactName({
           {labels.cancel}
         </Button>
       </ButtonRow>
+
+      {error ? <FormError>{error}</FormError> : null}
 
       <ConfirmDialog
         open={asking}

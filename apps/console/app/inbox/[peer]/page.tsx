@@ -98,6 +98,7 @@ export default async function ThreadPage({
           }}
           labels={{
             remove: t("inbox.remove", locale),
+            writeFailed: t("inbox.writeFailed", locale),
             deleteThread: t("inbox.deleteThread", locale),
             confirmDeleteThread: t("inbox.confirmDeleteThread", locale),
             confirmDeleteMessageTitle: t("inbox.confirmDeleteMessageTitle", locale),

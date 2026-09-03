@@ -419,6 +419,7 @@ export default async function DevicesPage({
                 label: `${modem.iccid} — ${modem.imei}`,
               }))}
             labels={{
+              colActions: t("table.actions", locale),
               none: t("cards.none", locale),
               colIccid: t("cards.colIccid", locale),
               colCellular: t("cards.colCellular", locale),

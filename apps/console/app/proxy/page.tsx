@@ -223,6 +223,7 @@ function bytes(value: number): string {
  * The value is unused; only the key set matters.
  */
 const PROXY_LABEL_KEYS: Record<ProxyLabelKey, true> = {
+  colActions: true,
   upstreams: true,
   instances: true,
   noUpstreams: true,

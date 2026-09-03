@@ -241,7 +241,7 @@ export function CardPolicies({
               {/* The actions column goes as a column, header and cells
                   together. Leaving the header behind would leave the table a
                   column wider than it has values for. */}
-              {writable ? <TableHead /> : null}
+              {writable ? <TableHead label={labels.colActions} /> : null}
             </TableRow>
           </TableHeader>
           <TableBody>

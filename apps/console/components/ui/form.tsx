@@ -156,9 +156,24 @@ export function Select({
   );
 }
 
-/** A load or save failure, in the place the control that failed is. */
-export function FormError({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn("m-0 text-sm text-destructive", className)} {...props} />;
+/**
+ * A load or save failure, in the place the control that failed is.
+ *
+ * 🔴 `role="alert"` is not decoration. This element appears *after* the action
+ * that failed, so a reader who is not looking at this exact spot — a screen
+ * reader user, or anyone whose attention is still on the button they pressed —
+ * gets no notification at all without it. The failure would be on screen and
+ * unannounced, which is the same shape as the failure being invisible.
+ *
+ * It is on the component rather than at each of the call sites so that a new
+ * one cannot be added without it. Overridable via `role` for the rare case
+ * where the message is rendered before the action rather than in response to
+ * it — nothing does that today.
+ */
+export function FormError({ className, role, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
+  return (
+    <p role={role ?? "alert"} className={cn("m-0 text-sm text-destructive", className)} {...props} />
+  );
 }
 
 /** Not a failure: a note about what a control will do. */

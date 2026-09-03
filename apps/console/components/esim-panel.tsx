@@ -430,7 +430,7 @@ export function EsimPanel({
                       {/* Header and cell together. A column kept for actions
                           nobody has leaves the table one heading wider than
                           it has values for. */}
-                      {writable ? <TableHead /> : null}
+                      {writable ? <TableHead label={t("table.actions", locale)} /> : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -675,7 +675,7 @@ export function EsimPanel({
                           {t("esim.colAddress", locale)}
                         </TableHead>
                         <TableHead>{t("esim.colIccid", locale)}</TableHead>
-                        {writable ? <TableHead /> : null}
+                        {writable ? <TableHead label={t("table.actions", locale)} /> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
