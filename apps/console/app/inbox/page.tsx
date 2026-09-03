@@ -2,7 +2,9 @@ import Link from "next/link";
 import { LiveReload } from "@/components/live-reload";
 import { SendSmsForm, type SendDevice } from "@/components/send-sms";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import { Field, Input, Select } from "@/components/ui/form";
 import {
   Table,
   TableBody,
@@ -19,6 +21,15 @@ import {
   type ContactRow,
   type ThreadRow,
 } from "@/lib/catalog";
+import {
+  alphabetical,
+  biggestFirst,
+  by,
+  emptyKind,
+  matches,
+  needleOf,
+  pickSort,
+} from "@/lib/table-query";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { t } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -70,7 +81,16 @@ import { gatewayBaseUrl } from "@/lib/tenant";
  * the gateway's, and `/v1` is reachable with curl and a token whatever this
  * page draws.
  */
-export default async function InboxPage() {
+const SORTS = ["last", "unread", "peer"] as const;
+
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string }>;
+}) {
+  const query = await searchParams;
+  const needle = needleOf(query.q);
+  const order = pickSort(query.sort, SORTS, "last");
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -110,6 +130,22 @@ export default async function InboxPage() {
   }));
 
   const unread = threads.reduce((total, thread) => total + thread.unread, 0);
+
+  // 🔴 Filtering happens on the *display* list only. `threads` itself still
+  // feeds the unread total above and the contacts table below, and a filter
+  // that changed either of those would be answering a question nobody asked:
+  // how many messages are waiting is a fact about the tenant, not about what
+  // is currently typed in a search box.
+  const shownThreads = threads
+    .filter((thread) => matches(needle, thread.peer, thread.name, thread.lastBody, thread.deviceId))
+    .sort(
+      by<ThreadRow>(
+        (left, right) => (order === "last" ? biggestFirst(left.lastAt, right.lastAt) : 0),
+        (left, right) => (order === "unread" ? biggestFirst(left.unread, right.unread) : 0),
+        (left, right) => alphabetical(left.peer, right.peer),
+      ),
+    );
+  const threadsEmpty = emptyKind(threads.length, shownThreads.length, needle);
 
   return (
     <>
@@ -227,7 +263,27 @@ export default async function InboxPage() {
         </Card>
 
         <Card title={t("inbox.threads", locale)} note={t("inbox.threadsNote", locale)} bodyless>
-          {threads.length === 0 ? (
+          {threads.length > 0 ? (
+            <form className="mb-4 flex flex-col gap-4" method="get">
+              <Field label={t("filter.search", locale)} inline>
+                <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
+              </Field>
+              <Field label={t("filter.sort", locale)} inline>
+                <Select compact name="sort" defaultValue={order}>
+                  <option value="last">{t("inbox.colReceived", locale)}</option>
+                  <option value="unread">{t("inbox.colUnread", locale)}</option>
+                  <option value="peer">{t("inbox.colPeer", locale)}</option>
+                </Select>
+              </Field>
+              <Button type="submit">{t("filter.apply", locale)}</Button>
+            </form>
+          ) : null}
+          {threadsEmpty === "noMatch" ? (
+            <CardEmpty
+              title={t("filter.noMatchTitle", locale)}
+              description={t("filter.noMatchDesc", locale)}
+            />
+          ) : threadsEmpty !== null ? (
             <CardEmpty
               title={t("empty.messages.title", locale)}
               description={t("empty.messages.desc", locale)}
@@ -247,7 +303,7 @@ export default async function InboxPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {threads.map((thread) => (
+                {shownThreads.map((thread) => (
                   <TableRow key={thread.peer}>
                     <TableCell mono={!thread.name}>
                       <Link href={`/inbox/${encodeURIComponent(thread.peer)}`}>

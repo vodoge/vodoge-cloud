@@ -2204,6 +2204,18 @@ test("a file gives every element the stylesheet names a class of its own", () =>
     for (const tag of openingTags(readSource(relative))) {
       if (!named.has(tag.name)) continue;
       if (/\bclassName\s*=/.test(tag.text)) continue;
+      // 🔴 A hidden input is the one case where this rule's premise does not
+      // hold. The rule exists because an element the stylesheet names has its
+      // appearance decided in two places, so the markup must say which it
+      // wants — but `<input type="hidden">` is not rendered at all, by the
+      // spec, in every browser. There is no appearance to decide, and giving
+      // it a class to satisfy the letter of this check would be a class that
+      // means nothing, which is worse than the exemption.
+      //
+      // It arrived with the device page's filter form, where a hidden input
+      // carries `?tab=` across a GET submit so applying a filter does not
+      // throw the operator back to the first tab.
+      if (tag.name === "input" && /\btype\s*=\s*"hidden"/.test(tag.text)) continue;
       offenders.push(`${relative}: <${tag.name}>`);
     }
   }
@@ -6382,7 +6394,11 @@ test("the device page is drawn by the shared components, at the point of use", (
   // is how a heading stops meaning anything.
   assert.equal(uses(/<Card\b/g), 4, "uptime, modules, host vitals, radio readings");
   assert.equal(uses(/<CardShell\b/g), 1, "the danger-zone card, composed so its header can be red");
-  assert.equal(uses(/<CardEmpty\b/g), 4, "each empty case still says what would be here");
+  // Five since the module list took a filter: a filter that matched nothing
+  // gets its own empty state, because "no modules on this device" and "your
+  // search excluded all of them" are different facts and saying the first when
+  // the second is true is the audit page's old defect wearing a new hat.
+  assert.equal(uses(/<CardEmpty\b/g), 5, "each empty case still says what would be here");
 
   // Preflight is off, so a bare `<table>` is not merely a second
   // implementation: the legacy stylesheet paints it, which is the mechanism by

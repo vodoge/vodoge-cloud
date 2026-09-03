@@ -1,5 +1,7 @@
 import { StateBadge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardEmpty } from "@/components/ui/card";
+import { Field, Input, Select } from "@/components/ui/form";
 import {
   Table,
   TableBody,
@@ -9,6 +11,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchSchedules, type ScheduleRow } from "@/lib/catalog";
+import {
+  alphabetical,
+  biggestFirst,
+  by,
+  emptyKind,
+  matches,
+  needleOf,
+  pickSort,
+} from "@/lib/table-query";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
@@ -78,7 +89,16 @@ function statusTone(status: string | null): string {
   return "busy";
 }
 
-export default async function SchedulePage() {
+const SORTS = ["name", "due", "lastRun"] as const;
+
+export default async function SchedulePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string }>;
+}) {
+  const query = await searchParams;
+  const needle = needleOf(query.q);
+  const order = pickSort(query.sort, SORTS, "name");
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -89,6 +109,33 @@ export default async function SchedulePage() {
   } catch {
     loadError = true;
   }
+
+  // 🔴 Every branch ends on the id, which is unique, so two schedules sharing
+  // a due time or a name come back in the same order on every poll.
+  // `nextDueAt` and `lastRunAt` are nullable and `biggestFirst` puts those
+  // rows last rather than at the epoch: a schedule that has never run is not
+  // a schedule that ran longest ago.
+  const shown = schedules
+    .filter((row) =>
+      matches(
+        needle,
+        row.name,
+        row.action,
+        row.commandKind,
+        row.selector.deviceId,
+        row.selector.iccid,
+        row.selector.modemImei,
+      ),
+    )
+    .sort(
+      by<ScheduleRow>(
+        (left, right) => (order === "due" ? biggestFirst(left.nextDueAt, right.nextDueAt) : 0),
+        (left, right) => (order === "lastRun" ? biggestFirst(left.lastRunAt, right.lastRunAt) : 0),
+        (left, right) => (order === "name" ? alphabetical(left.name, right.name) : 0),
+        (left, right) => alphabetical(left.id, right.id),
+      ),
+    );
+  const empty = emptyKind(schedules.length, shown.length, needle);
 
   return (
     <>
@@ -101,7 +148,27 @@ export default async function SchedulePage() {
       {loadError ? <p className="m-0 mb-4 text-sm text-destructive">{t("schedule.loadError", locale)}</p> : null}
 
       <Card>
-        {schedules.length === 0 ? (
+        {schedules.length > 0 ? (
+          <form className="mb-4 flex flex-col gap-4" method="get">
+            <Field label={t("filter.search", locale)} inline>
+              <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
+            </Field>
+            <Field label={t("filter.sort", locale)} inline>
+              <Select compact name="sort" defaultValue={order}>
+                <option value="name">{t("schedule.colName", locale)}</option>
+                <option value="due">{t("schedule.colNextDue", locale)}</option>
+                <option value="lastRun">{t("schedule.colLastRun", locale)}</option>
+              </Select>
+            </Field>
+            <Button type="submit">{t("filter.apply", locale)}</Button>
+          </form>
+        ) : null}
+        {empty === "noMatch" ? (
+          <CardEmpty
+            title={t("filter.noMatchTitle", locale)}
+            description={t("filter.noMatchDesc", locale)}
+          />
+        ) : empty !== null ? (
           <CardEmpty
             title={t("empty.schedule.title", locale)}
             description={t("empty.schedule.desc", locale)}
@@ -131,7 +198,7 @@ export default async function SchedulePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {schedules.map((row) => (
+              {shown.map((row) => (
                 <TableRow key={row.id}>
                   {/*
                     `nowrap`, not `wrap`, and this table is why the pair

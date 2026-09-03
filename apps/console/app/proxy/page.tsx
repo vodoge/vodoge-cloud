@@ -1,5 +1,7 @@
 import { ProxyManager, type ProxyLabelKey } from "@/components/proxy-manager";
+import { Button } from "@/components/ui/button";
 import { CardPanel as Card, CardEmpty } from "@/components/ui/card";
+import { Field, Input, Select } from "@/components/ui/form";
 import type { ConfirmLabels } from "@/components/ui/confirm-dialog";
 import {
   Table,
@@ -9,6 +11,15 @@ import {
   TableHead,
   TableRow,
 } from "@/components/ui/table";
+import {
+  alphabetical,
+  biggestFirst,
+  by,
+  emptyKind,
+  matches,
+  needleOf,
+  pickSort,
+} from "@/lib/table-query";
 import {
   fetchConsoleRole,
   fetchCountryRules,
@@ -27,7 +38,27 @@ import { getRequestLocale } from "@/lib/request-locale";
 import { mayWrite } from "@/lib/session";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 
-export default async function ProxyPage() {
+/**
+ * Only the traffic table takes a filter.
+ *
+ * 🔴 The four tables inside `components/proxy-manager.tsx` deliberately do
+ * not. Each of them ends in a `RowActions` cell holding a role-gated
+ * destructive write — remove an upstream, restart an instance — and those
+ * cells are the subject of `writable` guards that count controls *by their
+ * position in the markup*. A filter is harmless there; what is not harmless is
+ * the reshaping that usually arrives with one. Traffic is read-only, which is
+ * why it is the one that gets this.
+ */
+const SORTS = ["hour", "up", "down"] as const;
+
+export default async function ProxyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string }>;
+}) {
+  const query = await searchParams;
+  const needle = needleOf(query.q);
+  const order = pickSort(query.sort, SORTS, "hour");
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -57,6 +88,23 @@ export default async function ProxyPage() {
   const canExport = mayWrite(await fetchConsoleRole(host, token));
 
   const byInstance = new Map(instances.map((instance) => [instance.id, instance.name]));
+
+  // 🔴 Falls through to the instance id and then the hour, which together are
+  // this table's key (it is already keyed on exactly that pair in the markup).
+  // Filtering is on the instance *name* as drawn, not the id, because the id
+  // is not on screen — a filter that matches something invisible reads as a
+  // broken filter.
+  const shownTraffic = traffic
+    .filter((point) => matches(needle, byInstance.get(point.instanceId) ?? point.instanceId))
+    .sort(
+      by<TrafficPoint>(
+        (left, right) => (order === "up" ? biggestFirst(left.bytesUp, right.bytesUp) : 0),
+        (left, right) => (order === "down" ? biggestFirst(left.bytesDown, right.bytesDown) : 0),
+        (left, right) => biggestFirst(left.hour, right.hour),
+        (left, right) => alphabetical(left.instanceId, right.instanceId),
+      ),
+    );
+  const trafficEmpty = emptyKind(traffic.length, shownTraffic.length, needle);
 
   return (
     <>
@@ -91,7 +139,24 @@ export default async function ProxyPage() {
         </Card>
 
         <Card title={t("proxy.traffic", locale)} note={t("proxy.trafficNote", locale)} bodyless>
-          {traffic.length === 0 ? (
+          {traffic.length > 0 ? (
+            <form className="mb-4 flex flex-col gap-4" method="get">
+              <Field label={t("filter.search", locale)} inline>
+                <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
+              </Field>
+              <Field label={t("filter.sort", locale)} inline>
+                <Select compact name="sort" defaultValue={order}>
+                  <option value="hour">{t("proxy.colHour", locale)}</option>
+                  <option value="up">{t("proxy.colUp", locale)}</option>
+                  <option value="down">{t("proxy.colDown", locale)}</option>
+                </Select>
+              </Field>
+              <Button type="submit">{t("filter.apply", locale)}</Button>
+            </form>
+          ) : null}
+          {trafficEmpty === "noMatch" ? (
+            <CardEmpty title={t("filter.noMatchTitle", locale)} description={t("filter.noMatchDesc", locale)} />
+          ) : trafficEmpty !== null ? (
             <CardEmpty title={t("proxy.noTraffic", locale)} />
           ) : (
             <Table>
@@ -108,7 +173,7 @@ export default async function ProxyPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {traffic.map((point) => (
+                {shownTraffic.map((point) => (
                   <TableRow key={`${point.instanceId}-${point.hour}`}>
                     <TableCell mono faint>
                       {new Date(point.hour).toISOString().replace("T", " ").slice(0, 13)}:00

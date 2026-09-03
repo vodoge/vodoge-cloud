@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import { Field, Input, Select } from "@/components/ui/form";
 import {
   Table,
   TableBody,
@@ -9,6 +11,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchConsoleRole, fetchLedger, type LedgerRow } from "@/lib/catalog";
+import {
+  alphabetical,
+  biggestFirst,
+  by,
+  emptyKind,
+  matches,
+  needleOf,
+  pickSort,
+} from "@/lib/table-query";
 import { mayWrite } from "@/lib/session";
 import { t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -32,7 +43,16 @@ import { LedgerAdmin } from "@/components/support-ledger";
  * publishing does. A half-finished afternoon of testing should not reach
  * hardware because somebody saved a form.
  */
-export default async function SupportLedgerPage() {
+const SORTS = ["modem", "carrier", "tested"] as const;
+
+export default async function SupportLedgerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string }>;
+}) {
+  const query = await searchParams;
+  const needle = needleOf(query.q);
+  const order = pickSort(query.sort, SORTS, "modem");
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -49,6 +69,26 @@ export default async function SupportLedgerPage() {
     failed = true;
   }
 
+  // 🔴 Ends on the family plus the carrier, which is what makes a row unique
+  // here: two entries for the same module on different networks are different
+  // rows, and without both the pair reshuffles between loads. `testedAt` is a
+  // number on every row, so it needs no missing-last handling — but it goes
+  // through the same comparator so the shape stays the one every other list
+  // page uses.
+  const shown = rows
+    .filter((row) =>
+      matches(needle, row.modemFamily, row.carrier, row.bearer, row.note, row.reason, row.testedBy),
+    )
+    .sort(
+      by<LedgerRow>(
+        (left, right) => (order === "tested" ? biggestFirst(left.testedAt, right.testedAt) : 0),
+        (left, right) => (order === "carrier" ? alphabetical(left.carrier, right.carrier) : 0),
+        (left, right) => alphabetical(left.modemFamily, right.modemFamily),
+        (left, right) => alphabetical(left.carrier, right.carrier),
+      ),
+    );
+  const empty = emptyKind(rows.length, shown.length, needle);
+
   return (
     <>
       <div className="mb-6 flex flex-wrap items-start gap-4">
@@ -60,7 +100,27 @@ export default async function SupportLedgerPage() {
       {failed ? <p className="m-0 mb-4 text-sm text-destructive">{t("ledger.loadFailed", locale)}</p> : null}
 
       <Card title={t("ledger.measured", locale)} note={t("ledger.measuredNote", locale)}>
-        {!failed && rows.length === 0 ? (
+        {rows.length > 0 ? (
+          <form className="mb-4 flex flex-col gap-4" method="get">
+            <Field label={t("filter.search", locale)} inline>
+              <Input name="q" defaultValue={needle} autoComplete="off" spellCheck={false} />
+            </Field>
+            <Field label={t("filter.sort", locale)} inline>
+              <Select compact name="sort" defaultValue={order}>
+                <option value="modem">{t("ledger.colModem", locale)}</option>
+                <option value="carrier">{t("ledger.colCarrier", locale)}</option>
+                <option value="tested">{t("ledger.sortTested", locale)}</option>
+              </Select>
+            </Field>
+            <Button type="submit">{t("filter.apply", locale)}</Button>
+          </form>
+        ) : null}
+        {empty === "noMatch" ? (
+          <CardEmpty
+            title={t("filter.noMatchTitle", locale)}
+            description={t("filter.noMatchDesc", locale)}
+          />
+        ) : !failed && rows.length === 0 ? (
           <CardEmpty
             title={t("ledger.emptyTitle", locale)}
             description={t("ledger.emptyDesc", locale)}
@@ -79,7 +139,7 @@ export default async function SupportLedgerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {shown.map((row) => (
                 <TableRow key={`${row.modemFamily}:${row.carrier}`}>
                   <TableCell mono>{row.modemFamily}</TableCell>
                   <TableCell mono>{row.carrier}</TableCell>

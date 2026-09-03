@@ -18,6 +18,8 @@ import {
   CardPanel as Card,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Field, Input, Select } from "@/components/ui/form";
 import {
   SpecRow,
   SpecTable,
@@ -50,6 +52,15 @@ import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plm
 import { getRequestLocale } from "@/lib/request-locale";
 import { requestHost, sessionToken } from "@/lib/tenant-headers";
 import { DEVICE_TABS, deviceTab, deviceTabHref } from "@/lib/tokens";
+import {
+  alphabetical,
+  biggestFirst,
+  by,
+  emptyKind,
+  matches,
+  needleOf,
+  pickSort,
+} from "@/lib/table-query";
 
 /**
  * One device, and everything that can be done to it.
@@ -96,18 +107,23 @@ import { DEVICE_TABS, deviceTab, deviceTabHref } from "@/lib/tokens";
  * change to what the page does, and the eSIM inventory is what tells the
  * overview whether this device has profiles at all.
  */
+const MODEM_SORTS = ["imei", "signal", "seen"] as const;
+
 export default async function DevicePage({
   params,
   searchParams,
 }: {
   params: Promise<{ deviceId: string }>;
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{ tab?: string | string[]; q?: string; sort?: string }>;
 }) {
   const { deviceId } = await params;
   // A link, not client state: the page stays a server component, so its
   // language is right in the HTML rather than after hydration, and a tab
   // survives the reload an operator does while a command is in flight.
-  const current = deviceTab((await searchParams).tab);
+  const query = await searchParams;
+  const current = deviceTab(query.tab);
+  const needle = needleOf(query.q);
+  const order = pickSort(query.sort, MODEM_SORTS, "imei");
   const locale = await getRequestLocale();
   const host = await requestHost();
   const token = await sessionToken();
@@ -154,6 +170,7 @@ export default async function DevicePage({
             proxies={proxies.filter((row) => row.deviceId === deviceId)}
             uptime={uptime}
             locale={locale}
+            query={{ needle, order, tab: current }}
           />
         );
       case "diagnostics":
@@ -263,6 +280,7 @@ function OverviewPanel({
   proxies,
   uptime,
   locale,
+  query,
 }: {
   device: DeviceRow | undefined;
   modems: ModemRow[];
@@ -270,13 +288,55 @@ function OverviewPanel({
   proxies: ProxyInstanceRow[];
   uptime: UptimeHourRow[];
   locale: Locale;
+  /** `?q=`, `?sort=` and the tab to preserve when the filter is applied. */
+  query: { needle: string; order: string; tab: string };
 }) {
+  // 🔴 Falls through to the IMEI, which is unique on this list, so two modules
+  // reporting the same signal do not swap places between polls. A missing
+  // reading sorts last rather than as zero: a module that could not be
+  // measured is not the worst module in the device.
+  const shown = modems
+    .filter((row) => matches(query.needle, row.imei, row.iccid, row.family, row.servingPlmn))
+    .sort(
+      by<ModemRow>(
+        (left, right) => (query.order === "signal" ? biggestFirst(left.signalDbm, right.signalDbm) : 0),
+        (left, right) => (query.order === "seen" ? biggestFirst(left.lastSeen, right.lastSeen) : 0),
+        (left, right) => alphabetical(left.imei, right.imei),
+      ),
+    );
+  const empty = emptyKind(modems.length, shown.length, query.needle);
+
   return (
     <>
       <UptimeCard rows={uptime} locale={locale} />
 
       <Card title={t("devices.modems", locale)} note={t("devices.modemsNote", locale)} bodyless>
-        {modems.length === 0 ? (
+        {modems.length > 0 ? (
+          <form className="mb-4 flex flex-col gap-4" method="get">
+            {/* 🔴 The tab rides along. A GET form replaces the whole query
+                string, so without this, applying a filter drops `?tab=` and
+                throws the operator back to the first tab — which is the exact
+                context-loss the link-style tabs exist to prevent. */}
+            <input type="hidden" name="tab" value={query.tab} />
+            <Field label={t("filter.search", locale)} inline>
+              <Input name="q" defaultValue={query.needle} autoComplete="off" spellCheck={false} />
+            </Field>
+            <Field label={t("filter.sort", locale)} inline>
+              <Select compact name="sort" defaultValue={query.order}>
+                <option value="imei">{t("modems.sortImei", locale)}</option>
+                <option value="signal">{t("modems.sortSignal", locale)}</option>
+                <option value="seen">{t("modems.sortSeen", locale)}</option>
+              </Select>
+            </Field>
+            <Button type="submit">{t("filter.apply", locale)}</Button>
+          </form>
+        ) : null}
+        {empty === "noMatch" ? (
+          <CardEmpty
+            title={t("filter.noMatchTitle", locale)}
+            description={t("filter.noMatchDesc", locale)}
+          />
+        ) : empty !== null ? (
           <CardEmpty title={t("device.noModems", locale)} />
         ) : (
           <Table>
@@ -312,7 +372,7 @@ function OverviewPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {modems.map((modem) => (
+              {shown.map((modem) => (
                 <TableRow key={modem.id}>
                   <TableCell mono>
                     <span className="flex flex-wrap items-center gap-2">
