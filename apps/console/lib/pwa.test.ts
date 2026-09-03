@@ -2389,8 +2389,9 @@ test("the two affordances cannot land on the same edge of the screen", () => {
  * bottom bar, taken before the phone bar existed — and now again after it was
  * removed, which is the second reason these frames are stale.
  *
- * The two guards below supply the missing term, and they fail differently on
- * purpose:
+ * Guard A below supplies the missing term. (There were two; B was retired
+ * with the bar and the rail it measured — see the note at the end of this
+ * file, and the sidebar assertions that carry its purpose now.)
  *
  *   A. PROVENANCE — what tree were these captured from, and is it this one?
  *      This is the "when was it taken" the charter asks every snapshot asset
@@ -2787,17 +2788,28 @@ test("the install screenshots were captured from the chrome this tree renders", 
   );
 });
 
-/* ── B. What has to be in the picture ─────────────────────────────────
+/* ── B. What has to be in the picture — retired with its subject ──────
  *
- * The colour guards ask whether the palette in these files is current. These
- * ask whether the LAYOUT is — and unlike A, they cannot be answered by editing
- * this file, because the only way to put a bottom bar into a PNG is to point a
- * browser at a page that has one.
+ * 🔴 This section used to hold two pixel guards: "the phone screenshot shows
+ * the bottom bar this console mounts" and "the desktop screenshot shows the
+ * rail this console mounts". Both were deleted when the thing they measured
+ * was deleted — the phone bottom bar went in e621f53, and the hand-written
+ * rail was replaced by shadcn's `Sidebar` in 39d6558. They read
+ * `ALL_TOKENS.BOTTOM_NAV.bar` and `ALL_TOKENS.SHELL.rail`, neither of which
+ * exists any more, so they could not even compile against this tree.
  *
- * Both derive their expectation from the recipe rather than restating it, so
- * that a deliberate change to the bar or the rail rewrites the question
- * instead of producing a failure nobody can act on.
+ * ⚠️ What was left behind until 2026-09-03 was worse than the deletion: this
+ * heading, a docblock describing two guards that were not there, and a
+ * `shotFor` helper nothing called — with the file simply ending on it. The
+ * docblock above still promised "the two guards below". A section that
+ * advertises a guard it does not have is the same failure this file exists to
+ * catch, one level up.
+ *
+ * Where the purpose lives now: `lib/pwa.test.ts`'s "the install dialog's
+ * screenshots show the chrome this console is built from" asserts sidebar
+ * pixels **in both directions** — the rail must cover the wide frame and must
+ * be absent from the narrow one, where shadcn draws it inside a closed Sheet.
+ * That is guard B's question asked against the chrome this console actually
+ * mounts, and unlike the originals it cannot be satisfied by editing this
+ * file either.
  */
-
-const shotFor = (factor: string) =>
-  consoleManifest().screenshots.find((s) => s.form_factor === factor);
