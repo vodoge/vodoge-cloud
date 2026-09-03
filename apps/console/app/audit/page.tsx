@@ -132,14 +132,14 @@ export default async function AuditPage({
             <TableBody>
               {shown.map(({ row: event, index }) => (
                 <TableRow key={`${event.action}:${index}`}>
-                  <TableCell mono>{event.actor || "—"}</TableCell>
+                  <TableCell mono wrap>{event.actor || "—"}</TableCell>
                   <TableCell>
                     {/* The action is a category, not a state, so no status dot:
                         a coloured dot here would imply a judgement the audit
                         log is not making. */}
                     <Badge dot={false}>{event.action}</Badge>
                   </TableCell>
-                  <TableCell mono faint>
+                  <TableCell mono faint wrap>
                     {event.target || "—"}
                   </TableCell>
                 </TableRow>

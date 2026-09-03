@@ -5749,6 +5749,22 @@ const isColumn = (column: Column) => !/\bcolSpan\b/.test(column.attributes);
  * three as "measured and found to fit".
  */
 const TABLES_WITH_NOTHING_TO_DROP: Record<string, string> = {
+  // ── Measured 2026-09-03, in a browser at 375px against a stub gateway ──
+  "app/audit/page.tsx#0":
+    "measured: at 375px it was 487px wide in a 349px wrapper — 138px of " +
+    "horizontal scroll — and the cause was three unbreakable identifiers " +
+    "(a full email, a dotted settings path, a UUID), not one column too many. " +
+    "An audit row is who / what / to-what, so dropping any of the three loses " +
+    "a third of the record; the actor and target now carry `wrap` instead, " +
+    "and the table measures 349px in a 349px wrapper.",
+  "app/inbox/page.tsx#0":
+    "measured: 349px in a 349px wrapper with a two-line contact name and a " +
+    "+1 US number — the open question was whether the peer could go, and it " +
+    "does not need to.",
+  "app/devices/[deviceId]/page.tsx#1":
+    "measured: 349px in a 349px wrapper with a 15-digit IMEI and a full " +
+    "`-95 / -11 / 12 dB` reading — the open question was whether signal or " +
+    "quality could be secondary, and neither has to be.",
   "components/esim-panel.tsx#2":
     "structural, not measured: table 0 of this file is these same three " +
     "columns plus two more, and it marks those two secondary. This table is " +
@@ -5803,20 +5819,21 @@ const NARROW_SCREEN_DEFECTS: Record<string, string> = {};
  * harness that supplies its own would be measuring a reproduction.
  */
 const TABLES_NOT_MEASURED: Record<string, string> = {
-  "app/audit/page.tsx#0":
-    "NOT MEASURED (needs a session and seeded rows). Open question: two " +
-    "unbounded mono identifier columns and a badge; target is `faint`, which " +
-    "TableCell documents as context — but an audit row is who/what/to-what " +
-    "and dropping the target loses a third of the record.",
-  "app/inbox/page.tsx#0":
-    "NOT MEASURED (needs a session and seeded rows). Open question: the peer " +
-    "is `mono faint` beside a contact-name link whose href already encodes " +
-    "it, but it is the only identifier when a contact has no name.",
-  "app/devices/[deviceId]/page.tsx#1":
-    "NOT MEASURED (needs a session, a device and seeded modems). Open " +
-    "question: table 0 of this page drops a column, but here the widest " +
-    "value is the 15-character IMEI, which is the row identity; signal and " +
-    "quality are two readings of one thing and one could be secondary.",
+  // Empty since 2026-09-03. All three were measured — with a ruler, in a
+  // browser at 375px, against a stub gateway serving the widest realistic
+  // values (a full-length email as an actor, a dotted settings path as an
+  // action, a UUID as a target, a 15-digit IMEI, a Chinese SMS body long
+  // enough to wrap). What each one had been parked on is recorded beside its
+  // entry in TABLES_WITH_NOTHING_TO_DROP.
+  //
+  // 🔴 The reason they sat here for weeks was "measuring one needs a session
+  // AND fixture data; a harness that supplies its own would be measuring a
+  // reproduction". That was true when written and had stopped being true:
+  // `scripts/screenshots/stub-gateway.mjs` is exactly such a harness, it
+  // injects the four tenant headers and the session cookie, and it feeds a
+  // real standalone build. The page it renders is not a reproduction — it is
+  // this tree, in a browser, at 390px. The premise expired and nothing was
+  // watching it.
 };
 
 test("the tables being scanned are derived from the tree, not typed out", () => {
