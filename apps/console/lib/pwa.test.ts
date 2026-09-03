@@ -5,6 +5,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
+import ts from "typescript";
 import { LOCALE_COOKIE } from "./i18n.ts";
 import {
   INSTALL_DISMISSED_KEY,
@@ -2502,6 +2503,65 @@ function chromeDigest(files: string[]): string {
 }
 
 /**
+ * A comment-neutral fingerprint of the source that lays out a frame.
+ *
+ * 🔴 **Why `chrome` alone is not enough, and why a matching stylesheet cannot
+ * pay for a re-stamp.**
+ *
+ * `chromeDigest` above hashes raw bytes, so every edit moves it — a reworded
+ * comment included. The advice attached to it was therefore "re-stamp if you
+ * rebuild and the stylesheet comes out byte-identical". **That reasoning has a
+ * hole**: a utility class already present in the sheet can be newly applied to
+ * a different element. The stylesheet does not move, the photographed layout
+ * does. `gap-4` shipping once means adding `gap-4` to a second element is free
+ * — and invisible to a byte comparison of the CSS.
+ *
+ * This digest closes it. The TypeScript scanner is used as a **lexer only** —
+ * it neither imports nor runs the application — and every token is hashed
+ * except the contents of comments, which collapse to one fixed marker. So a
+ * comment-only edit leaves it unchanged and may re-stamp `chrome` alone, while
+ * anything that touches markup, a class, or layout code moves it and can only
+ * be answered by pointing a browser at the page again.
+ *
+ * It is deliberately conservative: an edit that *might* change rendering has to
+ * be recaptured rather than argued away. That costs a capture run for a change
+ * to, say, a data list that provably draws nothing — and that is the trade,
+ * chosen on the record of this repository, where five guards in twenty commits
+ * went green while measuring nothing.
+ *
+ * Ported from SN-T037 (4724359), a branch whose work never reached main.
+ */
+function sourceRecipeDigest(source: string): string {
+  const h = createHash("sha256");
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.JSX,
+    source.replace(/\r\n/g, "\n"),
+  );
+  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+    const comment =
+      kind === ts.SyntaxKind.SingleLineCommentTrivia ||
+      kind === ts.SyntaxKind.MultiLineCommentTrivia;
+    h.update(comment ? "/* comment */" : scanner.getTokenText());
+    h.update("\0");
+  }
+  return h.digest("hex");
+}
+
+/** `sourceRecipeDigest` over the whole chrome closure, path-qualified. */
+function renderRecipeDigest(files: string[]): string {
+  const h = createHash("sha256");
+  for (const rel of files) {
+    h.update(rel);
+    h.update("\0");
+    h.update(sourceRecipeDigest(readFileSync(join(root, rel), "utf8")));
+    h.update("\0");
+  }
+  return h.digest("hex");
+}
+
+/**
  * Where the two files in public/ came from.
  *
  * 🔴 THESE ARE FACTS ABOUT TWO DIFFERENT TREES, NOT NUMBERS SOMEBODY CHOSE,
@@ -2553,11 +2613,24 @@ function chromeDigest(files: string[]): string {
  * note that guard B will not accept it for anything structural.
  */
 const CAPTURED_FROM = {
-  // The tree these frames were CAPTURED AGAINST — an observation, last re-taken
-  // when a265143 reshot them for SN-T022 (below). It is NOT the tree `chrome`
-  // was taken on, and has not been since SN-T029 re-stamped: `git archive
-  // 7b24441` reproduces the superseded 922b9fd5…, verified rather than assumed.
-  // Move this only by reshooting.
+  // The tree these frames were CAPTURED AGAINST — an observation, not a claim.
+  // Move it only by reshooting.
+  //
+  // Right now it IS the tree `chrome` was taken on: both were set together on
+  // 2026-09-03 when the frames were reshot to arm the `recipe` gate below.
+  // They diverge again the moment someone re-stamps `chrome` alone, and that
+  // divergence is not a defect — it is the re-stamp claim, made visible.
+  //
+  // ⚠️ That reshoot is also the first one whose PNGs did NOT come out
+  // byte-identical: 0.607% of the phone frame and 0.845% of the desktop frame
+  // moved, scattered over 346 and 141 rows with at most 169 differing pixels
+  // in any one of them. That distribution is text antialiasing, not a layout
+  // shift — a shift shows a contiguous band of near-full-width rows and moves
+  // the bounding box. The stylesheet was byte-identical across the reshoot
+  // (43,261 bytes, 7d09d96e2196fd2f.css), and the capture ran against a newer
+  // Chromium than the previous one, which is the likelier cause. Recorded
+  // rather than smoothed over, because "the hashes changed and I decided it
+  // was fine" is exactly the move this block exists to make expensive.
   //
   // ⚠️ The frames were shot against two different builds of the same chrome,
   // and they came out byte-identical. That is the evidence this stamp rests on,
@@ -2595,7 +2668,7 @@ const CAPTURED_FROM = {
   // `components/device-console.tsx` -- are Tailwind content but are NOT in the
   // chrome closure, which is why the digest moved on the other three and why
   // the stylesheet check was the part that mattered.
-  commit: "7b24441",
+  commit: "18b031c",
   //
   // Re-stamped again in the same change, after the card policy table gained a
   // plan-declaration column and `lib/card-capability.ts` joined the closure.
@@ -2713,9 +2786,19 @@ const CAPTURED_FROM = {
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
   chrome: "600efd588f8efdef570698c6ad66db8653915df4f308e418b6ab876f992fd888",
+  // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
+  // same closure. A re-stamp may move `chrome` and MUST NOT move this.
+  //
+  // `chrome` hashes raw bytes, so a reworded comment trips it, and the way out
+  // was "rebuild and check the stylesheet is byte-identical". That argument has
+  // a hole: a utility already in the sheet can be newly applied to another
+  // element — the CSS does not move, the photographed layout does. This digest
+  // ignores comment prose and nothing else, so markup, classes and layout code
+  // can only be answered by pointing a browser at the page again.
+  recipe: "5fa99524f5e79c89c0b0eb4e27f3404feedbd3cd818437ee26a854c9768f740a",
   shots: {
-    "/screenshot-mobile.png": "6a881b3757d8c775628a2ec120af31ebc13aa4a5cda4359e223fb0d3ba1cf4d8",
-    "/screenshot-wide.png": "967c4caba4413ea598f3f6b680cff6355a5165dd10f08a47ac9ac834db574b50",
+    "/screenshot-mobile.png": "71dd2fe2dfe93e393b152682393848536d640f1e6bd59f0a8cb763e3daf3757f",
+    "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",
   } as Record<string, string>,
 };
 
@@ -2748,6 +2831,61 @@ test("the chrome closure is derived from the roots and reaches every file that d
   }
 });
 
+test("the render recipe ignores comment prose but catches a markup-only change", () => {
+  // 🔴 Both directions, because each alone is satisfiable by a broken digest:
+  // one that hashes nothing passes the first, one that hashes raw bytes passes
+  // the second. Only together do they pin the behaviour the gate needs.
+  const markup =
+    "/* the first explanation */\n" +
+    'export const Frame = () => <main className="grid gap-2">ready</main>;';
+  const rewordedComment =
+    "/* the same frame, described differently */\n" +
+    'export const Frame = () => <main className="grid gap-2">ready</main>;';
+  const noComment = 'export const Frame = () => <main className="grid gap-2">ready</main>;';
+  const layoutChange = 'export const Frame = () => <main className="grid gap-4">ready</main>;';
+  const textChange = 'export const Frame = () => <main className="grid gap-2">READY</main>;';
+
+  assert.equal(
+    sourceRecipeDigest(markup),
+    sourceRecipeDigest(rewordedComment),
+    "rewording a comment moved the render recipe, so no re-stamp is ever allowed",
+  );
+  // 🔴 But comment *presence* is NOT neutral, and that is deliberate — I
+  // asserted the opposite here first and the test said no.
+  //
+  // Comment contents collapse to one fixed marker; the marker is still a
+  // token. So adding or deleting a comment moves the digest and forces a
+  // recapture. That is the conservative answer and it is the right one for
+  // JSX: `<main>a {/* c */} b</main>` has the comment inside an expression
+  // container, with the whitespace on either side of it as separate text
+  // nodes. Delete the comment and those nodes merge — the rendered spacing can
+  // change. A digest that ignored comments entirely would call that free.
+  assert.notEqual(
+    sourceRecipeDigest(markup),
+    sourceRecipeDigest(noComment),
+    "deleting a comment left the render recipe unchanged, so a JSX comment could be removed " +
+      "from between two text nodes without anyone re-photographing the result",
+  );
+
+  // The one this exists for: `gap-4` may already be in the shipped stylesheet,
+  // so the CSS is byte-identical while the frame is not.
+  assert.notEqual(
+    sourceRecipeDigest(markup),
+    sourceRecipeDigest(layoutChange),
+    "a class change left the render recipe unchanged",
+  );
+  // JSX text is content in the picture, not prose about it.
+  assert.notEqual(
+    sourceRecipeDigest(markup),
+    sourceRecipeDigest(textChange),
+    "changing the words on screen left the render recipe unchanged",
+  );
+
+  // And it is not vacuous: a digest that hashed nothing would pass both
+  // equalities above.
+  assert.notEqual(sourceRecipeDigest("a"), sourceRecipeDigest("b"));
+});
+
 test("the install screenshots were captured from the chrome this tree renders", () => {
   for (const [src, want] of Object.entries(CAPTURED_FROM.shots)) {
     const got = createHash("sha256").update(readPublic(src.slice(1))).digest("hex");
@@ -2760,6 +2898,24 @@ test("the install screenshots were captured from the chrome this tree renders", 
   }
 
   const { files } = chromeClosure();
+
+  // Asked BEFORE the chrome digest on purpose. If markup moved, "recapture" is
+  // the only answer available and the re-stamp advice below does not apply —
+  // reading it first would send someone down a road that is closed.
+  const recipe = renderRecipeDigest(files);
+  assert.equal(
+    recipe,
+    CAPTURED_FROM.recipe,
+    `markup, a class, or layout code changed in the ${files.length} sources that decide what ` +
+      `these screenshots show. **A byte-identical stylesheet cannot pay for this**: the same ` +
+      `utility can already be in the sheet while a new element starts using it, so the CSS ` +
+      `stays put and the photographed layout does not.\n\n` +
+      `  Recapture both frames and update all of CAPTURED_FROM — see ` +
+      `scripts/screenshots/capture.mjs. A comment-only edit leaves this digest alone and may ` +
+      `re-stamp \`chrome\` by itself.\n\n` +
+      `    recipe: "${recipe}",`,
+  );
+
   const digest = chromeDigest(files);
   assert.equal(
     digest,
