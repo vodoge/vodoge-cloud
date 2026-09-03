@@ -50,6 +50,9 @@ export function LedgerAdmin({
   });
 
   async function save() {
+    // Refused in the function, not only in the render. A control that is not
+    // drawn is not a control that cannot be reached.
+    if (!writable) return;
     setBusy(true);
     setError(null);
     const body = {
@@ -79,6 +82,9 @@ export function LedgerAdmin({
   }
 
   async function publish() {
+    // Refused in the function, not only in the render. A control that is not
+    // drawn is not a control that cannot be reached.
+    if (!writable) return;
     setAsking(false);
     setBusy(true);
     setError(null);

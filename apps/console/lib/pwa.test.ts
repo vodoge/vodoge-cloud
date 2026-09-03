@@ -2672,7 +2672,7 @@ const CAPTURED_FROM = {
   // `components/device-console.tsx` -- are Tailwind content but are NOT in the
   // chrome closure, which is why the digest moved on the other three and why
   // the stylesheet check was the part that mattered.
-  commit: "bc0dbb5",
+  commit: "5ed8fb7",
   //
   // Re-stamped again in the same change, after the card policy table gained a
   // plan-declaration column and `lib/card-capability.ts` joined the closure.

@@ -3123,6 +3123,85 @@ test("the inbox draws no write control for an account that may not write", () =>
   );
 });
 
+/**
+ * Every write on the confirmation ledger refuses without the role.
+ *
+ * 🔴 The per-file checks below this one are thorough about their own file and
+ * blind to every other. `components/support-ledger.tsx` proved it: `publish`
+ * replaces the list every tenant reads support decisions from, its dialog was
+ * written and wired, and neither of its two writes had a role check in the
+ * function at all — removing one changed nothing red, because no guard was
+ * looking at that file.
+ *
+ * So the ledger itself is the intake. Adding a file to `CONFIRMED_WRITES` now
+ * brings its functions under this check automatically, which is the property
+ * the per-file guards cannot have: they have to be written, and the one that
+ * was never written is exactly the one that was missing.
+ *
+ * "Not drawn" is not "cannot be reached": the render gate hides the control,
+ * and the function is what a keyboard, a stale tab or a replayed handler
+ * reaches. Both, or neither counts.
+ */
+test("every write on the confirmation ledger checks the role before it sends", () => {
+  /**
+   * ⚠️ One shape is exempt, and only one: a component that is **never rendered**
+   * for a read-only account has no stale handler to reach, because it never
+   * mounted. That is a different claim from "the button is hidden", and it is
+   * only true when the call site gates the whole component — which is asserted
+   * elsewhere, by the guard named here.
+   *
+   * The pointer is checked below, so this exemption cannot outlive the guard it
+   * leans on.
+   */
+  const renderGatedWholly = new Map<string, { why: string; guardedBy: string }>([
+    [
+      "components/send-sms.tsx",
+      {
+        why:
+          "the form takes no `writable` prop because its one call site, " +
+          "app/inbox/page.tsx:181, renders it only inside `{writable ? … }` — a " +
+          "read-only session never mounts it, so there is no handler to reach",
+        guardedBy: "the inbox draws no write control for an account that may not write",
+      },
+    ],
+  ]);
+
+  let checked = 0;
+  for (const [relative, names] of Object.entries(CONFIRMED_WRITES)) {
+    const exempt = renderGatedWholly.get(relative);
+    if (exempt) {
+      assert.ok(exempt.why.length > 40, `${relative} is exempt without a reason`);
+      assert.match(
+        readSource("lib/tokens.test.ts"),
+        new RegExp(`test\\("${exempt.guardedBy}"`),
+        `${relative} leans on a guard called "${exempt.guardedBy}", which no longer exists`,
+      );
+      continue;
+    }
+    const source = readSource(relative);
+    for (const name of names) {
+      const body = functionBody(source, name);
+      assert.ok(body, `${relative}: ${name} no longer exists`);
+      assert.ok(
+        /fetch\s*\(/.test(body!),
+        `${relative}: ${name} sends no request, so it is on the wrong ledger`,
+      );
+      assert.match(
+        body!,
+        /if \(!writable\) return;/,
+        `${relative}: ${name} runs for an account that may not write`,
+      );
+      assert.ok(
+        body!.indexOf("!writable") < body!.indexOf("fetch("),
+        `${relative}: ${name} checks the role after it has already sent the request`,
+      );
+      checked += 1;
+    }
+  }
+  // Not scanning air: the ledger has four files and seven writes on it today.
+  assert.ok(checked >= 6, `only ${checked} confirmed writes checked — the ledger shrank`);
+});
+
 test("every request the conversation makes refuses without the role, not only without the button", () => {
   const source = readSource("components/conversation.tsx");
 

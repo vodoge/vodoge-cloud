@@ -49,6 +49,10 @@ export const CONFIRMED_WRITES = {
   "components/card-policies.tsx": ["save", "removePolicy"],
   "components/send-sms.tsx": ["sendMessage"],
   "components/conversation.tsx": ["removeThread", "removeMessage", "forgetContact"],
+  // `publish` replaces the list every tenant reads support decisions from. It
+  // is the widest-blast-radius write in this console and it was on no ledger at
+  // all until 2026-09-03 — the dialog had been written, the line here never was.
+  "components/support-ledger.tsx": ["publish"],
 } as const;
 
 /* ── Modules this console will not send a message from ───────────────────
@@ -189,5 +193,12 @@ export const WRITES_WITHOUT_A_DIALOG: Readonly<Record<string, { count: number; w
       "POST /v1/messages/thread/read fires from an effect, not from a control — " +
       "there is no moment to ask about. PUT /v1/messages/contact renames a " +
       "contact, which the next rename undoes. Both sit behind the role gate.",
+  },
+  "components/support-ledger.tsx": {
+    count: 1,
+    why:
+      "PUT /v1/support-ledger/<family>/<carrier> records one measurement the " +
+      "operator just took, and recording it again with the corrected value is " +
+      "the undo. `publish` is the one that needs asking, and it has a dialog.",
   },
 };
