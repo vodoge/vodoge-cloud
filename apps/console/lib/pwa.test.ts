@@ -1771,14 +1771,29 @@ test("the install dialog's screenshots show the chrome this console is built fro
   );
 
   const perShot = new Map<string, Map<number, number>>();
+  const formFactor = new Map<string, string>();
   const total = new Map<number, number>();
   for (const shot of consoleManifest().screenshots) {
     const { counts } = colourCensus(shot.src.slice(1));
     perShot.set(shot.src, counts);
+    formFactor.set(shot.src, shot.form_factor);
     for (const [key, n] of counts) total.set(key, (total.get(key) ?? 0) + n);
   }
 
+  // 🔴 两个门槛，因为量的是两种东西。
+  //
+  // 表面色铺面积，文字色只铺字形。同一个 500 用在两边，等于要求导航标签占到和
+  // 一块背景板一样多的像素。实测（暗色，两张帧）：
+  //
+  //   表面   background 758,901 / muted 17,165 / sidebar 193,273（宽屏）
+  //   文字   foreground 2,765 / muted-foreground 703 / sidebar-foreground 376
+  //
+  // ⚠️ 这里**不是**把 500 调低——那正是这套守卫反复警告的致盲手法（「让它变绿的
+  // 最省事办法是把钉死的数字往下改」）。分成两个门槛是因为被量的量纲不同，而两个
+  // 数都留着实测值在上面，哪天掉下来是看得见的。
   const FLOOR = 500;
+  const TEXT_FLOOR = 200;
+  const isText = (name: string) => /(^|-)foreground$/.test(name) || name === "primary";
   for (const [name, value] of required) {
     const hex = value.dark.toLowerCase();
     const key = pack(...rgbOf(hex));
@@ -1791,10 +1806,44 @@ test("the install dialog's screenshots show the chrome this console is built fro
       );
       continue;
     }
+    // 🔴 侧栏那一族只画在宽屏上，所以不能对两张图提同一个要求。
+    //
+    // `md` 以下 shadcn 的 `Sidebar` 把同样的 markup 交给一个默认关着的 `Sheet`,
+    // 于是导轨在手机帧里根本不存在——实测 #18181b 在 780x1688 那张里只有 29 个
+    // 像素(抗锯齿),在 1280x800 那张里有 193,273 个(18.87%)。
+    //
+    // 这条以前不红,是因为 `components/ui/sidebar.tsx` 不在 MIGRATED_SOURCES 上,
+    // 扫源码时看不见 `bg-sidebar`,于是这些 token 压根没进 `required`。补上清单
+    // 之后它立刻红了,而红得有道理:要求本身下错了,不是截图错了。
+    //
+    // 两边都要断言。只豁免手机那半边,就没有东西拦着导轨哪天漏到手机上——那正是
+    // 放弃底栏时换来的那块屏幕。
+    // ⚠️ 只有颜色**为侧栏独有**的 token 才能这样断言。
+    //
+    // 这个普查是按颜色数的,分不开同色的 token。`--sidebar-accent` 是 #27272a,
+    // 而 `--border` / `--input` / `--muted` / `--secondary` / `--sidebar-border`
+    // 全是同一个 #27272a——手机帧里那 30,685 个像素是边框和抬升面画的,不是导轨。
+    // 不加这个条件,这条规则会因为别人画的像素去指控侧栏(第一版就是这样,当场红)。
+    // 独有的两个是 `--sidebar` #18181b 和 `--sidebar-foreground` #f4f4f5。
+    const sharedWithNonSidebar = required.some(
+      ([other, otherValue]) =>
+        !/^sidebar(-|$)/.test(other) && otherValue.dark.toLowerCase() === hex,
+    );
+    const sidebarOnly = /^sidebar(-|$)/.test(name) && !sharedWithNonSidebar;
     for (const [src, counts] of perShot) {
       const n = counts.get(key) ?? 0;
+      if (sidebarOnly && formFactor.get(src) === "narrow") {
+        assert.ok(
+          n < (isText(name) ? TEXT_FLOOR : FLOOR),
+          `${src} has ${n} pixels of --${name} (${hex}) — the rail is drawn on the phone, ` +
+            `where shadcn's Sidebar is supposed to be a closed Sheet; that is ${FLOOR}+ pixels ` +
+            `of a 390px screen given back to navigation`,
+        );
+        continue;
+      }
+      const floor = isText(name) ? TEXT_FLOOR : FLOOR;
       assert.ok(
-        n >= FLOOR,
+        n >= floor,
         `${src} has ${n} pixels of --${name} (${hex}) — the palette moved and this file was ` +
           `not recaptured with it`,
       );
@@ -2662,7 +2711,7 @@ const CAPTURED_FROM = {
   // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
-  chrome: "e63a0b09b0016168c766808cb8a9b63ec0268ac71225696cd5567abe74ebef94",
+  chrome: "6b8cdc48ecfd4ff8a485eb5fa21b2ced9a3ab037db02299af3e554dbb934063a",
   shots: {
     "/screenshot-mobile.png": "6a881b3757d8c775628a2ec120af31ebc13aa4a5cda4359e223fb0d3ba1cf4d8",
     "/screenshot-wide.png": "967c4caba4413ea598f3f6b680cff6355a5165dd10f08a47ac9ac834db574b50",

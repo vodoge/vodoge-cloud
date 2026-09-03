@@ -2041,6 +2041,19 @@ export function secretInputProps(value: unknown): SecretInputProps {
  * be added here or the ledger test fails, which is what stops a page being
  * written that no guard in this file reads.
  *
+ * 🔴 Thirteen `components/ui/*.tsx` were missing from this list until
+ * 2026-09-03 — every shadcn component installed after the first batch
+ * (alert-dialog, checkbox, dropdown-menu, input, label, select, separator,
+ * sheet, sidebar, skeleton, sonner, textarea, tooltip). Nothing noticed,
+ * because the ledger test pinned this list's *length* and never compared it
+ * to the directory, while its own failure message claimed a neighbouring test
+ * did exactly that. Every class in those thirteen files was therefore
+ * invisible to "each class used must produce a rule" — including a
+ * `list-none` this project added to `sidebar.tsx` by hand, whose absence had
+ * put a bullet in front of every nav item and was caught by looking at a
+ * screenshot. The ledger test now derives the expected set from the directory,
+ * so a file cannot arrive without being read.
+ *
  * Three entries draw nothing and are listed anyway, so that the guard rather
  * than a reader's memory is what keeps them that way: `pwa.tsx` and
  * `live-reload.tsx` render `null`, and `app/unknown-tenant/page.tsx` calls
@@ -2098,6 +2111,19 @@ export const MIGRATED_SOURCES = [
   "components/ui/secret-input.tsx",
   "components/ui/table.tsx",
   "components/ui/tabs.tsx",
+  "components/ui/alert-dialog.tsx",
+  "components/ui/checkbox.tsx",
+  "components/ui/dropdown-menu.tsx",
+  "components/ui/input.tsx",
+  "components/ui/label.tsx",
+  "components/ui/select.tsx",
+  "components/ui/separator.tsx",
+  "components/ui/sheet.tsx",
+  "components/ui/sidebar.tsx",
+  "components/ui/skeleton.tsx",
+  "components/ui/sonner.tsx",
+  "components/ui/textarea.tsx",
+  "components/ui/tooltip.tsx",
 ] as const;
 
 /**
@@ -2313,8 +2339,31 @@ export const LEGACY_UTILITY_COLLISIONS: readonly string[] = [];
  * Classes that legitimately generate no CSS.
  *
  * `group` and `peer` are markers Tailwind reads on other elements' variants.
+ *
+ * The two below arrived with `components/ui/*.tsx` when those files joined
+ * `MIGRATED_SOURCES` on 2026-09-03, and each is here for its own reason. Both
+ * are library code from the shadcn registry, so neither is ours to rewrite —
+ * but naming them is not the same as excusing them.
+ *
+ * - `toaster` is Sonner's own hook class. It does reach the stylesheet, just
+ *   never as a rule of its own: it appears only as the ancestor in
+ *   `.toaster .group-\[\.toaster\]\:bg-background` and its eight siblings.
+ *   Sonner currently has no call site in this console.
+ *
+ * - 🔴 `group/sidebar-wrapper` is a *named* group marker, and **nothing
+ *   references it.** A named marker earns its keep through a matching
+ *   `group-…/sidebar-wrapper:` variant; there is no such variant in the tree
+ *   and no `sidebar-wrapper` anywhere in the built stylesheet. It is dead
+ *   boilerplate shipped by the registry, kept verbatim so a future
+ *   `shadcn add` does not conflict, and recorded here rather than deleted so
+ *   the deadness is written down instead of rediscovered.
  */
-export const NON_UTILITY_CLASSES = ["group", "peer"] as const;
+export const NON_UTILITY_CLASSES = [
+  "group",
+  "peer",
+  "toaster",
+  "group/sidebar-wrapper",
+] as const;
 
 export const SETTINGS_FIELD_KINDS = ["text", "secret", "number", "boolean", "list"] as const;
 export type SettingsFieldKind = (typeof SETTINGS_FIELD_KINDS)[number];

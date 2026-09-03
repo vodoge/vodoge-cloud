@@ -202,6 +202,28 @@ function classNamesInSelector(selector: string): string[] {
     while (j < selector.length) {
       const ch = selector[j];
       if (ch === "\\") {
+        // 🔴 CSS has two escape forms and this used to understand only one.
+        //
+        // `\<char>` is a literal, but `\2c ` is a *hex* escape — up to six hex
+        // digits, with one following whitespace swallowed as the terminator.
+        // Tailwind writes commas inside arbitrary values that way, so
+        // `transition-[left,right,width]` ships as
+        // `.transition-\[left\2c right\2c width\]`. Reading that one character
+        // at a time produced `transition-[left2`, which matches no candidate —
+        // so the class read as "generates no CSS" when it generates fine.
+        //
+        // It surfaced as two false positives the day `components/ui/*.tsx`
+        // joined the ledger. The danger is not the noise: it is that the
+        // obvious way to silence it is to allowlist the names, and that would
+        // switch the check off for every comma-carrying arbitrary value,
+        // including one that really is broken.
+        const hex = /^[0-9a-fA-F]{1,6}/.exec(selector.slice(j + 1));
+        if (hex) {
+          name += String.fromCodePoint(parseInt(hex[0], 16));
+          j += 1 + hex[0].length;
+          if (/\s/.test(selector[j] ?? "")) j += 1;
+          continue;
+        }
         name += selector[j + 1] ?? "";
         j += 2;
         continue;
@@ -2354,22 +2376,40 @@ test("the journal's payload row spans every column the table has", () => {
  */
 test("every .tsx in the console is on the checked side of the ledger", () => {
   assert.deepEqual([...UNMIGRATED_SOURCES], []);
-  // 49 since components/modem-network.tsx: the network cell was written twice,
-  // byte for byte, as `ModemNetwork` on the device list and `Network` on the
-  // device detail page. The names had already drifted while the bodies had
-  // not, which is what that looks like just before the next change lands in
-  // only one of them.
+
+  // 🔴 Derived from the directory, not pinned as a number.
   //
-  // 48 since the phone bar: `components/mobile-nav.tsx` and
-  // `components/nav-more.tsx` were deleted when the console adopted shadcn's
-  // `Sidebar`, which draws the same markup in a `Sheet` below its own
-  // breakpoint. Two files out, one in (`components/ui/sidebar.tsx` is library
-  // code and is on the ledger like the rest of `components/ui/`).
-  assert.equal(
-    MIGRATED_SOURCES.length,
-    48,
-    `the console has ${MIGRATED_SOURCES.length} .tsx files under app/ and components/, not 48 — ` +
-      "if that is right, say so here; the ledger test next door proves the list matches the directory",
+  // This assertion used to be `MIGRATED_SOURCES.length === 48`, and its own
+  // failure message told the reader that "the ledger test next door proves the
+  // list matches the directory". No such test existed. Thirteen files —
+  // every `components/ui/*.tsx` installed after the first shadcn batch — were
+  // on neither list, so every guard that iterates MIGRATED_SOURCES skipped
+  // them silently, including "each class used must produce a rule". One of
+  // those files, `components/ui/sidebar.tsx`, carries a hand-added `list-none`
+  // that the console needs because preflight is off; nothing was checking it.
+  //
+  // A count cannot notice a swap (one file in, one out) either. Reading the
+  // directory can, so that is what happens now.
+  const walk = (dir: string): string[] =>
+    readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(`${dir}/${entry.name}`)
+        : entry.name.endsWith(".tsx")
+          ? [`${dir}/${entry.name}`]
+          : [],
+    );
+  const onDisk = [...walk("app"), ...walk("components")].sort();
+  const onLedger = [...MIGRATED_SOURCES, ...UNMIGRATED_SOURCES].sort();
+
+  assert.deepEqual(
+    onDisk.filter((file) => !onLedger.includes(file)),
+    [],
+    "a .tsx under app/ or components/ is on neither ledger, so every source-scanning guard skips it",
+  );
+  assert.deepEqual(
+    onLedger.filter((file) => !onDisk.includes(file)),
+    [],
+    "the ledger names a file that is not on disk",
   );
 
   // And the files really are read: a name on the list that does not exist
