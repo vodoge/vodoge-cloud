@@ -30,7 +30,19 @@
  *
  *        node scripts/screenshots/stub-gateway.mjs
  *        (cd .next/standalone && VODOGE_GATEWAY_URL=http://127.0.0.1:8788 \
- *           PORT=3000 HOSTNAME=127.0.0.1 node server.js)
+ *           PORT=3000 HOSTNAME=127.0.0.1 VODOGE_TRUST_FORWARDED_HOST=1 \
+ *           node server.js)
+ *
+ *      🔴 `VODOGE_TRUST_FORWARDED_HOST=1` 不能省，2026-09-05 起。
+ *
+ *      `stub-gateway.mjs` 转发时靠 `x-forwarded-host` 告诉 console 这是哪个
+ *      租户（它自己的 Host 是 `127.0.0.1:3000`）。而 console 从这天起**默认
+ *      不信任**那个头 —— 生产上任何能直连它的邻居容器都能靠它伪造租户，
+ *      而 Caddy 会用真实 Host 覆盖它，所以那条路径在生产上根本用不到。
+ *
+ *      这个架子恰恰是它存在的那个合法用例：一个把 Host 改写成 IP 的可信代理。
+ *      不设它的话，console 会看到 `Host: 127.0.0.1:3000`，路由到「未知租户」，
+ *      拍出来的是一张错的图 —— 而它看起来只是「页面不太对」，不会报错。
  *
  *   4. 拍：
  *

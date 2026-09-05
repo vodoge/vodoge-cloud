@@ -4,6 +4,7 @@ import {
   classifyHost,
   decideTenantRoute,
   requestHost,
+  trustsForwardedHost,
 } from "./lib/host";
 import {
   gatewayAuthHeader,
@@ -14,7 +15,9 @@ import {
 import { TENANT_HEADER, getSharedDirectory } from "./lib/tenant";
 
 export async function middleware(request: NextRequest) {
-  const host = requestHost(request.headers);
+  const host = requestHost(request.headers, {
+    trustForwarded: trustsForwardedHost(process.env.VODOGE_TRUST_FORWARDED_HOST),
+  });
   const baseDomain = process.env.VODOGE_BASE_DOMAIN?.trim() || DEFAULT_BASE_DOMAIN;
   const classification = classifyHost(host, baseDomain);
 

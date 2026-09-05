@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import { requestHost as hostFromHeaders, trustsForwardedHost } from "./host";
 import { SESSION_COOKIE } from "./session";
 import { TENANT_HEADER, isTenantRegion, type Tenant } from "./tenant";
 
@@ -22,12 +23,14 @@ export async function getTenantFromHeaders(): Promise<Tenant | null> {
 }
 
 export async function requestHost(): Promise<string> {
-  const requestHeaders = await headers();
-  const forwarded = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("X-Forwarded-Host");
-  if (forwarded) {
-    return forwarded.split(",")[0]?.trim() ?? "";
-  }
-  return requestHeaders.get("host") ?? "";
+  // 🔴 委托给 lib/host 的那一个，不再抄第二遍。
+  //
+  // 这两处此前是同一段逻辑的两份拷贝 —— 于是「默认不信任 X-Forwarded-Host」
+  // 这个改动必须记得改两个地方，而漏掉哪一个都不会有任何症状，
+  // 直到有人从这条路进来。
+  return hostFromHeaders(await headers(), {
+    trustForwarded: trustsForwardedHost(process.env.VODOGE_TRUST_FORWARDED_HOST),
+  });
 }
 
 /**
