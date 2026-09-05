@@ -158,6 +158,12 @@ export type DeviceLabelKey =
   | "adoptionSave"
   | "adoptionNone"
   | "adoptionPlaceholder"
+  | "createTitle"
+  | "createNote"
+  | "createImei"
+  | "createFamily"
+  | "createSubmit"
+  | "createUngated"
   | "modem_report"
   | "list_esim_profiles"
   | "restart_modem"
@@ -168,6 +174,7 @@ export type DeviceLabelKey =
   | "unregister_modem"
   | "reconfirm_modem"
   | "update_modem"
+  | "create_modem"
   | "set_data_network"
   | "reregister_network"
   | "refresh_modems"
@@ -611,6 +618,8 @@ export function DeviceConsole({
       </CardPanel>
 
       <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
+
+      <CreateModemCard busy={busy} labels={labels} onRun={request} />
 
       <AdoptionCard
         modem={modems.find((row) => row.imei === imei)}
@@ -1456,6 +1465,72 @@ function ApnEditor({
  * 只有备注可改。纳管时刻和纳管人是履历：改它们唯一的办法本来是取消纳管再
  * 纳管，而那会把两者冲成今天，正是 update_modem 这条命令存在的理由。
  */
+/**
+ * 手工建一条纳管记录。CRUD 里的 C —— 不经发现的那一条。
+ *
+ * feature-matrix 的「新增设备」一行长期是**半**：只能靠注册码自注册，不能
+ * 手工建。这补的是模组这一层的同一个洞：register_modem 拒绝一个 agent 没
+ * 观测过的 IMEI —— 硬件在总线上时那是对的，而运维手里拿着一张清单、要在
+ * 机器接进来之前先把册子建起来时，那就是拦路的。
+ *
+ * 🔴 建出来的记录**没有过闸**，所以这张卡片上必须写着这句话。回执里
+ * gates_passed 恒为 false；一个笼统的绿勾会让人以为这一根已经被验过了。
+ */
+function CreateModemCard({
+  labels,
+  busy,
+  onRun,
+}: {
+  labels: Labels;
+  busy: boolean;
+  onRun: (kind: string, body: Record<string, unknown>) => void;
+}) {
+  const [imei, setImei] = useState("");
+  const [family, setFamily] = useState("");
+  const [note, setNote] = useState("");
+  const ready = /^[0-9]{15}$/.test(imei.trim()) && family.trim().length > 0;
+  return (
+    <CardPanel title={labels.createTitle} note={labels.createNote}>
+      <InlineForm
+        onSubmit={(event) => {
+          event.preventDefault();
+          onRun("create_modem", {
+            modem_imei: imei.trim(),
+            family: family.trim(),
+            note: note.trim(),
+          });
+          setImei("");
+          setFamily("");
+          setNote("");
+        }}
+      >
+        <Input
+          value={imei}
+          disabled={busy}
+          placeholder={labels.createImei}
+          onChange={(event) => setImei(event.target.value)}
+        />
+        <Input
+          value={family}
+          disabled={busy}
+          placeholder={labels.createFamily}
+          onChange={(event) => setFamily(event.target.value)}
+        />
+        <Input
+          value={note}
+          disabled={busy}
+          placeholder={labels.adoptionPlaceholder}
+          onChange={(event) => setNote(event.target.value)}
+        />
+        <Button type="submit" variant="outline" disabled={busy || !ready}>
+          {labels.createSubmit}
+        </Button>
+      </InlineForm>
+      <FormHint>{labels.createUngated}</FormHint>
+    </CardPanel>
+  );
+}
+
 function AdoptionCard({
   modem,
   labels,

@@ -79,6 +79,9 @@ type Request struct {
 
 	// RegisterModem
 	Note string `json:"note"`
+	// 型号。只有 create_modem 用：它建的那一根 agent 从没观测过，型号推不出来，
+	// 而闸按 (型号 × 运营商) 查规则 —— 留空就是建了一条永远过不了闸的记录。
+	Family string `json:"family"`
 
 	// ReadLogs
 	//
@@ -512,6 +515,47 @@ var catalogue = map[string]Spec{
 			return map[string]any{
 				"kind": "UnregisterModem", "modem_imei": request.ModemIMEI,
 			}, nil
+		},
+	},
+	"create_modem": {
+		// The C that register_modem does not cover: adopting a module the agent
+		// has never seen. That one refuses an unobserved IMEI, which is right
+		// when the hardware is on the bus and wrong when somebody is building
+		// the register ahead of the machine arriving.
+		//
+		// NeedsModem is false on purpose -- the whole point is that this IMEI is
+		// not in app.modems yet. Requiring it would make the command impossible
+		// to issue for exactly the case it exists for.
+		//
+		// 🔴 The record it creates has NOT passed the adoption gates. The edge
+		// says so in the receipt (gates_passed: false) rather than letting a
+		// green tick imply it was checked.
+		Kind: "create_modem", ContractKind: "CreateModem", Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			imei := strings.TrimSpace(request.ModemIMEI)
+			if !imeiPattern.MatchString(imei) {
+				return nil, ErrInvalid{"modem_imei must be 15 digits"}
+			}
+			family := strings.TrimSpace(request.Family)
+			if family == "" {
+				return nil, ErrInvalid{
+					"family is required: the gates look up rules by (family, carrier) " +
+						"and nothing can infer it for a module nobody has observed",
+				}
+			}
+			if len(family) > 64 {
+				return nil, ErrInvalid{"family must be 64 characters or fewer"}
+			}
+			payload := map[string]any{
+				"kind": "CreateModem", "modem_imei": imei, "family": family,
+			}
+			if note := strings.TrimSpace(request.Note); note != "" {
+				if len(note) > 256 {
+					return nil, ErrInvalid{"note must be 256 characters or fewer"}
+				}
+				payload["note"] = note
+			}
+			return payload, nil
 		},
 	},
 	"update_modem": {

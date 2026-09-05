@@ -1187,6 +1187,8 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "device.confirmClaimCandidate",
   // 和上一条成对：一个人点头说「打开这个口试试」，就得有一条路把那句话收回来。
   "device.confirmRevokeCandidate",
+  // 手工新建：没有观测能纠正打错的位。
+  "device.confirmCreateModem",
   // Unmanaging a module. Nothing is written to the hardware, so this is not a
   // warning about the stick -- it is a warning about the list: a working
   // module disappears from it, and the operator who did this by accident has
@@ -1727,6 +1729,13 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       when: {},
       consequence: "device.confirmUnregister",
       why: "the module stops being polled and leaves the list; what it carried is kept, but an operator who did this by accident would see a working stick vanish",
+    },
+  ],
+  create_modem: [
+    {
+      when: {},
+      consequence: "device.confirmCreateModem",
+      why: "it writes a register entry for hardware nothing has looked at, so a mistyped IMEI becomes a module that will never appear and will be alerted about forever, with no observation anywhere to catch the typo. Discovery-then-adopt has the module's own answer to check against; this path has nothing",
     },
   ],
   update_modem: [

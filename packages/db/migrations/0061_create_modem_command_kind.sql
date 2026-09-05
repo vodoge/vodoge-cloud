@@ -1,0 +1,14 @@
+-- 手动管理模组的 CRUD 里，C 那一条 —— 不经发现的新建。
+--
+-- feature-matrix 的「新增设备」一行长期是**半**：只能靠注册码自注册，不能
+-- 手工建。这条补的是模组这一层的同一个洞：`register_modem` 拒绝一个 agent
+-- 没观测过的 IMEI —— 硬件在总线上时那是对的，而运维手里拿着一张清单、要在
+-- 机器接进来之前先把册子建起来时，那就是拦路的。
+--
+-- 🔴 建出来的记录**没有过闸**，无从过起：没有观测就没有 USB 身份也没有归属
+--    网。边缘的追溯执行对没观测过的那一根返回 Hold(NeverObserved) —— 只告警，
+--    不解绑；硬件真出现的那一轮才第一次被真正判定，那时两道闸照常生效。
+--    回执里的 gates_passed 恒为 false，控制台必须把它画出来。
+--
+-- ALTER TYPE ... ADD VALUE 不能在事务块里跑，所以没有 BEGIN/COMMIT。幂等。
+ALTER TYPE app.command_kind ADD VALUE IF NOT EXISTS 'create_modem';

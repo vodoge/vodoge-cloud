@@ -250,6 +250,13 @@ type RegisterModemCommand struct {
 	Note      *string `json:"note,omitempty"`
 }
 
+type CreateModemCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Family    string  `json:"family"`
+	Note      *string `json:"note,omitempty"`
+}
+
 type UnregisterModemCommand struct {
 	Kind      string `json:"kind"`
 	ModemImei string `json:"modem_imei"`

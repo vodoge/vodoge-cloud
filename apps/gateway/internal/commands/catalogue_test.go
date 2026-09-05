@@ -209,6 +209,10 @@ func TestPayloadsUseTheContractKind(t *testing.T) {
 		request.ProfileICCID = "89852351225042214201"
 		nickname := "bench"
 		request.Nickname = &nickname
+		// create_modem 要它，而且是**必填**：它建的那一根 agent 从没观测过，
+		// 型号推不出来，而闸按 (型号 × 运营商) 查规则。留空建出来的是一条
+		// 永远过不了闸的记录，所以校验在 Build 里而不是靠调用方自觉。
+		request.Family = "EC20"
 
 		_, payload, err := BuildPayload(request)
 		if err != nil {

@@ -776,5 +776,13 @@
   "device.adoptionSave": "Save note",
   "device.adoptionNone": "Select a module first.",
   "device.adoptionPlaceholder": "Why it is managed (optional)",
-  "cmd.update_modem": "Save note"
+  "cmd.update_modem": "Save note",
+  "device.createTitle": "Add a module by hand",
+  "device.createNote": "For building the register before the hardware arrives. Discovered modules do not need this.",
+  "device.createImei": "IMEI (15 digits)",
+  "device.createFamily": "Family, e.g. EC20",
+  "device.createSubmit": "Create",
+  "device.createUngated": "🔴 A hand-made record has not passed the adoption gates: with no observation there is no USB identity and no home network to judge. The first real verdict happens on the pass where the hardware appears; until then it is alerted, never unbound.",
+  "cmd.create_modem": "Create module",
+  "device.confirmCreateModem": "Create this register entry by hand? There is no observation to check it against — one wrong digit in the IMEI leaves a module that will never appear, alerted about forever."
 }

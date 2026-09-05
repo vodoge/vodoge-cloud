@@ -776,5 +776,13 @@
   "device.adoptionSave": "保存备注",
   "device.adoptionNone": "先选一根模组。",
   "device.adoptionPlaceholder": "为什么纳管它（可空）",
-  "cmd.update_modem": "保存备注"
+  "cmd.update_modem": "保存备注",
+  "device.createTitle": "手工新建模组",
+  "device.createNote": "用于硬件还没接进来、先把册子建起来。发现来的那些不用走这里。",
+  "device.createImei": "IMEI（15 位）",
+  "device.createFamily": "型号，例如 EC20",
+  "device.createSubmit": "手工建立",
+  "device.createUngated": "🔴 手工建的这一条没有过闸——没有观测就没有 USB 身份也没有归属网，闸无从判起。硬件真出现的那一轮才第一次判定；在那之前只告警，不会被自动摘除。",
+  "cmd.create_modem": "手工建立模组",
+  "device.confirmCreateModem": "手工建立这一条纳管记录？它没有观测可以对照——IMEI 打错一位，册子里就多出一根永远不会出现的模组，而告警会一直指向它。"
 }

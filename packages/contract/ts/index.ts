@@ -266,6 +266,13 @@ export interface RegisterModemCommand {
   note?: string;
 }
 
+export interface CreateModemCommand {
+  kind: "CreateModem";
+  modem_imei: Imei;
+  family: string;
+  note?: string | null;
+}
+
 export interface UnregisterModemCommand {
   kind: "UnregisterModem";
   modem_imei: Imei;
@@ -587,6 +594,7 @@ export type Command =
   | ClaimModemCandidateCommand |
   | RevokeModemCandidateCommand |
   | RegisterModemCommand |
+  | CreateModemCommand |
   | UnregisterModemCommand |
   | ReconfirmModemCommand |
   | UpdateModemCommand |

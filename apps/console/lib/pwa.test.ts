@@ -2814,7 +2814,10 @@ const CAPTURED_FROM = {
   //      文件名的内容哈希仍是 7d09d96e2196fd2f
   //
   // ② 是这里点名要的那一项 —— 帧没变不能替样式表作证。
-  chrome: "583e89913e772238827f5e10bd1980e31f8d330ac570caae1b28d4388177152a",
+  // 2026-09-06 再次前移。这次加的是「手工新建模组」卡片和它的 guard 条目。
+  // 两项照旧：重拍两帧**逐像素完全相同**（0 像素）；把改动 stash 掉重新
+  // 构建、样式表逐字节比对**完全相同**（产物名仍是 7d09d96e2196fd2f）。
+  chrome: "1261edd323694ba8c33a7b1841567982308ea1f407c52f4f8107d24f270ad71d",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2833,7 +2836,7 @@ const CAPTURED_FROM = {
   // 按上面那条判据量过了：布局变化会集中（大量行、每行占画幅四分之一以上），
   // 抗锯齿会散开。这次两者都不是 —— 什么都没动。所以这里只前移 `recipe`，
   // `shots` 原样不动，因为文件本身逐字节没变。
-  recipe: "25decc828a44aea3d364c03d892c6045950977fc814d1c9861fd9b9b3f8a1434",
+  recipe: "9729bdfac5a810188875295e5723aec4b7d506b96e87b6b0671dd014581ed48f",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",
