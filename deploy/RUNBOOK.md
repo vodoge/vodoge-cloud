@@ -195,6 +195,52 @@ shipping a copyleft binary with no notice and no offer of source.
 enough to stop anything *loading* them, but tracing is static and never reads
 that flag — they get bundled either way.
 
+### 发布账本（publish-ledger）：postgres 在 internal 网络上
+
+`publish-ledger` 是绕开控制台会话的那条发布路径（理由写在它的文件头：
+「发布不该需要往 shell 里敲密码」）。但它**不能直接在主机上跑** ——
+`deploy/compose.yaml` 里 `backend` 是 `internal: true`，postgres 没有发布任何
+端口，主机上 `ss -ltn` 也看不到它。
+
+所以要在那个网络里起一次性容器。二进制是静态链接的（`CGO_ENABLED=0`），
+所以随便一个 alpine 都能跑它：
+
+```sh
+cd /opt/vodoge-cloud/deploy
+DB=$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2-)
+U=$(grep -E '^VODOGE_APP_USER=' .env | cut -d= -f2-)
+P=$(grep -E '^VODOGE_APP_PASSWORD=' .env | cut -d= -f2-)
+docker run --rm --network vodoge-cloud_backend \
+  -e VODOGE_DATABASE_URL="postgres://$U:$P@postgres:5432/$DB?sslmode=disable" \
+  -v /opt/vodoge-cloud/deploy/publish-ledger:/publish-ledger:ro \
+  alpine:3.22 /publish-ledger <tenant-id>
+```
+
+产物在开发机上和网关同样地交叉编译：
+
+```sh
+cd apps/gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+  -o /tmp/publish-ledger ./cmd/publish-ledger
+scp /tmp/publish-ledger root@43.108.53.126:/opt/vodoge-cloud/deploy/
+```
+
+⚠️ 它打印的 `devices=N` 是**机队里的边缘机数**（要给几台排命令），
+不是受支持硬件数。`device` 这个词在这个代码库里指两样东西 ——
+一台边缘机（`catalog.Device`），和一款受支持的硬件型号
+（`ledger.SupportedDevice`）。
+
+### 🔴 `app.supported_devices` 空表**不是**「什么都不支持」
+
+`ledger.Document` 在这张表为空时**整个不写** `[[device]]` 键，而不是写一个
+空数组。边缘端的 `DeviceGate` 分得很清：没有这个段是 `NotStated`（放行），
+有段而某个硬件不在里面是 `Absent`（拒）。
+
+所以一个空的 `[[device]]` 列表会拒掉**每一块**硬件 —— 而这张表在 0057 上线
+之后本来就是空的。往里加第一条之前，先明白：**加了第一条，凡是不在表里的
+硬件就都不能再纳管了。** 这是这张表的全部意义，但它是一个不可逆向温和的
+开关，加之前要把该加的都加齐。
+
 ### 🔴 迁移的函数属主是分裂的，`migrate.sh` 对它们跑不通
 
 2026-09-05 应用 0056 时撞出来的。以 `VODOGE_OWNER_USER`（也就是
