@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -98,6 +99,15 @@ func (process *process) deleteLedger(writer http.ResponseWriter, request *http.R
 // half-finished afternoon of testing reaches hardware the moment somebody
 // saves a row. The version is derived from the content, so publishing an
 // unchanged ledger is a no-op the devices recognise by digest.
+// deviceList reads the cross-tenant catalogue, tolerating a deployment that
+// has not wired one.
+func (process *process) readCatalogue(ctx context.Context) ([]ledger.SupportedDevice, error) {
+	if process.supportedDevices == nil {
+		return nil, nil
+	}
+	return process.supportedDevices.ListSupportedDevices(ctx)
+}
+
 func (process *process) publishLedger(writer http.ResponseWriter, request *http.Request) {
 	entry, ok := process.tenantFromRequest(writer, request)
 	if !ok {
@@ -117,7 +127,17 @@ func (process *process) publishLedger(writer http.ResponseWriter, request *http.
 	}
 
 	version := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	rendered, err := json.Marshal(ledger.Document(version, entries))
+	// 目录读不出来 → **整次发布作废**，而不是当成空的继续。
+	//
+	// 当成空的会渲染出「没有 [[device]] 段」的文档，边缘端读作 NotStated
+	// 并放行 —— 也就是把闸 1 悄悄关掉了。一次数据库抖动不该有这个后果，
+	// 而且发布是个明确动作，失败了让人重试就好。
+	supported, err := process.readCatalogue(request.Context())
+	if err != nil {
+		http.Error(writer, "supported device list unavailable", http.StatusInternalServerError)
+		return
+	}
+	rendered, err := json.Marshal(ledger.Document(version, entries, supported))
 	if err != nil {
 		http.Error(writer, "matrix could not be rendered", http.StatusInternalServerError)
 		return

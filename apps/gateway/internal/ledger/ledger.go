@@ -186,6 +186,71 @@ func (store SQL) Delete(ctx context.Context, tenantID, family, carrier string) e
 	})
 }
 
+// SupportedDevice is one row of the cross-tenant supported-hardware list.
+//
+// ⚠️ **不是** `catalog.Device`。那个是机队里的一台边缘机；这个是一款受支持
+// 的硬件型号。同一个词在这个代码库里指两样东西，所以这里带上限定词 ——
+// 名字和 edge-core 的 `SupportedDevice` 对齐，两端读的是同一个概念。
+//
+// 「支持」是两件事的合取：这个 build 有策略驱动它（代码说了算），**且**
+// 目录里启用（这张表说了算）。这个类型只承载后半句。
+type SupportedDevice struct {
+	UsbVendor  string
+	UsbProduct string
+	Strategy   string
+	Enabled    bool
+	Note       *string
+}
+
+// Devices reads the cross-tenant supported-device list.
+//
+// 没有 tenant 参数，因为这张表没有 tenant_id：它是跨租户事实。
+type Devices interface {
+	ListSupportedDevices(ctx context.Context) ([]SupportedDevice, error)
+}
+
+// NoDevices is the stand-in for "this deployment has no catalogue yet".
+//
+// 🔴 它返回空切片，而 `Document` 在空的时候**整个不写** `device` 键 ——
+// 那正是「还没人建这张表」应有的行为。见 Document 上的注释。
+type NoDevices struct{}
+
+func (NoDevices) ListSupportedDevices(context.Context) ([]SupportedDevice, error) {
+	return nil, nil
+}
+
+// SQLDevices reads app.supported_devices.
+type SQLDevices struct{ DB *sql.DB }
+
+func (store SQLDevices) ListSupportedDevices(ctx context.Context) ([]SupportedDevice, error) {
+	if store.DB == nil {
+		return nil, nil
+	}
+	rows, err := store.DB.QueryContext(ctx, `
+		SELECT usb_vendor, usb_product, strategy, enabled, note
+		  FROM app.supported_devices
+		 ORDER BY usb_vendor, usb_product`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SupportedDevice
+	for rows.Next() {
+		var device SupportedDevice
+		var note sql.NullString
+		if err := rows.Scan(&device.UsbVendor, &device.UsbProduct,
+			&device.Strategy, &device.Enabled, &note); err != nil {
+			return nil, err
+		}
+		if note.Valid {
+			value := note.String
+			device.Note = &value
+		}
+		out = append(out, device)
+	}
+	return out, rows.Err()
+}
+
 // Document renders the ledger as the capability-matrix document the edge
 // parses.
 //
@@ -193,7 +258,17 @@ func (store SQL) Delete(ctx context.Context, tenantID, family, carrier string) e
 // with no rule, and it answers "untested". A fallback here would be this
 // console quietly deciding what happens to hardware nobody has measured, which
 // is the decision the ledger exists to stop being made by accident.
-func Document(version string, entries []Entry) map[string]any {
+// Document renders the ledger (and the supported-device list) into the matrix
+// document the edge parses.
+//
+// 🔴 `devices` 为空时**整个不写** `device` 键，而不是写一个空数组。
+//
+// 边缘端的 `DeviceGate` 分得很清：没有这个段是 `NotStated`（放行，
+// 向后兼容），有段而某个硬件不在里面是 `Absent`（拒）。所以一个空的
+// `[[device]]` 列表会拒掉**每一块**硬件 —— 和 `PUT /v1/capability-matrix`
+// 收下 `{"version":"x"}` 是同一个形状的灾难，而那个已经在 `matrix.Parse`
+// 里堵上了。这里是同一条规则在渲染这一侧。
+func Document(version string, entries []Entry, devices []SupportedDevice) map[string]any {
 	sorted := append([]Entry(nil), entries...)
 	sort.Slice(sorted, func(left, right int) bool {
 		if sorted[left].ModemFamily != sorted[right].ModemFamily {
@@ -219,7 +294,23 @@ func Document(version string, entries []Entry) map[string]any {
 		}
 		rules = append(rules, rule)
 	}
-	return map[string]any{"version": version, "rule": rules}
+	document := map[string]any{"version": version, "rule": rules}
+	if len(devices) > 0 {
+		shaped := make([]map[string]any, 0, len(devices))
+		for _, device := range devices {
+			entry := map[string]any{
+				"usb":      device.UsbVendor + ":" + device.UsbProduct,
+				"strategy": device.Strategy,
+				"enabled":  device.Enabled,
+			}
+			if device.Note != nil && *device.Note != "" {
+				entry["note"] = *device.Note
+			}
+			shaped = append(shaped, entry)
+		}
+		document["device"] = shaped
+	}
+	return document
 }
 
 // supportShape renders one operation the way the edge's matrix parser reads it.

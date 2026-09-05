@@ -106,6 +106,7 @@ func main() {
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.cards = cards.SQL{DB: sqlStore.DB}
 		proc.ledger = ledger.SQL{DB: sqlStore.DB}
+		proc.supportedDevices = ledger.SQLDevices{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
@@ -855,6 +856,15 @@ type process struct {
 	// that reads it would otherwise panic on a build with no database, which
 	// is the shape the tests run in.
 	ledger ledger.Store
+	// 跨租户的受支持硬件列表。
+	//
+	// ⚠️ 字段名带上限定词，因为这个类型上已经有一个叫 `devices` 的方法
+	// （列机队里的边缘机的 HTTP handler）。同一个词在这个代码库里指两样东西：
+	// 一台边缘机，和一款受支持的硬件型号。
+	//
+	// 为空（nil）时渲染成「没有 [[device]] 段」，边缘端读作 NotStated
+	// 并放行 —— 也就是这个能力上线前的行为。
+	supportedDevices ledger.Devices
 	// authSessions is nil until a database is configured. Endpoints refuse
 	// rather than fall back to trusting the Host header.
 	authSessions auth.SessionStore

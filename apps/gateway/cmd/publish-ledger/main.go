@@ -79,7 +79,14 @@ func run() error {
 	}
 
 	version := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	rendered, err := json.Marshal(ledger.Document(version, entries))
+	// 和 HTTP 那条一样：读不出来就整次作废，不当成空的继续。
+	// ⚠️ 变量名不能叫 devices —— 这个文件下面已经有一个，指的是机队里的
+	// 边缘机（catalog.Device）。同一个词在这个代码库里指两样东西。
+	supported, err := ledger.SQLDevices{DB: db}.ListSupportedDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("supported devices: %w", err)
+	}
+	rendered, err := json.Marshal(ledger.Document(version, entries, supported))
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
