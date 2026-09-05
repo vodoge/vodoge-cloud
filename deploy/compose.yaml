@@ -168,6 +168,32 @@ services:
       # And ingress, so Caddy can reach it by container name.
       - ingress
 
+  admin:
+    # 跨租户管理站。写「哪些硬件受支持」「哪些型号 × 运营商测过」，租户只读。
+    #
+    # 钉住 image 的理由和上面两个一样。**没有 build 段**：它的源码在另一个
+    # 仓库（vodoge-admin），这台机器上根本没有，所以连「拒绝在此构建」都
+    # 无从谈起 —— 唯一的路就是 bin/deploy.sh admin 拿 tarball 打包。
+    image: vodoge-cloud-admin
+    restart: unless-stopped
+    environment:
+      VODOGE_GATEWAY_URL: http://gateway:8080
+      VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    # 只发布到回环。对外由 Caddy 按 hostname 分派，而 admin 的那一段
+    # **必须**带客户端证书校验 —— 见 docs/device-catalogue.md 的鉴权一节。
+    # 🔴 在那段配置到位之前，不要把这个站解析到公网。
+    ports:
+      - 127.0.0.1:${VODOGE_ADMIN_PORT:-13100}:3000
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - backend
+      - edge
+      - ingress
+
 networks:
   backend:
     internal: true

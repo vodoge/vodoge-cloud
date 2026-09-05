@@ -45,12 +45,13 @@ die()  { printf '[%s] 错误: %s\n' "$(date '+%F %T')" "$*" >&2; exit 1; }
 
 usage() {
   cat >&2 <<'USAGE'
-用法: deploy.sh <gateway|console|both>
+用法: deploy.sh <gateway|console|admin|both>
 
 先在开发机上产出并 scp 过来,再在这台机器上跑本脚本:
 
   gateway   deploy/vodoge-gateway      CGO_ENABLED=0 GOOS=linux GOARCH=amd64
   console   deploy/console-dist.tgz    next build 的 standalone 产物
+  admin     deploy/admin-dist.tgz      同上,但源码在另一个仓库 vodoge-admin
 
 细节见 deploy/RUNBOOK.md。本脚本不编译任何东西,也不会让 Compose 去编译。
 USAGE
@@ -62,6 +63,7 @@ artifact_for() {
   case "$1" in
     gateway) echo "vodoge-gateway" ;;
     console) echo "console-dist.tgz" ;;
+    admin) echo "admin-dist.tgz" ;;
     *) die "未知服务: $1" ;;
   esac
 }
@@ -81,6 +83,15 @@ ready_check() {
       port=${port:-13000}
       code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: a.vodoge.com' \
                "http://127.0.0.1:${port}/login" || true)
+      [ "$code" = 200 ]
+      ;;
+    admin)
+      # console 那条必须带 Host 头,因为多租户按域名分派;admin 是单站点,
+      # 不带头请求 / 就该是 200。两者的判据不同源自路由方式不同,不是抄漏了。
+      local port code
+      port=$(grep -E '^VODOGE_ADMIN_PORT=' "$DEPLOY_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+      port=${port:-13100}
+      code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/" || true)
       [ "$code" = 200 ]
       ;;
   esac
@@ -147,7 +158,7 @@ deploy_one() {
 
 [ $# -eq 1 ] || usage
 case "$1" in
-  gateway|console) deploy_one "$1" ;;
+  gateway|console|admin) deploy_one "$1" ;;
   both) deploy_one gateway; deploy_one console ;;
   *) usage ;;
 esac

@@ -195,6 +195,61 @@ shipping a copyleft binary with no notice and no offer of source.
 enough to stop anything *loading* them, but tracing is static and never reads
 that flag — they get bundled either way.
 
+### Producing the admin artifact
+
+`admin.vodoge.com` 的源码在**另一个仓库**：`vodoge-admin`。产物打包和换镜像
+走的是这个仓库的 `bin/deploy.sh`，理由写在 `deploy/Dockerfile.admin.prebuilt`
+的文件头。
+
+⚠️ 2026-09-05 实测：`admin` 的依赖里**根本没有 sharp**，`next build` 的静态
+tracing 照样把 **33 MB 的 `@img`** 拖进 standalone 包。所以下面那个 `rm` 和
+console 那个同样是必须的，不是照抄。
+
+```sh
+cd ../vodoge-admin           # 另一个仓库
+NEXT_TELEMETRY_DISABLED=1 VODOGE_GATEWAY_URL=http://gateway:8080 npm run build
+rm -rf .next/standalone/node_modules/@img
+mkdir -p public dist/public && cp -r .next/standalone/. dist/
+rm -rf dist/.next/static && mkdir -p dist/.next/static && cp -r .next/static/. dist/.next/static/
+cp -r public/. dist/public/
+tar -czf admin-dist.tgz -C dist .
+
+if tar -tzf admin-dist.tgz | grep -Eq '@img/|libvips.*\.so'; then
+  echo 'STOP — LGPL payload in admin-dist.tgz, do not ship it:'
+  tar -tzf admin-dist.tgz | grep -E '@img/|libvips.*\.so'
+else
+  echo 'admin-dist.tgz clean: no @img, no libvips'
+fi
+
+scp admin-dist.tgz root@43.108.53.126:/opt/vodoge-cloud/deploy/
+```
+
+然后在主机上：
+
+```sh
+/opt/vodoge-cloud/bin/deploy.sh admin
+```
+
+#### 🔴 在 Caddy 那段配好之前，不要把域名解析过去
+
+这个站写的是**跨租户**配置。鉴权方案是 mTLS 客户端证书（见
+`docs/device-catalogue.md`），而在 Caddy 里那段客户端证书校验配上之前，
+`admin` 容器是一个**没有任何登录**的写入端。compose 只把它发布到
+`127.0.0.1`，所以此刻它不在公网上 —— 让它上公网的那一步是解析域名 +
+加 Caddy 反代，那两件事必须和证书校验一起做，不能分两次。
+
+#### 工作站上装 npm 的注意
+
+2026-09-05：`registry.npmjs.org` 在这台机器上 20 秒连不上，
+`registry.npmmirror.com` 2.2 秒。装依赖时用
+
+```sh
+npm install --registry=https://registry.npmmirror.com
+```
+
+命令行参数，**不要**写进全局配置或提交 `.npmrc` —— 换个网络环境的人会因此
+拿到一份和 lockfile 对不上的解析。
+
 ### The two console paths, and why they drifted
 
 `deploy/Dockerfile.console` did not have this `rm`. Measured 2026-08-26 by

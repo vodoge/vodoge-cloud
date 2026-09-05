@@ -1,0 +1,43 @@
+# admin.vodoge.com 的镜像。它打包，不构建。
+#
+# 和 Dockerfile.console.prebuilt 是同一条路，理由也一样：这台主机 2 vCPU、
+# 1.6 GB 内存，`next build` 在上面跑不起来。产出这份 tarball 的步骤在
+# deploy/RUNBOOK.md 的「Producing the admin artifact」，换上去的是
+# bin/deploy.sh admin。
+#
+# ⚠️ 跨仓依赖，说清楚：admin-dist.tgz 由**另一个仓库** vodoge-admin 构建。
+# 这个 Dockerfile 留在这里而不是跟着那个仓走，是因为 bin/deploy.sh 带着那条
+# 用血换来的镜像 id 核验（「Up 不是证据」），而在第二个仓里重造一份同样的
+# 脚本，只会得到一份迟早和它漂移的抄写。代码是隔离的（那才是分仓要保的），
+# 部署配置不是代码。
+FROM node:22-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+ADD admin-dist.tgz ./
+
+# 和 console 那份逐字相同的断言，而且它在 admin 上**同样是必要的**：
+# 2026-09-05 实测，admin 的依赖里根本没有 sharp，`next build` 的静态 tracing
+# 照样把 33 MB 的 @img 拖进了 standalone 包。两个 @img 都是
+# LGPL-3.0-or-later，都带一个真的 libvips-cpp.so，而且都不附 LICENSE ——
+# 装一个进镜像就是发布一份没有声明、也没有源码提供的 copyleft 二进制。
+#
+# 匹配 .so 而不只是目录名：一次 next 升级把被 trace 的包改名，光查名字的
+# 检查会直接放行。
+RUN set -e; \
+    hits="$(find . -name '@img' -print; find . -name 'libvips*.so*' -print)"; \
+    if [ -n "$hits" ]; then \
+      echo 'LGPL-3.0-or-later payload present in admin-dist.tgz:' >&2; \
+      echo "$hits" >&2; \
+      echo 'Expected none. Repack the artifact: deploy/RUNBOOK.md "Producing' >&2; \
+      echo 'the admin artifact" strips node_modules/@img before it tars.' >&2; \
+      exit 1; \
+    fi
+
+EXPOSE 3000
+USER node
+CMD ["node", "server.js"]
