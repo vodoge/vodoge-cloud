@@ -380,6 +380,29 @@ sms_mo = { kind = "supported", bearer = "cellular" }
    而我们手上有它发完短信挂死 AT 通道约 15 分钟的直接观测。
    两者不矛盾（能发出去 ≠ 没有副作用），但账本里应该有这条 `note`
 
+#### 2026-09-05 已经从真实数据里拿到的（尚未录入账本）
+
+工作站上没有云端访问，所以下面这些**还录不进 `app.support_ledger`**。
+先记在这里，等能连上云端时是一次录入动作，不用重测。
+
+证据来自边缘库 `/var/lib/vodoge-edge/inbox.db` 的 `local_messages`
+（全部 `direction = inbound`、`bearer = cellular`）：
+
+| 对 | 结论 | 证据 |
+|---|---|---|
+| **EC200U-CN × CN-Telecom** `sms_mt` | **supported / cellular** | 6 条实收，09-01 11:26 .. 09-03 14:25，发信方 10000 / 10001 / 106598731 |
+| **EC20 × CN-Mobile** `sms_mt` | supported / cellular | 18 条实收，09-01 14:59 .. 09-05 10:16 |
+| **EC20 × Generic-International** `sms_mt` | supported / cellular | 4 条实收（香港 CSL 卡），09-01 11:26 .. 09-04 10:09 |
+
+⚠️ **仍然没有的**：
+
+- **`sms_mo` 的本地证据一条都没有。** 发送记录随上行清掉了
+  （`outbox.db` 现在只剩 1 条 DeviceState），所以回执在云端。
+  在跑起来的矩阵里 EC200U-CN × CN-Telecom 的 `sms_mo` 已经是 `supported`，
+  而 EC20 × Generic-International 的仍是 `probe` —— 后者是**唯一**还缺的那格。
+- **美国 310-240 那张卡零条实收**，而这**不是**「不支持」的证据。
+  缺席不是测量结果，账本里不该因此出现任何一行。
+
 `data` 和 `voice` 不用测，也测不出来——
 `Ec200uStrategy::ceiling` 已经把这两项按**硬件**否掉了（EC200U 系列没有
 `cdc-wdm`，这个 agent 的数据通路和语音通路都建立不起来），而
