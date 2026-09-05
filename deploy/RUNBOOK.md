@@ -230,6 +230,32 @@ scp /tmp/publish-ledger root@43.108.53.126:/opt/vodoge-cloud/deploy/
 一台边缘机（`catalog.Device`），和一款受支持的硬件型号
 （`ledger.SupportedDevice`）。
 
+### admin.vodoge.com 已放开到公网（2026-09-06）
+
+在此之前 admin 只绑 `127.0.0.1:13100`，从公网够不到。现在 Caddy 上多了一个
+`admin.vodoge.com` 块反代 `vodoge-cloud-admin-1:3000`，Let's Encrypt 证书已
+签发（HTTP-01，走 Cloudflare 那一跳没问题）。
+
+🔴 **这个站没有任何认证。** 今天放出去的只是一个写着「尚未开放」的静态页
+——它 rewrite 的 `/v1/admin/*` 在网关上一条路由都没有，实测 404。但**下一个
+往这里加功能的人要知道：加上去的那一刻它就是公开的**。这个站管的是跨租户
+的受支持硬件目录，而那张表一旦非空，不在表里的硬件全机队都不能再纳管。
+
+原设计（`scratchpad/mtls-design.md`）是 mTLS + 只绑回环 + SSH 隧道，明确
+建议**不**放公网。放开是所有者的决定，代价记在这里。
+
+⚠️ **Caddy 配置不在任何仓库里**，只在云主机的 `/opt/trek/Caddyfile`。改之前
+先备份（这次备份在 `/opt/trek/Caddyfile.bak-20260906-074418`），改完先
+`caddy validate` 再 `caddy reload`，然后**回归检查另外两个站**：
+
+```sh
+docker exec trek-caddy caddy validate --config /etc/caddy/Caddyfile
+docker exec trek-caddy caddy reload   --config /etc/caddy/Caddyfile
+for h in vodoge.com a.vodoge.com admin.vodoge.com; do
+  printf "%-18s %s\n" "$h" "$(curl -sI -m 15 -o /dev/null -w '%{http_code}' https://$h/)"
+done   # 期望 200 / 307 / 200
+```
+
 ### 管理目录：`vodoge-catalogue`
 
 这张表没有 tenant_id，是跨租户事实，所以写入面不在控制台上（一个租户不该
