@@ -184,6 +184,7 @@ export interface DeviceStatePayload {
   observed_at: number;
   modems: Array<ModemState>;
   host?: HostState | null;
+  managed_imeis?: Array<Imei>;
   discoveries?: Array<DiscoveryCandidate>;
 }
 
@@ -227,7 +228,7 @@ export interface ModemState {
 export interface DiscoveryCandidate {
   candidate_key: string;
   usb_device?: string | null;
-  transport: "qmi" | "at";
+  transport: "qmi" | "at" | "serial";
   control_port: string;
   vendor_id?: string | null;
   product_id?: string | null;

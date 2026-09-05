@@ -123,7 +123,23 @@ def rust_type(schema: dict, defs: dict) -> str:
         return "String"
     if "const" in schema:
         return "String"
+    # `"type": ["boolean", "null"]` is the other spelling of a nullable field,
+    # and the generator understood only the `anyOf` one above. A type array it
+    # did not recognise fell through to `ContextValue`, which compiles and
+    # silently loses the type: `SubscriptionCapability` is declared this way and
+    # came out as three `Option<ContextValue>` where the schema says three
+    # nullable booleans. Handled here rather than by rewriting the schema,
+    # because both spellings are valid and the next one written will be
+    # whichever the author reached for.
     types = schema.get("type")
+    if isinstance(types, list):
+        without_null = [item for item in types if item != "null"]
+        if len(without_null) == 1 and len(types) == 2:
+            inner = rust_type({**schema, "type": without_null[0]}, defs)
+            if inner.startswith("Option<"):
+                return inner
+            return f"Option<{inner}>"
+        return "ContextValue"
     if types == "string":
         return "String"
     if types == "boolean":
@@ -707,7 +723,26 @@ def emit_ts(schema: dict) -> str:
     return "\n".join(lines)
 
 
-def gofmt(content: str) -> str:
+def gofmt(content: str) -> str | None:
+    """Format Go source, or return None when gofmt could not do it.
+
+    🔴 None rather than the unformatted text, and the caller refuses rather
+    than shipping it. Returning the input on a missing gofmt looks harmless --
+    the code is identical, only the alignment differs -- and it is not: the
+    committed contract.go is gofmt'd, so a regeneration without gofmt rewrites
+    526 lines of whitespace. Whoever does that either commits the noise, or
+    (worse) hand-reverts the parts they notice and leaves the rest.
+
+    Found by walking into it: on a workstation with no Go toolchain,
+    `--check` reported contract.go stale against an unmodified schema. That
+    reads as real drift and sends the reader looking for a schema change that
+    never happened.
+
+    A missing gofmt is only a problem when Go is actually being emitted --
+    the edge repository runs this same script for Rust alone and has no Go
+    toolchain at all -- so the refusal belongs in `main`, where the requested
+    targets are known, not here.
+    """
     try:
         proc = subprocess.run(
             ["gofmt"],
@@ -717,9 +752,9 @@ def gofmt(content: str) -> str:
             check=False,
         )
     except FileNotFoundError:
-        return content
+        return None
     if proc.returncode != 0:
-        return content
+        return None
     formatted = proc.stdout.decode("utf-8")
     return formatted or content
 
@@ -759,6 +794,18 @@ def main() -> int:
             (ROOT / "go" / "contract.go", go),
             (ROOT / "ts" / "index.ts", ts),
         ]
+
+    # Refuse rather than emit unformatted Go. See `gofmt` for why returning the
+    # unformatted text is the worse failure: it produces a 526-line whitespace
+    # diff that `--check` reports as staleness, pointing at a schema change
+    # that did not happen.
+    if go is None and any(content is go for _, content in targets):
+        print(
+            "gofmt is not available, so the Go binding cannot be generated. "
+            "Install Go, or pass only --rust/--ts.",
+            file=sys.stderr,
+        )
+        return 2
 
     failed = False
     for path, content in targets:

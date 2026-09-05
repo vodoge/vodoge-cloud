@@ -165,10 +165,11 @@ type ProxyTrafficEntry struct {
 }
 
 type DeviceStatePayload struct {
-	ObservedAt  int64                `json:"observed_at"`
-	Modems      []ModemState         `json:"modems"`
-	Host        *HostState           `json:"host,omitempty"`
-	Discoveries []DiscoveryCandidate `json:"discoveries,omitempty"`
+	ObservedAt   int64                `json:"observed_at"`
+	Modems       []ModemState         `json:"modems"`
+	Host         *HostState           `json:"host,omitempty"`
+	ManagedImeis []string             `json:"managed_imeis,omitempty"`
+	Discoveries  []DiscoveryCandidate `json:"discoveries,omitempty"`
 }
 
 type HostState struct {
@@ -575,7 +576,7 @@ var PayloadConstraints = map[MessageKind][]FieldConstraint{
 		{Path: "modems[].capability.sms_mo", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
 		{Path: "modems[].capability.sms_mt", Enum: []string{"supported", "degraded", "unsupported", "unknown"}},
 		{Path: "modems[].capability.origin", Enum: []string{"rule", "fallback"}},
-		{Path: "discoveries[].transport", Enum: []string{"qmi", "at"}},
+		{Path: "discoveries[].transport", Enum: []string{"qmi", "at", "serial"}},
 		{Path: "discoveries[].state", Enum: []string{"manageable", "probe_failed", "at_only", "found", "claimed"}},
 	},
 	MessageKindCommandResult: {

@@ -24,6 +24,21 @@ fi
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
+# 预检放在任何拷贝之前。
+#
+# 这个脚本会把 schema 和 codegen 拷到边缘仓,**然后**重新生成三份绑定,
+# 其中 Go 那份需要 gofmt。没有 Go 工具链时生成会被 generate.py 拒掉,
+# 而那时两个文件已经拷过去了 —— 边缘仓停在「schema 是新的、Rust 绑定是旧的」
+# 这个半同步状态上,而这正是这个脚本存在的目的所要消除的状态。
+#
+# 所以在这里先问一次。失败在拷贝之前,边缘仓一个字节都没被动过。
+if ! command -v gofmt >/dev/null 2>&1; then
+  echo "缺 gofmt,而本脚本会重新生成 Go 绑定。装好 Go 工具链再跑。" >&2
+  echo "(只想同步 schema 和 Rust 的话,照着下面几步手工做,但要清楚你" >&2
+  echo " 跳过的是「一次做完」这条约束 —— 见本文件头部。)" >&2
+  exit 3
+fi
+
 log "schema  -> $EDGE_DIR/contract/schema/"
 cp -f "$CLOUD_DIR/packages/contract/schema/edge-cloud.v1.schema.json" \
       "$EDGE_DIR/contract/schema/edge-cloud.v1.schema.json"
