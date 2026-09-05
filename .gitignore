@@ -12,3 +12,8 @@ coverage.out
 
 # Deploy bundle built by the console release step; 8 MB of derived output.
 console-dist.tgz
+
+# Python 字节码。generate.py 被当脚本跑，于是 codegen/ 旁边会长出 __pycache__。
+# 2026-09-05 有一个 .pyc 被 `git add packages/contract/` 扫进过仓库（9c099ad）。
+__pycache__/
+*.pyc
