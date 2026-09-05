@@ -2789,7 +2789,22 @@ const CAPTURED_FROM = {
   // 钉在一起：说明里每一条「必须这么做」的，守卫都去工具里确认它真的这么做。
   // 数据用的是和旧截图一致的示例值（11/12 在线、30 条短信、10 个去重对端），
   // 所以新旧两版除了主题与版式变化之外可比。
-  chrome: "d5ccd77748a0604f53ba89cb23dd0ec4e8014d671ae7f5c7ea38afe55b0447bf",
+  // 2026-09-05 前移，代价按这里要求的方式付过了 —— 不是「看起来只是装饰」。
+  //
+  // 这次改的是 `device-console.tsx`（候选卡片多了「已批准探测的端口」一段和
+  // 一个「重新确认纳管」按钮）和 `lib/tokens.ts`（两条新命令的 guard 条目，
+  // 带中文散文）。后者正是这个块警告过四次的那种文件。
+  //
+  // 两项实测：
+  //   ① 重拍两帧 → **逐像素完全相同**（0 个像素变化，两张都是）。
+  //   ② 把改动 stash 掉重新构建，与改动后的样式表逐字节比对 → **完全相同**，
+  //      连产物文件名的内容哈希都没变（7d09d96e2196fd2f，43261 字节）。
+  //      也就是说 tokens.ts 里那几段中文没有泄漏出任何一条规则。
+  //
+  // ② 是这里点名要的那一项：帧没变不能替样式表作证，因为改动的部分可能不在
+  //   取景里 —— 这次恰好就是（桩网关那台设备没有 claimed 候选，按钮排在画幅
+  //   之下）。所以两项都做了。
+  chrome: "d7638ac6bfbb569857edfb6a9021c62454d3f94ac921596277250a398f93a02d",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2799,7 +2814,16 @@ const CAPTURED_FROM = {
   // element — the CSS does not move, the photographed layout does. This digest
   // ignores comment prose and nothing else, so markup, classes and layout code
   // can only be answered by pointing a browser at the page again.
-  recipe: "a90042e865ab0c535f8ae5d7cda5df51120c5b0229bc80d927d59ddd5e0fba64",
+  // 2026-09-05 重拍：**两张图都逐像素完全相同**（0 个像素变化，两张都是）。
+  //
+  // 这一次动的是 `device-console.tsx`：候选卡片多了一段「已批准探测的端口」
+  // 和一个「重新确认纳管」按钮。两处都不在取景里 —— 桩网关那台设备没有
+  // claimed 候选，而那一排按钮在画幅之下。所以源摘要变了，画面没变。
+  //
+  // 按上面那条判据量过了：布局变化会集中（大量行、每行占画幅四分之一以上），
+  // 抗锯齿会散开。这次两者都不是 —— 什么都没动。所以这里只前移 `recipe`，
+  // `shots` 原样不动，因为文件本身逐字节没变。
+  recipe: "82df7d8aae092c67c3cf13744e391fe7f148504d4c6d05496ee99436998b5d49",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

@@ -1185,6 +1185,8 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   // no automatic way back, which is the same shape as the usbnet warning above.
   "device.confirmConfigureApn",
   "device.confirmClaimCandidate",
+  // 和上一条成对：一个人点头说「打开这个口试试」，就得有一条路把那句话收回来。
+  "device.confirmRevokeCandidate",
   // Unmanaging a module. Nothing is written to the hardware, so this is not a
   // warning about the stick -- it is a warning about the list: a working
   // module disappears from it, and the operator who did this by accident has
@@ -1706,6 +1708,13 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       why: "approving one lets the agent write AT to a port it has only looked at, and a serial endpoint is not necessarily a modem",
     },
   ],
+  revoke_modem_candidate: [
+    {
+      when: {},
+      consequence: "device.confirmRevokeCandidate",
+      why: "the port stops being opened on the next pass, so a module that only answers there goes quiet; the agent refuses outright when that module is currently managed, but an operator who revoked the wrong row would watch a probe they were waiting on simply stop",
+    },
+  ],
   register_modem: [
     {
       when: {},
@@ -1718,6 +1727,13 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       when: {},
       consequence: "device.confirmUnregister",
       why: "the module stops being polled and leaves the list; what it carried is kept, but an operator who did this by accident would see a working stick vanish",
+    },
+  ],
+  reconfirm_modem: [
+    {
+      when: {},
+      consequence: null,
+      why: "it re-runs the adoption gates and touches no hardware: the mark is cleared only when they pass, and otherwise kept while the quarantine clock restarts. It is the first thing to press after a gate alarm, and a dialog in front of that is how people stop pressing it",
     },
   ],
   read_logs: [

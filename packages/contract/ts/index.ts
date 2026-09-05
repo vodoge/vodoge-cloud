@@ -268,8 +268,18 @@ export interface UnregisterModemCommand {
   modem_imei: Imei;
 }
 
+export interface ReconfirmModemCommand {
+  kind: "ReconfirmModem";
+  modem_imei: Imei;
+}
+
 export interface ClaimModemCandidateCommand {
   kind: "ClaimModemCandidate";
+  candidate_key: string;
+}
+
+export interface RevokeModemCandidateCommand {
+  kind: "RevokeModemCandidate";
   candidate_key: string;
 }
 
@@ -566,8 +576,10 @@ export type Command =
   | RefreshModemsCommand |
   | ReadLogsCommand |
   | ClaimModemCandidateCommand |
+  | RevokeModemCandidateCommand |
   | RegisterModemCommand |
   | UnregisterModemCommand |
+  | ReconfirmModemCommand |
   | RenameEsimProfileCommand |
   | DisableEsimProfileCommand |
   | DeleteEsimProfileCommand |

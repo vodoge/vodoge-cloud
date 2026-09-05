@@ -252,7 +252,17 @@ type UnregisterModemCommand struct {
 	ModemImei string `json:"modem_imei"`
 }
 
+type ReconfirmModemCommand struct {
+	Kind      string `json:"kind"`
+	ModemImei string `json:"modem_imei"`
+}
+
 type ClaimModemCandidateCommand struct {
+	Kind         string `json:"kind"`
+	CandidateKey string `json:"candidate_key"`
+}
+
+type RevokeModemCandidateCommand struct {
 	Kind         string `json:"kind"`
 	CandidateKey string `json:"candidate_key"`
 }

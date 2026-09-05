@@ -151,6 +151,8 @@ export type DeviceLabelKey =
   | "candidatesHint"
   | "candidateAdopt"
   | "candidateClaim"
+  | "candidateRevoke"
+  | "candidateClaimed"
   | "modem_report"
   | "list_esim_profiles"
   | "restart_modem"
@@ -159,6 +161,7 @@ export type DeviceLabelKey =
   | "rotate_ip"
   | "set_radio"
   | "unregister_modem"
+  | "reconfirm_modem"
   | "set_data_network"
   | "reregister_network"
   | "refresh_modems"
@@ -441,6 +444,22 @@ export function DeviceDiagnostics({
                   {labels[kind]}
                 </Button>
               ))}
+              {/* 重新确认：重跑一遍纳管两道闸。
+                  闸过了才清标记；没过就保留标记、把隔离期倒计时拨回起点，
+                  并把闸的理由回来。运维在看到闸告警之后最该先按的就是它，
+                  所以不套确认框 —— 那会把它读成一个危险动作。 */}
+              {/* 🔴 这里写字面量而不是一个常量，是**为了让守卫看得见**。
+                  `tokens.test.ts` 的 issuedKinds() 扫的是
+                  `request("...")` 这种字面量调用，外加 READ_ONLY / DISRUPTIVE
+                  两个数组。一个 `request(RECONFIRM)` 会从它眼皮底下溜过去，
+                  于是这条命令就成了「没人要求它说清后果」的那一个。 */}
+              <Button
+                variant="outline"
+                disabled={busy || modems.length === 0}
+                onClick={() => request("reconfirm_modem")}
+              >
+                {labels.reconfirm_modem}
+              </Button>
               {/* Reachable with no modules listed on purpose: "nothing is
                   listed" is the situation this button exists for. */}
               <Button variant="outline" disabled={busy} onClick={() => request("refresh_modems")}>
@@ -1064,6 +1083,12 @@ function CandidatesCard({
   //             The action is adoption, and it is ordinary: reading identity
   //             already happened, and managing a module changes nothing on it.
   const pending = candidates.filter((row) => row.state === "found");
+  // 🔴 已批准的候选以前在这一页上**完全不显示** —— 过滤条件只留 "found"。
+  //
+  // 于是「批准探测」这个动作在云端是单向的：按下去之后那一行从列表里消失，
+  // 而库里那条 manual_modem_profiles 永远留着，候选行永远卡在 claimed。
+  // 撤销这条路没有入口，不是因为端点缺，是因为**要撤销的那一行看不见**。
+  const claimed = candidates.filter((row) => row.state === "claimed");
   return (
     <CardPanel title={labels.candidates} note={labels.candidatesNote}>
       {pending.length === 0 ? (
@@ -1103,6 +1128,40 @@ function CandidatesCard({
             </InlineForm>
           ))}
           <FormHint>{labels.candidatesHint}</FormHint>
+        </div>
+      )}
+      {claimed.length > 0 && (
+        <div className="flex flex-col gap-4 pt-4">
+          <FormHint>{labels.candidateClaimed}</FormHint>
+          {claimed.map((candidate) => (
+            <InlineForm
+              key={candidate.candidateKey}
+              onSubmit={(event) => {
+                event.preventDefault();
+                onRun("revoke_modem_candidate", {
+                  candidate_key: candidate.candidateKey,
+                });
+              }}
+            >
+              <span>
+                <Output>{candidate.imei ?? candidate.controlPort}</Output>
+                <FormHint>
+                  {candidate.imei ? `${candidate.controlPort} · ` : ""}
+                  {candidate.transport}
+                  {candidate.vendorId && candidate.productId
+                    ? ` · ${candidate.vendorId}:${candidate.productId}`
+                    : ""}
+                  {candidate.usbDevice ? ` · ${candidate.usbDevice}` : ""}
+                </FormHint>
+              </span>
+              {/* 边缘端会拒绝撤销一根**已纳管**模组的批准，理由随回执回来。
+                  那条判断留在 agent 那边，不在这里镜像一份：只有它知道自己
+                  此刻在管什么，而云端的副本正是会过时的那一份。 */}
+              <Button type="submit" variant="ghost" disabled={busy}>
+                {labels.candidateRevoke}
+              </Button>
+            </InlineForm>
+          ))}
         </div>
       )}
     </CardPanel>

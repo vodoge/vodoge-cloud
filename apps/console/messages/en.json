@@ -766,5 +766,9 @@
   "table.expand": "Expand",
   "theme.dark": "Dark",
   "theme.light": "Light",
-  "theme.toggle": "Theme"
+  "theme.toggle": "Theme",
+  "device.candidateRevoke": "Revoke",
+  "device.candidateClaimed": "Endpoints approved for probing. Revoking stops the next pass from opening them; an adopted module is refused — unmanage it first.",
+  "device.reconfirm_modem": "Re-check gates",
+  "device.confirmRevokeCandidate": "Revoke probing on this endpoint? The agent stops opening it from the next pass. An adopted module is refused — unmanage it first."
 }

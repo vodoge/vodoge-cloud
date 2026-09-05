@@ -1,0 +1,23 @@
+-- 「手动管理」那两条回头路的命令 kind。
+--
+-- 边缘端已经有这两个动作了（面板上按得到），这条迁移是让**云端也能下发**它们
+-- ——方向里写的是「可以云端直接操作，也可以边缘端操作上报云端」。
+--
+--   revoke_modem_candidate  撤销一个串口的探测批准，`claim_modem_candidate`
+--                           的镜像。agent 会拒绝撤销一根**已纳管**模组的批准：
+--                           撤了那个口就不再被打开，而纳管记录还在，机队上多
+--                           一根没人说话的模组，而且它不会告警（掉线看门狗看
+--                           的是设备，不是模组）。
+--
+--   reconfirm_modem         重新跑一遍纳管两道闸。**不是让告警闭嘴**：闸过了
+--                           才清标记，没过就保留标记、把隔离期倒计时拨回起点，
+--                           好让正在修根因的人不被隔离期抢跑。两条路都不碰
+--                           registered_at / registered_by。
+--
+-- 🔴 catalogue.go 里造得出、这个枚举里没有的 kind，入队时是 500 —— 读起来像
+--    队列挂了，而不是像少了一行 SQL。两边必须同时改，这条迁移就是那另一半。
+--
+-- ALTER TYPE ... ADD VALUE 不能在事务块里跑，所以这里没有 BEGIN/COMMIT，
+-- 和 0034/0041/0042/0043/0052/0054 一致。每条自身幂等，所以重跑是安全的。
+ALTER TYPE app.command_kind ADD VALUE IF NOT EXISTS 'revoke_modem_candidate';
+ALTER TYPE app.command_kind ADD VALUE IF NOT EXISTS 'reconfirm_modem';

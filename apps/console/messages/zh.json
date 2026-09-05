@@ -766,5 +766,9 @@
   "table.expand": "展开",
   "theme.dark": "深色",
   "theme.light": "浅色",
-  "theme.toggle": "主题"
+  "theme.toggle": "主题",
+  "device.candidateRevoke": "撤销批准",
+  "device.candidateClaimed": "已批准探测的端口 · 撤销后下一轮起不再打开；已纳管的会被拒绝，那种要先取消纳管",
+  "device.reconfirm_modem": "重新确认纳管",
+  "device.confirmRevokeCandidate": "撤销这个端口的探测批准？下一轮起 agent 不再打开它。已纳管的模组会被拒绝——那种要先取消纳管。"
 }

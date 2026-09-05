@@ -463,6 +463,31 @@ var catalogue = map[string]Spec{
 			return map[string]any{"kind": "ClaimModemCandidate", "candidate_key": key}, nil
 		},
 	},
+	"revoke_modem_candidate": {
+		// Mutating, and the mirror of claim_modem_candidate: somebody nodded
+		// at a serial port and this is the way to take that back. Without it
+		// an approval was permanent -- the profile row stayed forever and the
+		// candidate stayed `claimed` in the console with no way out.
+		//
+		// NeedsModem is deliberately false. The subject is an endpoint, not a
+		// module: the whole point is that it may never have produced an IMEI.
+		Kind: "revoke_modem_candidate", ContractKind: "RevokeModemCandidate", Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			key := strings.TrimSpace(request.CandidateKey)
+			if key == "" {
+				return nil, ErrInvalid{"candidate_key is required"}
+			}
+			if len(key) > 128 {
+				return nil, ErrInvalid{"candidate_key must be 128 characters or fewer"}
+			}
+			// The edge refuses when the module behind this endpoint is
+			// currently managed, and that check stays there rather than being
+			// mirrored here: only the agent knows what it is managing right
+			// now, and a copy of that judgement in the cloud would be the one
+			// that goes stale.
+			return map[string]any{"kind": "RevokeModemCandidate", "candidate_key": key}, nil
+		},
+	},
 	"register_modem": {
 		// Mutating: it changes what the agent manages, which is a decision
 		// worth confirming. The edge refuses an IMEI it has not identified, so
@@ -486,6 +511,26 @@ var catalogue = map[string]Spec{
 		Build: func(request Request) (map[string]any, error) {
 			return map[string]any{
 				"kind": "UnregisterModem", "modem_imei": request.ModemIMEI,
+			}, nil
+		},
+	},
+	"reconfirm_modem": {
+		// Re-runs the adoption gates against a module they have marked.
+		//
+		// Mutating, because it can clear the mark or restart the quarantine
+		// countdown -- but it is emphatically not a "make the alarm stop"
+		// button: the edge clears the mark only when the gates pass again,
+		// and otherwise keeps it while restarting the clock, so somebody
+		// fixing the real cause (usually by publishing a matrix) is not raced
+		// by the grace period.
+		//
+		// The result carries `cleared` and `restarted` separately for that
+		// reason. A console that collapsed both into a green tick would tell
+		// an operator they fixed something when they did not.
+		Kind: "reconfirm_modem", ContractKind: "ReconfirmModem", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			return map[string]any{
+				"kind": "ReconfirmModem", "modem_imei": request.ModemIMEI,
 			}, nil
 		},
 	},
