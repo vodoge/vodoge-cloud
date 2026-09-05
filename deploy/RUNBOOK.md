@@ -195,6 +195,72 @@ shipping a copyleft binary with no notice and no offer of source.
 enough to stop anything *loading* them, but tracing is static and never reads
 that flag — they get bundled either way.
 
+### 🔴 迁移的函数属主是分裂的，`migrate.sh` 对它们跑不通
+
+2026-09-05 应用 0056 时撞出来的。以 `VODOGE_OWNER_USER`（也就是
+`migrate.sh` 用的角色）跑，第三条语句失败：
+
+```
+ERROR:  must be owner of function project_modem_candidates
+```
+
+查下来生产上是这样：
+
+| 对象 | 属主 |
+|---|---|
+| `app.modem_candidates` / `app.modems` / `app.ingress`（表） | `vodoge_owner` |
+| `app.accept_ingress`（0004，走过 `migrate.sh`） | `vodoge_owner` |
+| `app.project_modem_candidates`（0050） | **`vodoge`**（超级用户） |
+| `app.project_alerts`（0053） | **`vodoge`** |
+| `app.project_managed_modems` / `app.apply_managed_modems`（0055） | **`vodoge`** |
+
+也就是说 0050 以后的迁移都是**手工以超级用户应用**的，没走 `migrate.sh`。
+后果不是历史遗留，是活的：**任何人跑那条有文档的路径，只要迁移里
+`CREATE OR REPLACE` 到这几个函数中的任何一个，就会同样失败。**
+
+而且这几个都是 `SECURITY DEFINER`：归超级用户意味着**它们以超级用户权限
+运行**，那是比需要的权限高得多的一档。
+
+两条路，都还没走：
+
+- `ALTER FUNCTION app.<名字>() OWNER TO vodoge_owner`，让 `migrate.sh`
+  重新可用，同时把触发器降到它实际需要的权限。⚠️ 这会改变
+  `SECURITY DEFINER` 的运行身份，**动之前要确认这几个函数写的表
+  `vodoge_owner` 都有权限**（目前看是有的，三张表都归它）。
+- 或者承认现状，把「这些迁移要以超级用户跑」写进流程 —— 但那等于
+  让每次迁移都以超级用户执行，方向是反的。
+
+在定下来之前，**碰到这几个函数的迁移必须以 `POSTGRES_USER` 跑**，
+就像 0056 这次一样。
+
+### 迁移的记录约定
+
+`app.schema_migrations`（0020 建的）有一列 `sha256`，注释说它的用途是
+「a migration edited after being applied is detectable」。到 0055 为止
+**每一行都是 NULL**，没人填过。0056 是第一条填了的：
+
+```sh
+docker exec vodoge-cloud-postgres-1 psql -U "$AU" -d "$DB" -c \
+  "INSERT INTO app.schema_migrations (version, name, sha256) VALUES (56, '0056_...', '<sha256>')"
+```
+
+值得继续填：一列存在却永远为空，和没有这一列的区别只在于它看起来像有守卫。
+
+### 上生产之前先做回滚测试
+
+0056 的两个问题都是这样发现的（属主，以及确认 DDL 在真实 schema 上可行）。
+做法是把文件末尾的 `COMMIT;` 换成 `ROLLBACK;`，然后在**生产库**上整份跑一遍：
+
+```sh
+sed 's/^COMMIT;$/ROLLBACK;/' <迁移文件> > /tmp/t.sql
+docker cp /tmp/t.sql vodoge-cloud-postgres-1:/tmp/t.sql
+docker exec vodoge-cloud-postgres-1 psql -U "$AU" -d "$DB" -v ON_ERROR_STOP=1 -f /tmp/t.sql
+```
+
+它在真实的表、真实的属主、真实的数据上执行一遍再撤销 —— 比任何一个
+干净的测试库都更接近实际。⚠️ 前提是迁移文件本身以 `BEGIN;` 开头、
+以单独一行的 `COMMIT;` 结尾（本仓的都是）。
+
 ### Producing the admin artifact
 
 `admin.vodoge.com` 的源码在**另一个仓库**：`vodoge-admin`。产物打包和换镜像
