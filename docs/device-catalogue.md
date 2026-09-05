@@ -37,13 +37,54 @@
 
 | # | 决定 | 为什么 |
 |---|---|---|
-| 1 | `transport='serial'` **认它**，改两边契约 | 边缘端 `main.rs` 已经在写 `DiscoveryTransport::Serial.wire()`，而 `0050_modem_candidates.sql` 的 `CHECK` 只认 `qmi`/`at`。这是**已经在生产里对不上的契约**，不是新增能力。改契约比改行为安全 |
+| 1 | `transport='serial'` **认它**，改两边契约 ✅**已完成** | 见下「更正」——理由比原先写的更硬，但不是「已经在生产里对不上」 |
 | 2 | 存量**追溯执行**，不合规的**自动解绑** | 「既往不咎」会留下一批永远解释不清的例外：它们不满足规则却在被管。用户选了追溯 |
-| 3 | **放宽 `DeviceStatePayload.modems` 的 `minItems: 1`** | 一台边缘机可以合法地零模组（全拔了、全没绑）。现在它上报不了，等于逼它撒谎 |
+| 3 | **放宽 `DeviceStatePayload.modems` 的 `minItems: 1`** ✅**已完成** | 代价不是「逼它撒谎」，是**逼它沉默**——见下 |
 | 4 | 支持列表**和**能力矩阵一起**收归 `admin.vodoge.com`**，租户只读 | 这是 SaaS。「支持哪些硬件」是跨租户事实，不该由任何单个租户写。租户能写就意味着 A 租户能让 B 租户的设备解绑 |
 | 5 | **先做下层**，admin 站后做 | 下层（契约、目录表、边缘执行）不依赖 admin 站；admin 站依赖下层。反过来做会造出一个没人消费的写入端 |
 | 6 | 绑定**两道闸都要**，但**先给 EC200U 补矩阵规则** | 见下 |
 | 7 | 目录**读不到 → 维持现状 + 告警，绝不解绑** | 见下 |
+
+### 关于第 1 条和第 3 条（2026-09-05 更正并完成）
+
+**第 1 条的理由我写错过一次。** 原文说「已经在生产里对不上」，
+但边缘库 `local_modem_discoveries` 里当天只有 `at` 和 `qmi`，**一行 `serial` 都没有**。
+它是颗**没踩到的雷**，不是正在响的。
+
+真正的理由更硬，而且是结构性的：`DiscoveryCandidate` 的 `state` 枚举
+**允许 `claimed`**，而 `claimed` 在 agent 里只有一个写入点
+（`main.rs:5160`），那个点写的正是 `transport = "serial"`。
+**这份定义允许一个只能经由它禁止的传输才能到达的状态**——自相矛盾，
+不是缺功能。所以修订 v1 而不是开 v2：它是在被改正成描述它本来就为之而写的实现。
+
+雷的威力也比预想大：`0050` 的投影触发器**一个 EXCEPTION 都没有**，
+挂在 `AFTER INSERT ON app.ingress` 上。一个 `serial` 候选会撞 CHECK 抛异常，
+异常传出触发器、回滚 ingress 行，而那封信设备已经收到过 ack ——
+**于是它永远重发同一帧**，那台边缘机此后什么都传不上来。
+迁移 `0056` 同时修了 CHECK 和这个缺失的守卫（照 `0055` 的模式）。
+
+**第 3 条的代价也说错过。** 不是「逼它撒谎」，是**逼它沉默**：
+`enqueue_device_state` 在零模组时整封不发，而 `discoveries` 和
+`managed_imeis` 搭的是同一封信 —— 一台只插着待批准串口候选的机器
+在云端**完全不存在**。
+
+### ⚠️ 顺带查出：`sync-contract.sh` 今天会造成回归
+
+两份 schema 和两份 `generate.py` **双向**漂移了：
+
+| | 边缘独有 | 云端独有 |
+|---|---|---|
+| `generate.py` | `"type": ["boolean","null"]` 可空写法的处理 | Go 侧可选结构体的指针修复 |
+| schema | **`managed_imeis`**（生产在用，由 `0055` 的触发器消费） | —— |
+
+所以**跑一次 `sync-contract.sh` 会把边缘那两样都删掉**。
+那条以「防漂移」为唯一目的的命令，本身会造成回归。
+这是撞出来的：跑完之后 `git diff` 显示 `managed_imeis` 从
+`DeviceStatePayload` 里消失了，已回滚。
+
+两样都已回港到云端，两份现在只差有意的改动。另加两道守卫：
+`generate.py` 在缺 gofmt 时**拒绝**生成 Go（而不是静默产出未格式化的），
+`sync-contract.sh` 把预检提到所有拷贝之前。
 
 ### 关于第 6 条
 
@@ -360,10 +401,17 @@ ceiling 与运营商无关，所以这两项**不该出现在按运营商切分�
 **没量过的不许写。** 矩阵的价值全在「这里写的都是量出来的」，
 往里填猜测等于把它降级成一份意见。
 
-### 第 1 步：契约变更
+### 第 1 步：契约变更　✅ **已完成**（2026-09-05）
 
-- `transport` 允许 `'serial'`——两边 schema + 生成代码 + `0050` 的 `CHECK`
-- 放宽 `DeviceStatePayload.modems` 的 `minItems: 1`
+- `transport` 允许 `'serial'`——两边 schema + Go/TS 绑定 + 迁移 `0056` 的 `CHECK`
+- 放宽 `DeviceStatePayload.modems` 的 `minItems: 1` → `0`，
+  并去掉边缘端「零模组就整封不发」的提前返回
+- 顺带：`managed_imeis` 回港到云端 schema、两份 `generate.py` 对齐、
+  两道防漂移守卫
+
+⚠️ **`0056` 没有在真实 Postgres 上跑过**——工作站上没有 psql 也没有 docker。
+做过的只有结构比对（与已知良好的 `0055` 一致）和「函数体与 `0050` 逐字相同」的确认。
+**上线前必须真跑一次。**
 
 ### 第 2 步：全局目录
 
@@ -383,11 +431,11 @@ console 的 `/support-ledger` 页降级为只读。
 
 ### 第 4 步：云端止血（可随时插队）
 
-`0050_modem_candidates.sql` 的触发器**零个 EXCEPTION 处理**。
-一个迁移，不用编译，不依赖上面任何一步。
+`0050_modem_candidates.sql` 的触发器零个 EXCEPTION 处理 —— ✅ **已由 `0056` 修复**
+（连同 `serial` 的 CHECK，见上）。
 
-另外两处一并处理：`putMatrix` 缺校验（G6）、
-`schedule/store.go` 少了 `AND managed`（G5）。
+**剩下两处**：`putMatrix` 缺校验（G6）、`schedule/store.go` 少了 `AND managed`（G5）。
+两者都要 Go，工作站上没有 Go 工具链。
 
 ### 第 5 步：admin.vodoge.com
 
