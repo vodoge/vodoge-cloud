@@ -321,3 +321,66 @@ func functionBody(source, signature string) string {
 	}
 	return ""
 }
+
+// 🔴 按卡找目标时，已退休的模组不该被看见。
+//
+// `app.modems.managed` 是 0055 加的：「False once the edge stops listing this
+// IMEI in managed_imeis. The row and everything referencing it are kept; the
+// console hides it.」`catalog.go` 列模组时确实过滤了，而这里没有。
+//
+// 后果不是「可能选中错的一根」——它比那更难查：一张卡从已退休的模组 A 换到
+// 在管的模组 B 之后，两行同 ICCID，`LIMIT 2` 返回 2，于是走 default 分支报
+// ErrAmbiguousTarget。而运维在控制台上**只看得到一根**带这张卡的模组，
+// 那个「有歧义」的错误因此无从解释。
+//
+// 0055 的注释把这种困惑描述过一次（在列表那一侧）：「indistinguishable from
+// a healthy module that went quiet, which is the confusion this whole change
+// removes」。它从列表里移除了，没有从调度器里移除。
+func TestResolvingACardDoesNotSeeRetiredModems(t *testing.T) {
+	source, err := readSource("store.go")
+	if err != nil {
+		t.Fatalf("read store.go: %v", err)
+	}
+	body := functionBody(source, "func (store SQL) Resolve(")
+	if body == "" {
+		t.Fatalf("Resolve not found — 这条守卫已经瞎了，先修它再谈别的")
+	}
+	flat := strings.Join(strings.Fields(body), " ")
+
+	const byCard = "FROM app.modems WHERE iccid = $1"
+	if !strings.Contains(flat, byCard) {
+		t.Fatalf("按 ICCID 查的那条语句变了形，守卫盯不住它了:\n%s", flat)
+	}
+	if !strings.Contains(flat, byCard+" AND managed") {
+		t.Fatalf("按 ICCID 查目标时没有排除已退休的模组:\n%s", flat)
+	}
+}
+
+// 阴性对照：IMEI 钉死的那条**不该**加这个条件。
+//
+// 它上面的注释写着理由：「The module is not required to be in the inventory.
+// The IMEI was pinned by an operator, so there is no wrong-card risk, and a
+// module can drop out of app.modems for a poll cycle after a restart --
+// refusing then would turn a blip into a schedule that stays broken.」
+//
+// 没有这条对照，上面那条可以靠「给每一处都加上 managed」通过，
+// 而那会把一次重启后的短暂缺席变成一个永久坏掉的计划任务。
+func TestAPinnedIMEIIsStillResolvedAfterItStopsBeingManaged(t *testing.T) {
+	source, err := readSource("store.go")
+	if err != nil {
+		t.Fatalf("read store.go: %v", err)
+	}
+	body := functionBody(source, "func (store SQL) Resolve(")
+	if body == "" {
+		t.Fatalf("Resolve not found")
+	}
+	flat := strings.Join(strings.Fields(body), " ")
+
+	const byIMEI = "SELECT iccid FROM app.modems WHERE device_id = $1::uuid AND imei = $2"
+	if !strings.Contains(flat, byIMEI) {
+		t.Fatalf("按 IMEI 查的那条语句变了形，守卫盯不住它了:\n%s", flat)
+	}
+	if strings.Contains(flat, byIMEI+" AND managed") {
+		t.Fatalf("IMEI 钉死的那条被加上了 managed —— 一次重启后的短暂缺席会变成永久坏掉的计划任务")
+	}
+}

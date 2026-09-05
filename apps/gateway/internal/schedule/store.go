@@ -184,10 +184,31 @@ func (store SQL) Resolve(
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		switch selector.Mode {
 		case SelectorCard:
+			// 🔴 `AND managed`：已退休的模组不该出现在按卡的解析里。
+			//
+			// 0055 给 app.modems 加了 managed，注释是「False once the edge
+			// stops listing this IMEI in managed_imeis. The row and everything
+			// referencing it are kept; the console hides it.」——
+			// catalog.go 列模组时过滤了，这里没有。
+			//
+			// 后果比「可能选中错的一根」更难查：一张卡从已退休的 A 换到在管的
+			// B 之后，两行同 ICCID，LIMIT 2 返回 2，于是走下面的 default 分支
+			// 报 ErrAmbiguousTarget。而运维在控制台上**只看得到一根**带这张卡
+			// 的模组，那个「有歧义」的错误因此无从解释。
+			//
+			// 0055 在列表那一侧描述过同一种困惑：「indistinguishable from a
+			// healthy module that went quiet, which is the confusion this whole
+			// change removes」。它从列表里移除了，没有从调度器里移除。
+			//
+			// ⚠️ 下面 SelectorDevice 那条按 IMEI 的查询**不加**这个条件，
+			//    理由写在它自己上面：IMEI 是运维钉死的，没有选错卡的风险，
+			//    而模组可能在重启后短暂掉出 app.modems——那里拒绝会把一次抖动
+			//    变成一个永久坏掉的计划任务。有阴性对照钉着这个区别。
 			rows, err := tx.QueryContext(ctx, `
 				SELECT device_id::text, coalesce(imei, ''), coalesce(iccid, '')
 				  FROM app.modems
 				 WHERE iccid = $1
+				   AND managed
 				 ORDER BY updated_at DESC
 				 LIMIT 2`, strings.TrimSpace(selector.ICCID))
 			if err != nil {
