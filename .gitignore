@@ -17,3 +17,11 @@ console-dist.tgz
 # 2026-09-05 有一个 .pyc 被 `git add packages/contract/` 扫进过仓库（9c099ad）。
 __pycache__/
 *.pyc
+
+# 本机的临时工作目录。
+#
+# 🔴 不只是整洁问题：未被忽略的未跟踪文件会让 go build 打上
+# vcs.modified=true，而 RUNBOOK 的「同一提交构建两次得到逐字节相同的
+# 二进制」正是靠这个戳记成立的。2026-09-05 构建 gateway 时撞到：
+# git status 看着干净（只有 scratchpad/），Go 却认为树是脏的。
+scratchpad/
