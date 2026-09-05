@@ -118,13 +118,37 @@ func Parse(raw json.RawMessage) (Overlay, error) {
 		return Overlay{}, err
 	}
 	var document struct {
-		Version string `json:"version"`
+		Version string            `json:"version"`
+		Rule    []json.RawMessage `json:"rule"`
 	}
 	if err := json.Unmarshal(canonical, &document); err != nil {
 		return Overlay{}, fmt.Errorf("%w: %v", ErrInvalidDocument, err)
 	}
 	if document.Version == "" {
 		return Overlay{}, fmt.Errorf("%w: version is required", ErrInvalidDocument)
+	}
+	// 🔴 一份没有规则的矩阵会清空收到它的每一台设备。
+	//
+	// `{"version":"x"}` 此前一路畅通：上面只检查「是对象、version 非空」。
+	// 它落库、被推给该租户的每一台设备，而**边缘端也接受它** ——
+	// `MatrixDocument.rule` 是 `#[serde(default)]`，所以它解析成一个空矩阵。
+	// 实测（2026-09-05，edge-core）：规则数=0，EC20 x CN-Mobile 的来源
+	// 变成 Fallback。于是每一对都读作「从没测过」，短信全被拒，
+	// 纳管的追溯执行会把每一根都判进隔离。一次普通租户会话的 PUT 就能做到。
+	//
+	// 这条规则本来就写下来了 —— 在 ledger_routes.go 的 publishLedger 里：
+	// 「An empty ledger is "nothing is supported". That may well be true on a
+	// fresh tenant, but pushing it is not how anybody would mean to say it,
+	// so it has to be a deliberate act rather than a stray click.」
+	// 它只挡住了账本那条路；`PUT /v1/capability-matrix` 从旁边绕了过去。
+	//
+	// 放在 Parse 里而不是再抄一遍到 putMatrix：这是**唯一**同时在两条路上的
+	// 函数（publishLedger 和 publish-ledger CLI 都走它，注释里写明了理由是
+	// 摘要必须逐字节一致），所以放这里两条路自动都有。
+	if len(document.Rule) == 0 {
+		return Overlay{}, fmt.Errorf(
+			"%w: a matrix with no rules would clear every device that receives it",
+			ErrInvalidDocument)
 	}
 	sum := sha256.Sum256(canonical)
 	return Overlay{

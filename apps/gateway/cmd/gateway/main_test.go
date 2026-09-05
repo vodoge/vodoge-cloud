@@ -267,6 +267,43 @@ func TestCatalogRoutesAreTenantScoped(t *testing.T) {
 	}
 }
 
+// 🔴 从路由这一层证明：一份没有规则的矩阵推不进去。
+//
+// 这是那个漏洞的实际形状 —— 一次普通租户会话的
+// `PUT /v1/capability-matrix`，请求体只需两个字段，就会落库并推给该租户的
+// 每一台设备；而边缘端也接受它（rule 是 serde default），于是每一对都读作
+// 「从没测过」：短信全被拒，纳管的追溯执行把每一根都判进隔离。
+//
+// 这条规则本来就写下来了，在 publishLedger 里（「An empty ledger is
+// "nothing is supported" ... so it has to be a deliberate act rather than a
+// stray click」），只是这条路从它旁边绕了过去。
+func TestCapabilityMatrixPutRefusesAMatrixThatWouldClearTheFleet(t *testing.T) {
+	t.Parallel()
+
+	tenants := directory.New(nil)
+	_ = tenants.Cache.Store(region.Entry{TenantID: "t-a", Slug: "a", Region: "cn", Status: "active"})
+	proc := signedIn(newProcess("", nil, tenants, nil, nil))
+	proc.catalog = &catalog.Memory{
+		Devices: map[string][]catalog.Device{"t-a": {{ID: "d-a", Name: "lab-a", State: "online"}}},
+	}
+	handler := proc.handler()
+
+	for _, body := range []string{
+		`{"matrix":{"version":"attack"}}`,
+		`{"matrix":{"version":"attack","rule":[]}}`,
+	} {
+		req := authorize(httptest.NewRequest(http.MethodPut,
+			"http://a.vodoge.com/v1/capability-matrix", strings.NewReader(body)))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("接受了一份会清空机队的矩阵 status=%d body=%s (请求体 %s)",
+				response.Code, response.Body.String(), body)
+		}
+	}
+}
+
 func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	t.Parallel()
 
@@ -282,7 +319,7 @@ func TestCapabilityMatrixPutQueuesPerDevice(t *testing.T) {
 	}
 	handler := proc.handler()
 
-	req := authorize(httptest.NewRequest(http.MethodPut, "http://a.vodoge.com/v1/capability-matrix", strings.NewReader(`{"matrix":{"version":"hot-1","rule":[]}}`)))
+	req := authorize(httptest.NewRequest(http.MethodPut, "http://a.vodoge.com/v1/capability-matrix", strings.NewReader(`{"matrix":{"version":"hot-1","rule":[{"modem_family":"EC20","carrier":"CN-Mobile","sms_mo":{"kind":"probe"}}]}}`)))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
