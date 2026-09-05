@@ -230,6 +230,44 @@ scp /tmp/publish-ledger root@43.108.53.126:/opt/vodoge-cloud/deploy/
 一台边缘机（`catalog.Device`），和一款受支持的硬件型号
 （`ledger.SupportedDevice`）。
 
+### 管理目录：`vodoge-catalogue`
+
+这张表没有 tenant_id，是跨租户事实，所以写入面不在控制台上（一个租户不该
+能改另一个租户的机队闸）。归宿是 admin.vodoge.com，在那个站有认证之前，
+这个 CLI 是唯一的写入路径 —— 和 `publish-ledger` 同一个模式。
+
+本地交叉编译、上传，**不在云端构建**：
+
+```sh
+cd apps/gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+  -o /tmp/vodoge-catalogue ./cmd/vodoge-catalogue
+scp /tmp/vodoge-catalogue root@43.108.53.126:/opt/vodoge-cloud/deploy/
+```
+
+云主机上（postgres 只在 internal 网络上，所以同样走一次性容器）：
+
+```sh
+DB=$(grep -E "^POSTGRES_DB=" /opt/vodoge-cloud/deploy/.env | cut -d= -f2-)
+U=$(grep -E "^POSTGRES_USER=" /opt/vodoge-cloud/deploy/.env | cut -d= -f2-)
+P=$(grep -E "^POSTGRES_PASSWORD=" /opt/vodoge-cloud/deploy/.env | cut -d= -f2-)
+NET=$(docker inspect vodoge-cloud-postgres-1 \
+        --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' | head -1)
+docker run --rm --network "$NET" \
+  -e VODOGE_DATABASE_URL="postgres://$U:$P@postgres:5432/$DB?sslmode=disable" \
+  -v /opt/vodoge-cloud/deploy/vodoge-catalogue:/vodoge-catalogue:ro \
+  alpine:3.22 /vodoge-catalogue -check
+```
+
+`-list` 看现状，`-check` 只算不写，`-add` / `-disable` / `-enable` 改。
+
+**加第一条会被联锁拦住**：它先把机队上每一款在管的硬件列出来、标出谁会被
+挡在外面，然后拒绝写入，除非再带 `-i-know-this-gates-the-fleet`。这是有意
+的 —— 理由见下一节。
+
+改完**必须跑 `publish-ledger`**，否则边缘端读到的还是上一版文档：这张表
+只在渲染文档的那一刻被读。
+
 ### 🔴 `app.supported_devices` 空表**不是**「什么都不支持」
 
 `ledger.Document` 在这张表为空时**整个不写** `[[device]]` 键，而不是写一个
