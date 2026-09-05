@@ -380,10 +380,25 @@ sms_mo = { kind = "supported", bearer = "cellular" }
    而我们手上有它发完短信挂死 AT 通道约 15 分钟的直接观测。
    两者不矛盾（能发出去 ≠ 没有副作用），但账本里应该有这条 `note`
 
-#### 2026-09-05 已经从真实数据里拿到的（尚未录入账本）
+#### 🔴 更正：那三格早就在账本里了
 
-工作站上没有云端访问，所以下面这些**还录不进 `app.support_ledger`**。
-先记在这里，等能连上云端时是一次录入动作，不用重测。
+我先前写「还录不进 `app.support_ledger`，等能连上云端时是一次录入动作」。
+**这是错的。** 2026-09-05 连上生产库之后核实，`app.support_ledger` 已经有
+四行，且是 2026-08-29 由 `yuanshuai` 录的：
+
+| modem_family | carrier | sms_mo | sms_mt | tested_by |
+|---|---|---|---|---|
+| EC20 | CN-Mobile | supported | supported | yuanshuai |
+| EC20 | CN-Telecom | unsupported | unsupported | **built-in matrix (not re-measured)** |
+| EC20 | Generic-International | **probe** | supported | yuanshuai |
+| EC200U-CN | CN-Telecom | supported | supported | yuanshuai |
+
+所以下面那些收件箱证据是**印证**已有记录，不是新事实，也没有录入动作要做。
+（顺带：那四行正好解释了线上矩阵为什么只有 4 条规则 —— 账本是它的来源。
+还有一行诚实地标着 `built-in matrix (not re-measured)`，那正是这张表该有的
+样子：来源不明的断言标出来，而不是洗成测量。）
+
+留着这段证据，是因为它独立于账本佐证了同一件事：
 
 证据来自边缘库 `/var/lib/vodoge-edge/inbox.db` 的 `local_messages`
 （全部 `direction = inbound`、`bearer = cellular`）：
@@ -394,12 +409,16 @@ sms_mo = { kind = "supported", bearer = "cellular" }
 | **EC20 × CN-Mobile** `sms_mt` | supported / cellular | 18 条实收，09-01 14:59 .. 09-05 10:16 |
 | **EC20 × Generic-International** `sms_mt` | supported / cellular | 4 条实收（香港 CSL 卡），09-01 11:26 .. 09-04 10:09 |
 
-⚠️ **仍然没有的**：
+⚠️ **第 0 步真正还缺的只有一格**：
 
-- **`sms_mo` 的本地证据一条都没有。** 发送记录随上行清掉了
-  （`outbox.db` 现在只剩 1 条 DeviceState），所以回执在云端。
-  在跑起来的矩阵里 EC200U-CN × CN-Telecom 的 `sms_mo` 已经是 `supported`，
-  而 EC20 × Generic-International 的仍是 `probe` —— 后者是**唯一**还缺的那格。
+**`EC20 × Generic-International` 的 `sms_mo`**，账本里是 `probe`。
+
+它不挡纳管（闸 2 是「至少一项非 probe」，而 `sms_mt` 是 supported，
+四根模组全部过闸），但它挡**发送**：`resolve()` 会以「recorded as needing
+a probe, which is not a measurement」拒掉香港 CSL 和美国 310-240 两张卡的
+上行短信。
+
+量它需要**真的发一条短信**——花钱、且到达一个真实号码，所以要人点头。
 - **美国 310-240 那张卡零条实收**，而这**不是**「不支持」的证据。
   缺席不是测量结果，账本里不该因此出现任何一行。
 
