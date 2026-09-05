@@ -89,6 +89,47 @@ EC20 / EC25-CN / EG25-G。
 
 ## 三、架构
 
+### ⚠️ 先说清楚：这套机器大部分已经存在
+
+写这份设计时我以为要从零造。**不是。** 已经在跑的是：
+
+| 已有 | 在哪 | 现状 |
+|---|---|---|
+| `app.support_ledger` | `0046_support_ledger.sql` | **每租户一份，租户可写**。行式存储，一对一行，带 `tested_at` / `tested_by` / `note` 证据列 |
+| `app.capability_matrix` | `0009_capability_matrix.sql` | **每租户一份**。推给设备的文档，由账本**派生** |
+| 读写发布路由 | `apps/gateway/cmd/gateway/ledger_routes.go` | `GET /v1/support-ledger`、`PUT …/{family}/{carrier}`、`DELETE`、`POST …/publish`——**租户会话就能调** |
+| 编辑界面 | `apps/console/app/support-ledger/page.tsx` | 租户可改 |
+| 无会话发布路径 | `apps/gateway/cmd/publish-ledger` | 走同一批函数（`ledger.Document`、`matrix.Parse`、`matrix.CommandPayload`），保证摘要逐字节一致 |
+
+`0046` 的文件头已经把铁律写下了：
+
+> a pairing that is not a row here is not supported, and the edge refuses it
+> by name rather than trying it and finding out.
+
+**所以第 4 条决定的真实内容不是「建两张新表」，而是把这两张已有、有数据、
+租户可写的表改成全局只读**，并把写入面从 console 搬到 admin。
+这比从零造小得多，但它是一次**数据迁移**，不是一次建表。
+
+**真正新增的只有 `[[device]]` 那张受支持硬件列表**——它今天在代码里
+（`strategies/modems.rs` 的 `usb_identities`），数据库里没有对应物。
+
+### 重新划分租户归属：这是迁移，不是建表
+
+要回答的问题：**现有的各租户账本行怎么处置？**
+
+它们是真实测量，带 `tested_by`，不能一删了之。但合并到全局会撞车——
+两个租户对同一对 `(family, carrier)` 可能记了不同结论，
+而全局表的主键只有 `(modem_family, carrier)`，没有租户维度来容纳分歧。
+
+这一条**没定**，列在最后一节。它必须在写迁移之前定，
+因为它决定了迁移是「挑一个赢家」还是「保留冲突待人工裁决」。
+
+⚠️ `publish-ledger` 这条 CLI 路径在重新划分归属之后要跟着改：
+它今天按租户发布，之后必须是 admin 的路径。它的存在理由
+（「发布不该需要往 shell 里敲密码」）在 admin 站上依然成立，所以它**留着**。
+
+---
+
 分工是用户在三个选项里选的第 3 个：**代码定策略，数据库定启用哪些**。
 
 ### 代码里（不变）
@@ -248,8 +289,15 @@ ceiling 与运营商无关，所以这两项**不该出现在按运营商切分�
 
 ### 第 2 步：全局目录
 
-建表、`[[device]]` 段、`min_agent_version` 闸、边缘端解析与校验、
-`drives()` 改成查目录。
+两件不同性质的事，别混着做：
+
+**(a) 重新划分归属**（迁移）：`support_ledger` 与 `capability_matrix`
+去掉 `tenant_id`，RLS 从 `tenant_isolation` 改成「租户只读、admin 可写」，
+现有各租户行按上面那个待定的规则合并。写入路由从租户面移到 `/v1/admin/*`，
+console 的 `/support-ledger` 页降级为只读。
+
+**(b) 受支持硬件列表**（新建）：`[[device]]` 段、`min_agent_version` 闸、
+边缘端解析与校验、`drives()` 改成查目录。
 
 ### 第 3 步：两道闸 + 追溯 + 失败安全
 
@@ -317,10 +365,15 @@ console 是租户作用域的，admin 写的是跨租户配置。
 
 ## 七、未决
 
-1. **admin 站的鉴权方案**——跨租户写是这套系统里权限最高的动作，
+1. **现有各租户账本行怎么合并成一份全局账本**——它们是带 `tested_by`
+   的真实测量，不能删；但两个租户对同一对可能记了不同结论，
+   而全局主键 `(modem_family, carrier)` 容不下分歧。
+   是挑一个赢家（按什么？时间？租户？）还是保留冲突待人工裁决？
+   **写迁移之前必须定**
+2. **admin 站的鉴权方案**——跨租户写是这套系统里权限最高的动作，
    不能沿用租户登录。需要单独定：是独立的身份源、还是硬件密钥、
    还是双人复核。**开工前必须定**
-2. **`min_agent_version` 的具体闸法**——拒绝替换之后，边缘机停在旧目录上，
+3. **`min_agent_version` 的具体闸法**——拒绝替换之后，边缘机停在旧目录上，
    这个状态要怎么在云端看见
-3. **EC200U 的 AT 挂死**到底是不是发短信引起的——2026-09-05 07:59
+4. **EC200U 的 AT 挂死**到底是不是发短信引起的——2026-09-05 07:59
    那次零发送的挂死推翻了原本的解释，第 0 步要重新测
