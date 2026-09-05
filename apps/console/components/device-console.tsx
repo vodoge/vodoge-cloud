@@ -153,6 +153,11 @@ export type DeviceLabelKey =
   | "candidateClaim"
   | "candidateRevoke"
   | "candidateClaimed"
+  | "adoptionTitle"
+  | "adoptionNote"
+  | "adoptionSave"
+  | "adoptionNone"
+  | "adoptionPlaceholder"
   | "modem_report"
   | "list_esim_profiles"
   | "restart_modem"
@@ -162,6 +167,7 @@ export type DeviceLabelKey =
   | "set_radio"
   | "unregister_modem"
   | "reconfirm_modem"
+  | "update_modem"
   | "set_data_network"
   | "reregister_network"
   | "refresh_modems"
@@ -605,6 +611,13 @@ export function DeviceConsole({
       </CardPanel>
 
       <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
+
+      <AdoptionCard
+        modem={modems.find((row) => row.imei === imei)}
+        busy={busy}
+        labels={labels}
+        onRun={request}
+      />
 
       <AgentLogCard busy={busy} commands={commands} labels={labels} onRun={request} />
 
@@ -1432,6 +1445,73 @@ function ApnEditor({
  * arrangement the card's own brief calls out: a dangerous action and its undo
  * should not look like eight peers.
  */
+/**
+ * 纳管记录：谁纳管的、什么时候、为什么。CRUD 里 R 的后半和 U 的入口。
+ *
+ * 🔴 这三样以前只活在边缘那台机器的 SQLite 里。后果很具体：云端**能**带着
+ * 一句备注去纳管一根模组（RegisterModem 的 note 一直在契约里），然后再也
+ * 读不回来 —— 这一页既显示不了也改不了它。0015 建 note 这一列要回答的是
+ * 「为什么这一根在被管」，而答案存在库里、屏幕上不显示，等于没有答案。
+ *
+ * 只有备注可改。纳管时刻和纳管人是履历：改它们唯一的办法本来是取消纳管再
+ * 纳管，而那会把两者冲成今天，正是 update_modem 这条命令存在的理由。
+ */
+function AdoptionCard({
+  modem,
+  labels,
+  busy,
+  onRun,
+}: {
+  modem: ModemRow | undefined;
+  labels: Labels;
+  busy: boolean;
+  onRun: (kind: string, body: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+
+  // 换了一根模组就把草稿换成那一根的备注。不做的话，在 A 上打了一半切到 B，
+  // 那半句会跟着跑过去，而它下一次被保存时是保到 B 头上。
+  if (modem && editing !== modem.imei) {
+    setEditing(modem.imei);
+    setDraft(modem.adoptionNote ?? "");
+  }
+
+  if (!modem) {
+    return (
+      <CardPanel title={labels.adoptionTitle}>
+        <FormHint>{labels.adoptionNone}</FormHint>
+      </CardPanel>
+    );
+  }
+
+  return (
+    <CardPanel title={labels.adoptionTitle} note={labels.adoptionNote}>
+      <FormHint>
+        {modem.adoptedBy ?? "—"}
+        {modem.adoptedAt ? ` · ${new Date(modem.adoptedAt).toLocaleString()}` : ""}
+      </FormHint>
+      <InlineForm
+        onSubmit={(event) => {
+          event.preventDefault();
+          // 空串就是清空。想「别动」的人不会按这个按钮。
+          onRun("update_modem", { modem_imei: modem.imei, note: draft.trim() });
+        }}
+      >
+        <Input
+          value={draft}
+          disabled={busy}
+          placeholder={labels.adoptionPlaceholder}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button type="submit" variant="outline" disabled={busy}>
+          {labels.adoptionSave}
+        </Button>
+      </InlineForm>
+    </CardPanel>
+  );
+}
+
 function DangerZone({
   busy,
   labels,

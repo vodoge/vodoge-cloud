@@ -206,6 +206,9 @@ type ModemState struct {
 	ControlPort  *string           `json:"control_port,omitempty"`
 	UsbDevice    *string           `json:"usb_device,omitempty"`
 	ApnContexts  *[]ApnContext     `json:"apn_contexts,omitempty"`
+	AdoptionNote *string           `json:"adoption_note,omitempty"`
+	AdoptedAt    any               `json:"adopted_at,omitempty"`
+	AdoptedBy    *string           `json:"adopted_by,omitempty"`
 	Capability   CapabilitySummary `json:"capability"`
 }
 
@@ -255,6 +258,12 @@ type UnregisterModemCommand struct {
 type ReconfirmModemCommand struct {
 	Kind      string `json:"kind"`
 	ModemImei string `json:"modem_imei"`
+}
+
+type UpdateModemCommand struct {
+	Kind      string  `json:"kind"`
+	ModemImei string  `json:"modem_imei"`
+	Note      *string `json:"note,omitempty"`
 }
 
 type ClaimModemCandidateCommand struct {

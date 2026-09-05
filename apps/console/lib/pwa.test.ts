@@ -2804,7 +2804,17 @@ const CAPTURED_FROM = {
   // ② 是这里点名要的那一项：帧没变不能替样式表作证，因为改动的部分可能不在
   //   取景里 —— 这次恰好就是（桩网关那台设备没有 claimed 候选，按钮排在画幅
   //   之下）。所以两项都做了。
-  chrome: "d7638ac6bfbb569857edfb6a9021c62454d3f94ac921596277250a398f93a02d",
+  // 2026-09-06 再次前移，代价同样是按这里要求的方式付的。
+  //
+  // 这次改的是 `device-console.tsx`（多了一张「纳管记录」卡片：履历只读、
+  // 备注可改）和 `lib/tokens.ts`（update_modem 的 guard 条目，带中文散文）。
+  //
+  //   ① 重拍两帧 → **逐像素完全相同**（0 个像素，两张都是）
+  //   ② 把改动 stash 掉重新构建，样式表逐字节比对 → **完全相同**，产物
+  //      文件名的内容哈希仍是 7d09d96e2196fd2f
+  //
+  // ② 是这里点名要的那一项 —— 帧没变不能替样式表作证。
+  chrome: "583e89913e772238827f5e10bd1980e31f8d330ac570caae1b28d4388177152a",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2823,7 +2833,7 @@ const CAPTURED_FROM = {
   // 按上面那条判据量过了：布局变化会集中（大量行、每行占画幅四分之一以上），
   // 抗锯齿会散开。这次两者都不是 —— 什么都没动。所以这里只前移 `recipe`，
   // `shots` 原样不动，因为文件本身逐字节没变。
-  recipe: "82df7d8aae092c67c3cf13744e391fe7f148504d4c6d05496ee99436998b5d49",
+  recipe: "25decc828a44aea3d364c03d892c6045950977fc814d1c9861fd9b9b3f8a1434",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

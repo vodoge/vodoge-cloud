@@ -514,6 +514,31 @@ var catalogue = map[string]Spec{
 			}, nil
 		},
 	},
+	"update_modem": {
+		// The U in this catalogue's CRUD. Adoption could be created, listed and
+		// deleted from day one; the record itself could never be edited, so a
+		// note written wrong stayed wrong -- or got "fixed" by unregistering and
+		// re-adopting, which rewrites registered_at and registered_by to today.
+		//
+		// Mutating because it writes, but it touches no hardware: the module
+		// keeps working through it either way.
+		Kind: "update_modem", ContractKind: "UpdateModem", NeedsModem: true, Mutating: true,
+		Build: func(request Request) (map[string]any, error) {
+			payload := map[string]any{
+				"kind": "UpdateModem", "modem_imei": request.ModemIMEI,
+			}
+			note := strings.TrimSpace(request.Note)
+			if len(note) > 256 {
+				return nil, ErrInvalid{"note must be 256 characters or fewer"}
+			}
+			// An absent note clears it. There is deliberately no way to say
+			// "leave it alone": a caller who wants that does not send this.
+			if note != "" {
+				payload["note"] = note
+			}
+			return payload, nil
+		},
+	},
 	"reconfirm_modem": {
 		// Re-runs the adoption gates against a module they have marked.
 		//

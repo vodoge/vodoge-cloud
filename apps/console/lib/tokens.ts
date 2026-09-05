@@ -1729,6 +1729,13 @@ export const DEVICE_COMMAND_GUARDS: Readonly<Record<string, readonly CommandGuar
       why: "the module stops being polled and leaves the list; what it carried is kept, but an operator who did this by accident would see a working stick vanish",
     },
   ],
+  update_modem: [
+    {
+      when: {},
+      consequence: null,
+      why: "it edits the adoption note and nothing else: the module keeps working through it, and the adoption date and who decided are not writable here at all. A dialog in front of correcting a sentence is how notes stay wrong",
+    },
+  ],
   reconfirm_modem: [
     {
       when: {},

@@ -103,6 +103,12 @@ export type ModemRow = {
    * stick with no data connection.
    */
   apnContexts: ApnContextRow[] | null;
+  /** 为什么这一根在被管，由人写下。可改（update_modem 命令）。 */
+  adoptionNote: string | null;
+  /** 纳管时刻，RFC3339。履历，不可改。 */
+  adoptedAt: string | null;
+  /** panel / cloud / migration —— 是谁做的这个决定。履历，不可改。 */
+  adoptedBy: string | null;
 };
 
 /** One packet data profile as the module reports it. */
@@ -193,6 +199,9 @@ export function parseModem(value: unknown): ModemRow | null {
     controlPort: asString(row.control_port),
     usbDevice: asString(row.usb_device),
     apnContexts: asApnContexts(row.apn_contexts),
+    adoptionNote: asString(row.adoption_note),
+    adoptedAt: asString(row.adopted_at),
+    adoptedBy: asString(row.adopted_by),
   };
 }
 

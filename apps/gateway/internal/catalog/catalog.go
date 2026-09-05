@@ -167,6 +167,13 @@ type Modem struct {
 	// because nothing here queries inside it and re-modelling it would give
 	// the console a second shape to keep in step with the edge's.
 	ApnContexts json.RawMessage `json:"apn_contexts"`
+	// 纳管记录：为什么这一根在被管、谁在什么时候决定的。
+	//
+	// 只有 AdoptionNote 可改（update_modem 命令）。另外两个是履历 ——
+	// 改它们唯一的办法本来是取消纳管再纳管，而那正是 update_modem 要避免的。
+	AdoptionNote *string `json:"adoption_note,omitempty"`
+	AdoptedAt    *string `json:"adopted_at,omitempty"`
+	AdoptedBy    *string `json:"adopted_by,omitempty"`
 }
 
 // CommandRow is one issued command and, once it lands, what came back.
@@ -812,7 +819,13 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       msisdn,
 			       control_port,
 			       usb_device,
-			       apn_contexts
+			       apn_contexts,
+			       -- 纳管记录：为什么这一根在被管，谁在什么时候决定的。
+			       -- 以前这三样只活在边缘那台机器的 SQLite 里，所以云端
+			       -- 能带着一句备注去纳管，然后再也读不回来。
+			       adoption_note,
+			       adopted_at,
+			       adopted_by
 			  FROM app.modems
 			 -- Retired rows are kept and not listed. A module the edge no
 			 -- longer manages stops being updated, so leaving it in the list
@@ -832,6 +845,8 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			var discovery sql.NullString
 			var firmware, msisdn, controlPort, usbDevice sql.NullString
 			var apnContexts []byte
+			var adoptionNote, adoptedBy sql.NullString
+			var adoptedAt sql.NullTime
 			var manageable sql.NullBool
 			var rsrp, rsrq, sinr sql.NullInt64
 			var signal sql.NullInt64
@@ -843,6 +858,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 				&homePlmn, &servingPlmn, &smsMo, &smsMt,
 				&carrierProfile, &capabilityOrigin, &lastSeen,
 				&firmware, &msisdn, &controlPort, &usbDevice, &apnContexts,
+				&adoptionNote, &adoptedAt, &adoptedBy,
 			); err != nil {
 				return err
 			}
@@ -867,6 +883,18 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			item.Msisdn = nullableString(msisdn)
 			item.ControlPort = nullableString(controlPort)
 			item.UsbDevice = nullableString(usbDevice)
+			if adoptionNote.Valid {
+				value := adoptionNote.String
+				item.AdoptionNote = &value
+			}
+			if adoptedAt.Valid {
+				value := adoptedAt.Time.UTC().Format(time.RFC3339)
+				item.AdoptedAt = &value
+			}
+			if adoptedBy.Valid {
+				value := adoptedBy.String
+				item.AdoptedBy = &value
+			}
 			if len(apnContexts) > 0 {
 				item.ApnContexts = json.RawMessage(apnContexts)
 			}

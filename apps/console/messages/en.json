@@ -770,5 +770,11 @@
   "device.candidateRevoke": "Revoke",
   "device.candidateClaimed": "Endpoints approved for probing. Revoking stops the next pass from opening them; an adopted module is refused — unmanage it first.",
   "device.reconfirm_modem": "Re-check gates",
-  "device.confirmRevokeCandidate": "Revoke probing on this endpoint? The agent stops opening it from the next pass. An adopted module is refused — unmanage it first."
+  "device.confirmRevokeCandidate": "Revoke probing on this endpoint? The agent stops opening it from the next pass. An adopted module is refused — unmanage it first.",
+  "device.adoptionTitle": "Adoption record",
+  "device.adoptionNote": "The note is editable. When it was adopted and by whom are provenance — changing those means unregistering and re-adopting.",
+  "device.adoptionSave": "Save note",
+  "device.adoptionNone": "Select a module first.",
+  "device.adoptionPlaceholder": "Why it is managed (optional)",
+  "cmd.update_modem": "Save note"
 }

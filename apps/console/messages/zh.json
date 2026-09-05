@@ -770,5 +770,11 @@
   "device.candidateRevoke": "撤销批准",
   "device.candidateClaimed": "已批准探测的端口 · 撤销后下一轮起不再打开；已纳管的会被拒绝，那种要先取消纳管",
   "device.reconfirm_modem": "重新确认纳管",
-  "device.confirmRevokeCandidate": "撤销这个端口的探测批准？下一轮起 agent 不再打开它。已纳管的模组会被拒绝——那种要先取消纳管。"
+  "device.confirmRevokeCandidate": "撤销这个端口的探测批准？下一轮起 agent 不再打开它。已纳管的模组会被拒绝——那种要先取消纳管。",
+  "device.adoptionTitle": "纳管记录",
+  "device.adoptionNote": "备注可改；纳管时刻和纳管人是履历，改它们只能取消纳管再纳管",
+  "device.adoptionSave": "保存备注",
+  "device.adoptionNone": "先选一根模组。",
+  "device.adoptionPlaceholder": "为什么纳管它（可空）",
+  "cmd.update_modem": "保存备注"
 }

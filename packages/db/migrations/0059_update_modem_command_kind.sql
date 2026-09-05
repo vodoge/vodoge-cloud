@@ -1,0 +1,13 @@
+-- 手动管理模组的 CRUD 里，U 那一条命令。
+--
+--   update_modem  改一条纳管记录的备注。**只有备注**：registered_at 和
+--                 registered_by 是履历不是字段，改它们唯一的办法本来是
+--                 「取消纳管再纳管」，而那会把两列冲成今天 —— 0015 建这两列
+--                 要回答的正是「为什么这一根在被管」，被冲掉就再也答不上了。
+--
+-- 🔴 catalogue.go 造得出、这个枚举里没有的 kind，入队时是 500，读起来像队列
+--    挂了而不是像少了一行 SQL。两边必须同时改。
+--
+-- ALTER TYPE ... ADD VALUE 不能在事务块里跑，所以没有 BEGIN/COMMIT，和
+-- 0034/0041/0042/0043/0052/0054/0058 一致。自身幂等，重跑安全。
+ALTER TYPE app.command_kind ADD VALUE IF NOT EXISTS 'update_modem';

@@ -222,6 +222,9 @@ export interface ModemState {
   control_port?: string | null;
   usb_device?: string | null;
   apn_contexts?: Array<ApnContext> | null;
+  adoption_note?: string | null;
+  adopted_at?: unknown;
+  adopted_by?: string | null;
   capability: CapabilitySummary;
 }
 
@@ -271,6 +274,12 @@ export interface UnregisterModemCommand {
 export interface ReconfirmModemCommand {
   kind: "ReconfirmModem";
   modem_imei: Imei;
+}
+
+export interface UpdateModemCommand {
+  kind: "UpdateModem";
+  modem_imei: Imei;
+  note?: string | null;
 }
 
 export interface ClaimModemCandidateCommand {
@@ -580,6 +589,7 @@ export type Command =
   | RegisterModemCommand |
   | UnregisterModemCommand |
   | ReconfirmModemCommand |
+  | UpdateModemCommand |
   | RenameEsimProfileCommand |
   | DisableEsimProfileCommand |
   | DeleteEsimProfileCommand |
