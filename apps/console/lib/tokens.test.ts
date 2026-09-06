@@ -7727,3 +7727,77 @@ test("moving the base moves every step, and the proportions survive it", () => {
     );
   }
 });
+
+/**
+ * 🔴 一个只画 `<input>` 的组件，不许收 children。
+ *
+ * 这条测试是一个真实缺陷的墓碑。`InlineField` 自己就画那个 checkbox，它把
+ * `...props` 摊到 `<Checkbox>` 上，而 Checkbox 是原生 `<input>`。有人写成
+ *
+ *     <InlineField label={…}><Checkbox … /></InlineField>
+ *
+ * 于是 JSX 的 children 跟着被摊到 input 上，服务端渲染直接抛
+ * 「input is a self-closing tag and must neither have `children`」——
+ * **整个设备页的「控制台」标签对每一个管理员 500**，从 2026-08-30 起坏了一周。
+ *
+ * 为什么没人发现：
+ *   · tsc 放行 —— `React.InputHTMLAttributes<HTMLInputElement>` 本来就含
+ *     `children`，那是所有 DOM 属性类型的共性。
+ *   · 350 条测试里没有一条渲染这个组件。
+ *   · 只读账号看不到 —— 那一支根本不画 `ApnControls`，而只读是更容易被点开的
+ *     那一种账号。
+ *
+ * 所以守卫只能守在源码这一层：这几个组件的调用点必须是自闭合的。
+ */
+test("components that are just an input take no children", () => {
+  const INPUT_ONLY = ["InlineField", "Checkbox", "Input"];
+  // components/ 和 app/ 都扫。同一个写法在页面文件里同样会让整页 500，
+  // 而这条守卫只守一半的话，下一次它就出现在没被守的那一半。
+  const files = [
+    ...readdirSync(join(root, "components")).map((name) => ["components", name] as const),
+    ...readdirSync(join(root, "app"), { recursive: true, encoding: "utf8" })
+      .filter((name) => typeof name === "string")
+      .map((name) => ["app", name] as const),
+  ];
+  const sources = files
+    .filter(([, name]) => name.endsWith(".tsx"))
+    // ⚠️ 剥掉注释再扫。第一版没剥，于是这条守卫被**它自己的修复说明**
+    // 绊倒了 —— 那段注释里写着 `<Checkbox>` 三个字。这个仓库里同一类
+    // 自指的坑踩过不止一次（`api.rs` 的守卫被自己的注释绊过）。
+    .map(
+      ([dir, name]) =>
+        [`${dir}/${name}`, codeOnly(readFileSync(join(root, dir, name), "utf8"))] as const,
+    );
+
+  const offenders: string[] = [];
+  for (const [name, code] of sources) {
+    for (const tag of INPUT_ONLY) {
+      // 开标签之后紧跟的不是 `/>`：说明它有 children。
+      const opens = code.matchAll(new RegExp(`<${tag}\\b`, "g"));
+      for (const match of opens) {
+        const rest = code.slice(match.index ?? 0);
+        // 找这个标签自己的结束：第一个不在花括号里的 `>` 或 `/>`。
+        let depth = 0;
+        let selfClosing = false;
+        for (let i = tag.length + 1; i < rest.length; i += 1) {
+          const ch = rest[i];
+          if (ch === "{") depth += 1;
+          else if (ch === "}") depth -= 1;
+          else if (depth === 0 && ch === ">") {
+            selfClosing = rest[i - 1] === "/";
+            break;
+          }
+        }
+        if (!selfClosing) {
+          const line = code.slice(0, match.index).split("\n").length;
+          offenders.push(`${name}:${line} <${tag}> 带了 children`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `这些组件只画一个 <input>，给它们 children 会让服务端渲染整页抛错：\n${offenders.join("\n")}`,
+  );
+});

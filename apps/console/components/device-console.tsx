@@ -1461,15 +1461,21 @@ function ApnEditor({
           onChange={(event) => setPassword(event.target.value)}
         />
       </Field>
-      <InlineField label={labels.apnClearPassword}>
-        <Checkbox
-          checked={clearPassword}
-          onChange={(event) => {
-            setClearPassword(event.target.checked);
-            if (event.target.checked) setPassword("");
-          }}
-        />
-      </InlineField>
+      {/* 🔴 props 直接给，**不要**把 Checkbox 当 children 塞进来。
+          `InlineField` 自己就画那个 checkbox，它把 `...props` 摊到
+          `<Checkbox>` 上 —— 而 Checkbox 是原生 `<input>`，JSX 的 children
+          会一起被摊上去，于是整页服务端渲染抛
+          "input is a self-closing tag and must neither have children"。
+          tsc 抓不到：`React.InputHTMLAttributes` 本来就含 children。
+          写法照 :790 那处 atForce。 */}
+      <InlineField
+        label={labels.apnClearPassword}
+        checked={clearPassword}
+        onChange={(event) => {
+          setClearPassword(event.target.checked);
+          if (event.target.checked) setPassword("");
+        }}
+      />
       <Button type="submit" variant="risk" disabled={busy}>
         {labels.run}
       </Button>
