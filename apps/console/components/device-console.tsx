@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -218,6 +219,21 @@ const TERMINAL = new Set(["succeeded", "failed", "expired", "cancelled", "unknow
  * buttons live in the danger zone.
  */
 const READ_ONLY = ["modem_report", "list_esim_profiles"] as const;
+
+/**
+ * 会改「册子」的命令 —— 成功之后服务端那份 modems / candidates 就旧了。
+ *
+ * 单列一张表而不是在调用点判断：漏一条的代价不是报错，是那一条命令按下去
+ * 之后屏幕纹丝不动，而运维只能猜自己到底成没成。
+ */
+const REGISTER_WRITES = new Set([
+  "create_modem",
+  "register_modem",
+  "unregister_modem",
+  "update_modem",
+  "claim_modem_candidate",
+  "revoke_modem_candidate",
+]);
 const DISRUPTIVE = [
   "restart_modem",
   "reset_modem_usb",
@@ -280,6 +296,8 @@ type Request = (kind: string, extra?: Record<string, unknown>) => void;
 function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [busy, setBusy] = useState(false);
+  // 会改册子的命令成功之后要让服务端重画：modems / candidates 是 server props。
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   // Polling stops once nothing is outstanding, so an idle page costs nothing.
@@ -334,6 +352,17 @@ function useDeviceCommands(deviceId: string, imei: string, labels: Labels) {
           return;
         }
         await refresh();
+      // 🔴 会改册子的那几条，还要让服务端把 modems / candidates 重画一遍。
+      //
+      // `refresh()` 只拉 /v1/commands（命令日志），而模组下拉、候选列表、
+      // 纳管记录卡全是**服务端 props**（page.tsx 里一次性取的）。所以在这
+      // 之前：手工新建成功、批准探测成功、纳管成功之后，屏幕上唯一的变化
+      // 是最底下命令日志多一行 —— 运维会以为什么都没发生，而他其实建成了。
+      //
+      // 这正是「功能在哪里」的第二层：不是找不到按钮，是按了看不出结果。
+      if (REGISTER_WRITES.has(kind)) {
+        router.refresh();
+      }
       } catch {
         setError(labels.failed);
       } finally {
@@ -581,6 +610,13 @@ export function DeviceConsole({
             {error ? <FormError>{error}</FormError> : null}
           </div>
         </CardPanel>
+        {/* 🔴 这两张卡必须在这一支里。它们恰恰是为零模组存在的：候选列表
+            画的就是「还没纳管的端口」，手工新建那张卡自己的文案写着「用于
+            硬件还没接进来、先把册子建起来」。原来只在「已经有模组」那一支
+            里画，等于要求这台设备**已经**纳管了至少一根才让你纳管第一根 ——
+            第一根永远迈不出这一步。 */}
+        <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
+        <CreateModemCard busy={busy} labels={labels} onRun={request} />
         <CommandLogCard commands={commands} labels={labels} />
       </>
     );
@@ -591,6 +627,24 @@ export function DeviceConsole({
       <CardPanel title={labels.console} note={labels.consoleNote}>
         <ModemPicker modems={modems} imei={imei} onSelect={setImei} labels={labels} busy={busy} />
       </CardPanel>
+
+      {/* 🔴 册子那三块排在最前面，紧挨着模组选择。
+      
+          原来排在第 5–7 张卡，上面压着 AT 控制台、USSD、网络三张 —— 老板
+          问「纳管备注在哪」，答案是「滚到第七张卡」。
+      
+          顺序是有道理的：先回答「这台机器上有哪几根、为什么把它们管起来」，
+          再谈「对选中的这一根下命令」。 */}
+      <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
+
+      <CreateModemCard busy={busy} labels={labels} onRun={request} />
+
+      <AdoptionCard
+        modem={modems.find((row) => row.imei === imei)}
+        busy={busy}
+        labels={labels}
+        onRun={request}
+      />
 
       <AtConsole busy={busy} labels={labels} locale={locale} onRun={request} />
 
@@ -617,16 +671,6 @@ export function DeviceConsole({
         </div>
       </CardPanel>
 
-      <CandidatesCard busy={busy} candidates={candidates} labels={labels} onRun={request} />
-
-      <CreateModemCard busy={busy} labels={labels} onRun={request} />
-
-      <AdoptionCard
-        modem={modems.find((row) => row.imei === imei)}
-        busy={busy}
-        labels={labels}
-        onRun={request}
-      />
 
       <AgentLogCard busy={busy} commands={commands} labels={labels} onRun={request} />
 
