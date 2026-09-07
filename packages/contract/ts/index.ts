@@ -150,7 +150,7 @@ export interface SmsReceivedPayload {
   peer: string;
   body: string;
   received_at: number;
-  iccid: Iccid;
+  iccid: Iccid | null;
   bearer: "cs" | "ims" | "nas" | "unknown";
   encoding: "gsm7" | "ucs2" | "8bit" | "unknown";
   modem_storage_index?: number;
@@ -219,6 +219,7 @@ export interface ModemState {
   serving_plmn?: Plmn | null;
   firmware?: string | null;
   msisdn?: string | null;
+  msisdn_iccid?: Iccid | null;
   control_port?: string | null;
   usb_device?: string | null;
   apn_contexts?: Array<ApnContext> | null;

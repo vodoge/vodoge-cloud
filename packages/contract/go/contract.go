@@ -130,14 +130,14 @@ type CommandReceiptPayload struct {
 }
 
 type SmsReceivedPayload struct {
-	ModemImei         string `json:"modem_imei"`
-	Peer              string `json:"peer"`
-	Body              string `json:"body"`
-	ReceivedAt        int64  `json:"received_at"`
-	Iccid             string `json:"iccid"`
-	Bearer            string `json:"bearer"`
-	Encoding          string `json:"encoding"`
-	ModemStorageIndex *int64 `json:"modem_storage_index,omitempty"`
+	ModemImei         string  `json:"modem_imei"`
+	Peer              string  `json:"peer"`
+	Body              string  `json:"body"`
+	ReceivedAt        int64   `json:"received_at"`
+	Iccid             *string `json:"iccid"`
+	Bearer            string  `json:"bearer"`
+	Encoding          string  `json:"encoding"`
+	ModemStorageIndex *int64  `json:"modem_storage_index,omitempty"`
 }
 
 type SmsStatusReportPayload struct {
@@ -203,6 +203,7 @@ type ModemState struct {
 	ServingPlmn  *string           `json:"serving_plmn,omitempty"`
 	Firmware     *string           `json:"firmware,omitempty"`
 	Msisdn       *string           `json:"msisdn,omitempty"`
+	MsisdnIccid  *string           `json:"msisdn_iccid,omitempty"`
 	ControlPort  *string           `json:"control_port,omitempty"`
 	UsbDevice    *string           `json:"usb_device,omitempty"`
 	ApnContexts  *[]ApnContext     `json:"apn_contexts,omitempty"`

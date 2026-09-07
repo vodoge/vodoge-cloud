@@ -17,6 +17,11 @@ import (
 	contract "github.com/vodoge/vodoge-cloud/packages/contract"
 )
 
+// 台架那张卡。SmsReceivedPayload.Iccid 现在是 *string —— 契约把它改成了
+// 「必填但可为 null」，因为一条短信收下时未必读得出卡号，而空串会被下游
+// 读成「这条没有卡」，是个看着合理的错答案。
+var benchCard = "89860000000000000000"
+
 func TestServeDeviceAcksResumeAndIdempotentIngest(t *testing.T) {
 	t.Parallel()
 
@@ -31,7 +36,7 @@ func TestServeDeviceAcksResumeAndIdempotentIngest(t *testing.T) {
 		Peer:       "10086",
 		Body:       "ok",
 		ReceivedAt: now.UnixMilli(),
-		Iccid:      "89860000000000000000",
+		Iccid:      &benchCard,
 		Bearer:     "sim1",
 		Encoding:   "gsm7",
 	})
@@ -167,7 +172,7 @@ func TestServeDevicePublishesNewUplinkEvents(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	smsPayload, err := json.Marshal(contract.SmsReceivedPayload{
 		ModemImei: "867018069509705", Peer: "10086", Body: "ok",
-		ReceivedAt: now.UnixMilli(), Iccid: "89860000000000000000",
+		ReceivedAt: now.UnixMilli(), Iccid: &benchCard,
 		Bearer: "sim1", Encoding: "gsm7",
 	})
 	if err != nil {
@@ -228,7 +233,7 @@ func TestServeDeviceAcksUplinkWhenWakeupPublisherFails(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	smsPayload, err := json.Marshal(contract.SmsReceivedPayload{
 		ModemImei: "867018069509705", Peer: "10086", Body: "ok",
-		ReceivedAt: now.UnixMilli(), Iccid: "89860000000000000000",
+		ReceivedAt: now.UnixMilli(), Iccid: &benchCard,
 		Bearer: "sim1", Encoding: "gsm7",
 	})
 	if err != nil {
