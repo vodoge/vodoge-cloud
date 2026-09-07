@@ -413,8 +413,13 @@ function OverviewPanel({
                   <TableCell mono faint secondary>
                     {modem.firmware ?? "—"}
                   </TableCell>
-                  <TableCell mono faint secondary>
-                    {modem.msisdn ?? "—"}
+                  {/*
+                    号码按卡记：换卡即作废（0062/0063）。作废之后这一格会变空，而空有两种
+                    意思 ——「问过了，这张卡没号码」和「换了卡，还没读出来」。运维靠这一格
+                    认卡，两种该做的事正好相反，所以不能画同一个横杠。
+                  */}
+                  <TableCell mono={!modem.msisdnPending} faint secondary>
+                    {modem.msisdn ?? (modem.msisdnPending ? "待读（刚换卡）" : "—")}
                   </TableCell>
                   <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
                     {modem.controlPort ?? "—"}

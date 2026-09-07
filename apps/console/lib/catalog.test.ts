@@ -529,8 +529,56 @@ test("fetchThread carries delivery and read state", async () => {
       // An outbound message is never unread: it was written here.
       readAt: null,
       failureReason: null,
+      // 发出去的这一侧还没记到卡（RecordOutbound 连模组都没记），
+      // 所以是 null ——「不知道是哪张卡」，不是「没有卡」。
+      iccid: null,
     },
   ]);
+});
+
+// 收到的消息带着收下它的那张卡。
+//
+// 🔴 消息此前只挂模组，而模组的卡是会换的 —— 换卡之后旧卡收的消息会全部显示成
+// 新卡收的，而且分不回去：当时是哪张卡从来没被记下来过。所以这一格记的是**当时**，
+// 界面绝不能拿模组现在的卡去补它。
+test("一条收到的消息带着收下它的那张卡", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    Response.json({
+      peer: "10086",
+      messages: [
+        {
+          id: "m1",
+          device_id: "d1",
+          direction: "inbound",
+          peer: "10086",
+          body: "旧卡收的",
+          bearer: "unknown",
+          encoding: "gsm7",
+          status: "received",
+          received_at: 100,
+          iccid: "8986003031401770106",
+        },
+        {
+          id: "m2",
+          device_id: "d1",
+          direction: "inbound",
+          peer: "10086",
+          body: "那时还没记卡",
+          bearer: "unknown",
+          encoding: "gsm7",
+          status: "received",
+          received_at: 200,
+        },
+      ],
+    });
+
+  const messages = await fetchThread("a.vodoge.com", "tok", "10086", fetchImpl);
+  assert.equal(messages[0]?.iccid, "8986003031401770106");
+  assert.equal(
+    messages[1]?.iccid,
+    null,
+    "字段缺席时是 null —— 空串会被读成「这条没有卡」，那是个看着合理的错答案",
+  );
 });
 
 // A message the modem accepted and the network has said nothing about yet.

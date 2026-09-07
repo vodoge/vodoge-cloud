@@ -158,6 +158,8 @@ type Modem struct {
 	// to the card, so nil means the card did not say.
 	Firmware *string `json:"firmware"`
 	Msisdn   *string `json:"msisdn"`
+	// 号码为空时，空的是哪一种。见 msisdnPending。
+	MsisdnPending bool `json:"msisdn_pending"`
 	// Where the module physically is on the edge machine. The cloud cannot see
 	// that host's /dev or sysfs, and it is the first thing asked for when a
 	// module stops answering.
@@ -817,6 +819,9 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       last_seen_at,
 			       firmware,
 			       msisdn,
+			       -- 号码是从哪张卡读的。0063 加的，用来把「问过了、这张卡
+			       -- 没号码」和「换了卡、还没问出来」分开。
+			       msisdn_iccid,
 			       control_port,
 			       usb_device,
 			       apn_contexts,
@@ -843,7 +848,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			var iccid, state, registration, homePlmn, servingPlmn, smsMo, smsMt sql.NullString
 			var carrierProfile, capabilityOrigin sql.NullString
 			var discovery sql.NullString
-			var firmware, msisdn, controlPort, usbDevice sql.NullString
+			var firmware, msisdn, msisdnIccid, controlPort, usbDevice sql.NullString
 			var apnContexts []byte
 			var adoptionNote, adoptedBy sql.NullString
 			var adoptedAt sql.NullTime
@@ -857,7 +862,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 				&rsrp, &rsrq, &sinr, &discovery, &manageable,
 				&homePlmn, &servingPlmn, &smsMo, &smsMt,
 				&carrierProfile, &capabilityOrigin, &lastSeen,
-				&firmware, &msisdn, &controlPort, &usbDevice, &apnContexts,
+				&firmware, &msisdn, &msisdnIccid, &controlPort, &usbDevice, &apnContexts,
 				&adoptionNote, &adoptedAt, &adoptedBy,
 			); err != nil {
 				return err
@@ -881,6 +886,12 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			item.CapabilityOrigin = nullableString(capabilityOrigin)
 			item.Firmware = nullableString(firmware)
 			item.Msisdn = nullableString(msisdn)
+			item.MsisdnPending = msisdnPending(
+				nullableString(msisdn),
+				nullableString(msisdnIccid),
+				nullableString(iccid),
+				nullableString(discovery),
+			)
 			item.ControlPort = nullableString(controlPort)
 			item.UsbDevice = nullableString(usbDevice)
 			if adoptionNote.Valid {
@@ -917,6 +928,42 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 		modems = []Modem{}
 	}
 	return modems, nil
+}
+
+// msisdnPending 回答：号码那一格是空的，空的是哪一种。
+//
+// 🔴 nil 有两种意思，而它们要运维做的事相反：
+//
+//	问过这张卡了，它就是没有号码  → 到此为止
+//	换了卡，这张卡还没问出来      → 再等一轮
+//
+// 分开的凭据是 msisdnIccid（0063 加的列）——「上面那个号码是从哪张卡读出来的」。
+// 边缘端在问过之后就写下它，哪怕答案是「没有」；所以指着当前这张卡 = 有结论，
+// 对不上 = 还没有结论。
+//
+// ⚠️ AT-only 那条路例外：它没有缓存，每一轮都在已经打开的口上重发一次 AT+CNUM，
+// 所以那里的 nil 当场就是这一轮的答案。不排除的话，一张真的没有号码的 AT 卡会被
+// 永远标成「待读」—— 一个永远不会兑现的承诺。
+//
+// ⚠️ msisdnIccid 为 nil 且号码也为 nil，在老 agent 上是「它压根没上报过指针」，
+// 在新 agent 上是「换卡且这一轮读失败」。两者都归为待读：老 agent 那边宁可多说
+// 一句「还在读」，也好过替一张没问过的卡下「没有号码」的结论。
+func msisdnPending(msisdn, msisdnIccid, iccid, discovery *string) bool {
+	if msisdn != nil {
+		return false
+	}
+	if discovery != nil && *discovery == "at" {
+		return false
+	}
+	switch {
+	case msisdnIccid == nil && iccid == nil:
+		// 连卡都没有，没什么可等的。
+		return false
+	case msisdnIccid == nil || iccid == nil:
+		return true
+	default:
+		return *msisdnIccid != *iccid
+	}
 }
 
 func nullableString(value sql.NullString) *string {

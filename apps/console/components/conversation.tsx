@@ -227,6 +227,21 @@ export function Conversation({
               {message.direction === "outbound" ? (
                 <DeliveryBadge message={message} labels={labels} />
               ) : null}
+              {/*
+                收下这条消息的那张卡。只对收到的消息显示 —— 发出去的那一侧现在还没记
+                到卡（RecordOutbound 连模组都没记），显示一个空位比显示一句猜测好。
+              
+                只画尾号：ICCID 有十九二十位，整串会把这一行挤开，而认卡靠的是尾部。
+                完整卡号放在 title 里，需要核对的人鼠标一停就有。
+              */}
+              {message.direction === "inbound" && message.iccid ? (
+                <span
+                  className="font-mono text-xs tabular-nums text-muted-foreground"
+                  title={`${labels.cardTitle} ${message.iccid}`}
+                >
+                  {labels.card} …{message.iccid.slice(-8)}
+                </span>
+              ) : null}
               {writable ? (
                 <Button
                   variant="ghost"

@@ -2817,7 +2817,9 @@ const CAPTURED_FROM = {
   // 2026-09-06 再次前移。这次加的是「手工新建模组」卡片和它的 guard 条目。
   // 两项照旧：重拍两帧**逐像素完全相同**（0 像素）；把改动 stash 掉重新
   // 构建、样式表逐字节比对**完全相同**（产物名仍是 7d09d96e2196fd2f）。
-  chrome: "1261edd323694ba8c33a7b1841567982308ea1f407c52f4f8107d24f270ad71d",
+  // 2026-09-07：随上面的 recipe 一起前移（重拍过，画面逐字节未变）。
+  // 2026-09-07 短信记卡号：随 recipe 一起前移（重拍过，画面逐字节未变）。
+  chrome: "0ed5cb0c035243b661d23d29bb641e437c64a7e6da76c1a38ed6a9fa6f39a5fe",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2836,7 +2838,25 @@ const CAPTURED_FROM = {
   // 按上面那条判据量过了：布局变化会集中（大量行、每行占画幅四分之一以上），
   // 抗锯齿会散开。这次两者都不是 —— 什么都没动。所以这里只前移 `recipe`，
   // `shots` 原样不动，因为文件本身逐字节没变。
-  recipe: "9729bdfac5a810188875295e5723aec4b7d506b96e87b6b0671dd014581ed48f",
+  // 2026-09-07 重拍：**两张图又是逐字节完全相同**（两个 sha256 都没动，
+  // 所以下面的 `shots` 原样保留）。
+  //
+  // 这一次动的是 `lib/catalog.ts`：ModemRow 多了一个 `msisdnPending`，
+  // 以及映射里对应的一行。它回答「本机号那一格空着时，空的是哪一种」——
+  // 换卡之后号码按卡作废（0062/0063），于是屏幕上第一次出现「刚变空」，
+  // 而它和「这张卡本来就没号码」长得一样，却要运维做相反的事。
+  //
+  // 首页不画任何模组行，所以取景里没有它。没有拿「样式表没变」来抵账 ——
+  // 这一条守卫明说不接受那个论证；是真的重拍了一遍，两张都对上了原图。
+  // 2026-09-07 再一次重拍：**两张图仍然逐字节相同**（`shots` 原样保留）。
+  //
+  // 这一次是短信记卡号那件事：`lib/catalog.ts` 的 ThreadMessage 多了 `iccid`，
+  // `components/conversation.tsx` 在收到的消息下面多画一个卡尾号，两个语言包
+  // 各多两个键。短信只挂 IMEI 而 IMEI 认的是棒不是卡 —— 换卡之后旧卡收的
+  // 消息会全部显示成新卡收的，且分不回去。
+  //
+  // 取景是首页，既不画会话也不画消息。同样是真重拍付的账，不是拿样式表抵的。
+  recipe: "2f7a363ef77a077f101234cafd5b626454b9090aef51fd383d1cf30b8ca24718",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

@@ -92,6 +92,13 @@ export type ModemRow = {
   firmware: string | null;
   /** The card's own number. Null means the card did not carry one. */
   msisdn: string | null;
+  /**
+   * 号码为空时，空的是哪一种：true = 换了卡还没读出来，再等一轮；
+   * false = 问过了，这张卡就是没有号码。网关算好了送过来（msisdnPending）。
+   *
+   * 🔴 没有这一位的话，两种空在屏幕上是同一个横杠，而运维正是靠号码认卡的。
+   */
+  msisdnPending: boolean;
   /** Where the module is on the edge machine, which the cloud cannot see. */
   controlPort: string | null;
   usbDevice: string | null;
@@ -196,6 +203,7 @@ export function parseModem(value: unknown): ModemRow | null {
     lastSeen: asNumber(row.last_seen),
     firmware: asString(row.firmware),
     msisdn: asString(row.msisdn),
+    msisdnPending: asBoolean(row.msisdn_pending) === true,
     controlPort: asString(row.control_port),
     usbDevice: asString(row.usb_device),
     apnContexts: asApnContexts(row.apn_contexts),
@@ -453,6 +461,14 @@ export type ThreadMessage = {
   bearer: string;
   encoding: string;
   /**
+   * 收下这条消息的那张卡，由边缘在收下的**那一刻**记下。
+   *
+   * 🔴 null 是「不知道是哪张卡」，不是「没有卡」。这一格以前不存在：消息
+   * 只挂模组，而模组的卡是会换的 —— 换卡之后旧卡收的消息会全部显示成新卡
+   * 收的，而且分不回去。所以它记的是当时，不是现在。
+   */
+  iccid: string | null;
+  /**
    * queued, sent, delivered, undelivered or failed for an outbound message;
    * received for one that arrived.
    *
@@ -536,6 +552,7 @@ export async function fetchThread(
       body: asString(row.body) ?? "",
       bearer: asString(row.bearer) ?? "",
       encoding: asString(row.encoding) ?? "unknown",
+      iccid: asString(row.iccid),
       status: asString(row.status) ?? "",
       receivedAt: asNumber(row.received_at) ?? 0,
       deliveredAt: asNumber(row.delivered_at),

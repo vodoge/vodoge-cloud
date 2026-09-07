@@ -442,6 +442,8 @@
   "inbox.empty": "No messages yet",
   "inbox.emptyHint": "SmsReceived uplinks from the edge appear here.",
   "inbox.encoding8bit": "Binary message (SIM toolkit / OTA), shown as hex",
+  "inbox.messageCard": "card",
+  "inbox.messageCardTitle": "Card this message arrived on:",
   "inbox.loadError": "Could not load messages from the gateway.",
   "inbox.messages": "messages",
   "inbox.nameContact": "Name contact",

@@ -112,6 +112,8 @@ export default async function ThreadPage({
             "status.failed": t("inbox.statusFailed", locale),
             "status.received": t("inbox.statusReceived", locale),
             "encoding.8bit": t("inbox.encoding8bit", locale),
+            card: t("inbox.messageCard", locale),
+            cardTitle: t("inbox.messageCardTitle", locale),
             readOnly: t("role.readOnlyInbox", locale),
           }}
         />

@@ -23,6 +23,15 @@ type Message struct {
 	Peer      string `json:"peer"`
 	Body      string `json:"body"`
 	Bearer    string `json:"bearer"`
+	// Iccid 是收下这条消息的那张卡，由边缘在收下的**那一刻**记下。
+	//
+	// 🔴 nil 是「不知道是哪张卡」，不是「没有卡」。这一格以前根本不存在：消息只
+	// 挂 modem_id，而 app.modems.iccid 会随换卡而变 —— 于是旧卡收的消息在换卡
+	// 之后全部显示成新卡收的，而且分不回去。
+	//
+	// ⚠️ 永远不要改成从 app.modems 现查来补它。那查到的是「这根棒现在插的卡」，
+	// 正是这一列存在要防的那个答案。
+	Iccid *string `json:"iccid,omitempty"`
 	// Encoding is the alphabet the message arrived in. A reader needs it: an
 	// "8bit" body is hex because the message was binary, not because decoding
 	// failed.
@@ -190,6 +199,7 @@ func (store SQL) Thread(
 	err := tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT id::text, device_id::text, direction, peer, body, bearer,
+			       iccid,
 			       encoding, status, received_at, delivered_at, delivery_code,
 			       read_at, command_id::text, failure_reason
 			  FROM (
@@ -208,15 +218,19 @@ func (store SQL) Thread(
 			var at time.Time
 			var delivered, read sql.NullTime
 			var code sql.NullInt64
-			var commandID, reason sql.NullString
+			var commandID, reason, iccid sql.NullString
 			if err := rows.Scan(
 				&message.ID, &message.DeviceID, &message.Direction, &message.Peer,
-				&message.Body, &message.Bearer, &message.Encoding, &message.Status,
+				&message.Body, &message.Bearer, &iccid, &message.Encoding, &message.Status,
 				&at, &delivered, &code, &read, &commandID, &reason,
 			); err != nil {
 				return err
 			}
 			message.ReceivedAt = at.UnixMilli()
+			if iccid.Valid {
+				value := iccid.String
+				message.Iccid = &value
+			}
 			if delivered.Valid {
 				value := delivered.Time.UnixMilli()
 				message.DeliveredAt = &value
