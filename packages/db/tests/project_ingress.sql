@@ -2,6 +2,10 @@
 
 SET ROLE vodoge_app;
 
+-- ⚠️ bearer 曾经写的是 "cellular"，而契约的 bearer 说的是消息**怎么被投递的**
+--    （cs / ims / nas），不是它从哪种无线电来。messages_bearer_valid 只认那三个
+--    加 unknown；边缘早就改送 unknown 了，这个测试没跟上。
+
 BEGIN;
 SET LOCAL app.tenant_id = '88888888-8888-8888-8888-888888888888';
 
@@ -37,7 +41,7 @@ BEGIN
         1,
         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
         'SmsReceived',
-        '{"peer":"10086","body":"one","bearer":"cellular","received_at":1700000000000}'::jsonb
+        '{"peer":"10086","body":"one","bearer":"unknown","received_at":1700000000000}'::jsonb
     );
     PERFORM * FROM app.accept_ingress(
         '88888888-8888-8888-8888-888888888888',
@@ -45,7 +49,7 @@ BEGIN
         1,
         'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
         'SmsReceived',
-        '{"peer":"10086","body":"one","bearer":"cellular","received_at":1700000000000}'::jsonb
+        '{"peer":"10086","body":"one","bearer":"unknown","received_at":1700000000000}'::jsonb
     );
     PERFORM * FROM app.accept_ingress(
         '88888888-8888-8888-8888-888888888888',

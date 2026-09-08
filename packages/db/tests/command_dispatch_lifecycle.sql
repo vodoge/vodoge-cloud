@@ -110,20 +110,24 @@ BEGIN
         NULL;
     END;
 
-    BEGIN
-        INSERT INTO app.command_receipts (
-            id, tenant_id, command_id, kind, delivery_id
-        ) VALUES (
-            '20000000-0000-0000-0000-000000000001',
-            '33333333-3333-3333-3333-333333333333',
-            'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-            'accepted',
-            '10000000-0000-0000-0000-000000000001'
-        );
-        RAISE EXCEPTION 'vodoge_app unexpectedly inserted a command receipt';
-    EXCEPTION WHEN insufficient_privilege THEN
-        NULL;
-    END;
+        -- ⚠️ 这一段原来断言 vodoge_app **不能**写回执，用的还是一个从没被创建过的
+        --    command_id。它当初能过，是因为权限检查先于外键触发 —— 也就是说它
+        --    从来没有真的验证过那条权限。而 0027 之后这个权限是**有意**授予的
+        --    （0027_command_grants.sql:19-24：「这些生命周期写入从没被执行过，
+        --    因为从来没有命令被投递、也就没有回执或结果回来」），写回执的正是
+        --    app 角色本身（internal/commands/lifecycle.go:203）。
+        --
+        --    断言的本来就是一个权限事实，那就直接断言权限：不必为此造出一整条
+        --    投递链（投递记录只有 dispatcher 建得了，这个测试正在证明这一点）。
+        --    两条对照在一起才是这个测试的价值：回执归 app，投递记录归 dispatcher。
+        IF NOT has_table_privilege('vodoge_app', 'app.command_receipts', 'INSERT') THEN
+            RAISE EXCEPTION 'vodoge_app lost INSERT on command_receipts; the '
+                'command lifecycle writes receipts as the app role';
+        END IF;
+        IF has_table_privilege('vodoge_app', 'app.command_delivery_attempts', 'INSERT') THEN
+            RAISE EXCEPTION 'vodoge_app gained INSERT on command_delivery_attempts; '
+                'delivery attempts belong to the dispatcher';
+        END IF;
 END
 $$;
 COMMIT;

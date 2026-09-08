@@ -59,14 +59,48 @@ export type BlockedModule = {
   cost: string;
 };
 
+/** 一根可以用来发的模组。收件人看到的是**这张卡**的号码。 */
+export type SendModem = {
+  imei: string;
+  /** 卡上的号码。null 有两种意思，靠下面那一位分开。 */
+  msisdn: string | null;
+  /**
+   * 号码为空时，空的是哪一种：true = 换了卡还没读出来，false = 问过了、这张卡
+   * 就是没有号码。
+   *
+   * 🔴 在这里合成一句话是错的：运维正是靠号码认卡的，「待读」会让他等一个
+   * 永远不来的答案，而对一张真读不到号码的卡说「无号码」又是替它下了结论。
+   */
+  msisdnPending: boolean;
+};
+
 export type SendDevice = {
   id: string;
   name: string;
   /** Empty for a device with nothing known against it. */
   blocked: BlockedModule[];
+  /**
+   * 这台设备上可以发的模组。
+   *
+   * 🔴 表单以前不问这个，只发 {device_id, to, body}，而网关的 send_sms 是
+   * NeedsModem（catalogue.go:188），没有 15 位 IMEI 直接 400 —— 收件箱这个
+   * 表单因此**一条都发不出去**。设备页和计划任务那两条路一直带着它。
+   *
+   * 也不能替运维随便挑一根：收件人看到的是那张卡的号码，费用记在那个订阅上，
+   * 挑错了是一个看起来成功的错答案。
+   */
+  modems: SendModem[];
 };
 
 export type SendLabels = {
+  /** 「从哪根模组发」那个选择框的标签。 */
+  modem: string;
+  /** 这台设备上一根可发的模组都没有时，选择框里那句话。 */
+  noModem: string;
+  /** 号码还没为这张卡读出来时说的话。 */
+  msisdnPending: string;
+  /** 问过了、这张卡就是没有号码时说的话。和上一句不能合并。 */
+  msisdnNone: string;
   to: string;
   body: string;
   send: string;
@@ -93,7 +127,7 @@ export type SendLabels = {
 };
 
 /** Exactly the body `POST /v1/commands` took before, unchanged. */
-type Draft = { device_id: string; to: string; body: string };
+type Draft = { device_id: string; modem_imei: string; to: string; body: string };
 
 export function SendSmsForm({
   devices,
@@ -118,8 +152,17 @@ export function SendSmsForm({
   const [pending, setPending] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [deviceId, setDeviceId] = useState(devices[0]?.id ?? "");
+  // 换设备就把模组选择清掉：上一台的 IMEI 在这一台上不存在，留着它会让
+  // 表单看起来选好了、然后被网关以 400 拒掉。
+  const [modemImei, setModemImei] = useState("");
 
   const chosen = devices.find((device) => device.id === deviceId) ?? devices[0];
+  const blockedImeis = new Set((chosen?.blocked ?? []).map((module) => module.imei));
+  const sendable = (chosen?.modems ?? []).filter((modem) => !blockedImeis.has(modem.imei));
+  // 选中的那根还在不在当前设备上；不在就回落到第一根可发的。
+  const activeImei = sendable.some((modem) => modem.imei === modemImei)
+    ? modemImei
+    : (sendable[0]?.imei ?? "");
   const blocked = chosen?.blocked ?? [];
   const hold = sendHold({ modemsKnown: !modemsUnknown, blocked });
 
@@ -134,6 +177,7 @@ export function SendSmsForm({
     const form = new FormData(event.currentTarget);
     setPending({
       device_id: String(form.get("device_id") ?? ""),
+      modem_imei: String(form.get("modem_imei") ?? ""),
       to: String(form.get("to") ?? ""),
       body: String(form.get("body") ?? ""),
     });
@@ -146,6 +190,8 @@ export function SendSmsForm({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         device_id: draft.device_id,
+        // 网关的 send_sms 是 NeedsModem：少了它就是 400，而不是「随便挑一根」。
+        modem_imei: draft.modem_imei,
         to: draft.to,
         body: draft.body,
       }),
@@ -175,6 +221,35 @@ export function SendSmsForm({
                 {device.blocked.length > 0 ? ` — ${labels.blockedBadge}` : ""}
               </option>
             ))}
+          </Select>
+        </Field>
+
+        {/* 从哪根模组发。**必须由人选**：收件人看到的是这张卡的号码，费用记在
+            这个订阅上，替他挑一根是个看起来成功的错答案。网关那边它也是必填
+            （send_sms 是 NeedsModem），少了就是 400。 */}
+        <Field label={labels.modem}>
+          <Select
+            name="modem_imei"
+            required
+            value={activeImei}
+            disabled={sendable.length === 0}
+            onChange={(event) => setModemImei(event.target.value)}
+          >
+            {sendable.length === 0 ? (
+              <option value="">{labels.noModem}</option>
+            ) : (
+              sendable.map((modem) => (
+                <option key={modem.imei} value={modem.imei}>
+                  {modem.imei}
+                  {/* 号码为空时说清是哪一种空。留白读起来像「这张卡没有号码」，
+                      而那两种情况要运维做的事相反：一个再等一轮，一个到此为止。 */}
+                  {` · ${
+                    modem.msisdn ??
+                    (modem.msisdnPending ? labels.msisdnPending : labels.msisdnNone)
+                  }`}
+                </option>
+              ))
+            )}
           </Select>
         </Field>
 

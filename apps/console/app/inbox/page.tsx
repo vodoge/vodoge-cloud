@@ -106,10 +106,16 @@ export default async function InboxPage({
     loadError = true;
   }
 
-  let modems: { deviceId: string; imei: string }[] = [];
+  let modems: { deviceId: string; imei: string; msisdn: string | null; msisdnPending: boolean }[] = [];
   let modemsUnknown = false;
   try {
-    modems = await fetchModems(host, token);
+    // 号码也要带上：发信人选的是「哪张卡」，而运维认卡靠的是号码不是 IMEI。
+    modems = (await fetchModems(host, token)).map((modem) => ({
+      deviceId: modem.deviceId,
+      imei: modem.imei,
+      msisdn: modem.msisdn,
+      msisdnPending: modem.msisdnPending,
+    }));
   } catch {
     // Empty and "not read" are the same array, so the difference is carried
     // beside it. The audit page shipped that bug for months.
@@ -118,6 +124,15 @@ export default async function InboxPage({
 
   const sendDevices: SendDevice[] = devices.map((device) => ({
     ...device,
+    // 表单必须问「从哪根发」：网关的 send_sms 是 NeedsModem，而且替运维挑一根
+    // 是个看起来成功的错答案 —— 收件人看到的是那张卡的号码。
+    modems: modems
+      .filter((modem) => modem.deviceId === device.id)
+      .map((modem) => ({
+        imei: modem.imei,
+        msisdn: modem.msisdn,
+        msisdnPending: modem.msisdnPending,
+      })),
     blocked: blockedSendModules(modems, device.id).map((module) => ({
       imei: module.imei,
       why: t(module.why, locale, { imei: module.imei }),
@@ -184,6 +199,10 @@ export default async function InboxPage({
               }}
               labels={{
                 device: t("inbox.colDevice", locale),
+                modem: t("inbox.sendModem", locale),
+                noModem: t("inbox.sendNoModem", locale),
+                msisdnPending: t("inbox.sendMsisdnPending", locale),
+                msisdnNone: t("inbox.sendMsisdnNone", locale),
                 to: t("inbox.colPeer", locale),
                 body: t("inbox.colBody", locale),
                 send: t("inbox.send", locale),

@@ -178,6 +178,19 @@ jobs:
             exit 1
           fi
           echo "every catalogue kind is storable ($(wc -l < /tmp/kinds.txt) kinds)"
+      - name: The database tests actually run
+        env:
+          PGPASSWORD: ci
+        # 🔴 这一步此前不存在：packages/db/tests 下的十个 .sql 从来没有被执行过，
+        #    仓库里也没有别的 runner。代价是具体的 —— 0044 那次 CREATE OR REPLACE
+        #    静默删掉了 accept_ingress 的 SmsStatusReport 分支，此后十一天里每一条
+        #    投递回执都被写成 Unstorable 墓碑丢掉，而没有任何东西会变红。
+        #
+        #    runner 给每个测试单独建库（TEMPLATE），因为这些测试自带 COMMIT：
+        #    共用一个库时红绿取决于文件名顺序。
+        # 不复用上一步那个库：runner 自己建模板并重放一遍，这样它在本机和 CI 上
+        #    跑的是同一条路径，也不依赖前面某一步留下的状态。
+        run: PGHOST=localhost PG_USER=vodoge ./packages/db/run-tests.sh
       - name: Migrations are recorded
         env:
           PGPASSWORD: ci

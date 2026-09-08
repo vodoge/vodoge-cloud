@@ -7,6 +7,18 @@ SET ROLE vodoge_app;
 BEGIN;
 SET LOCAL app.tenant_id = '11111111-1111-1111-1111-111111111111';
 
+-- ⚠️ 这两行原本不在：这个测试是写来**接在别的测试后面**跑的，靠前一个测试
+--    留下的租户和设备行。十个测试共用一个库、而且每个都 COMMIT，所以它的
+--    红绿取决于文件名顺序。现在每个测试各跑在自己的库上，前置行必须自己建。
+INSERT INTO app.tenants (id, slug, name, status, region)
+VALUES ('11111111-1111-1111-1111-111111111111', 'command-outbox',
+        'Command Outbox', 'active', 'cn');
+
+INSERT INTO app.devices (id, tenant_id, imei, name, vertical)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        '11111111-1111-1111-1111-111111111111',
+        '860000000000011', 'command-outbox-device', 'sms');
+
 DO $$
 DECLARE
     v_first_id uuid;

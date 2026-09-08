@@ -2819,7 +2819,8 @@ const CAPTURED_FROM = {
   // 构建、样式表逐字节比对**完全相同**（产物名仍是 7d09d96e2196fd2f）。
   // 2026-09-07：随上面的 recipe 一起前移（重拍过，画面逐字节未变）。
   // 2026-09-07 短信记卡号：随 recipe 一起前移（重拍过，画面逐字节未变）。
-  chrome: "0ed5cb0c035243b661d23d29bb641e437c64a7e6da76c1a38ed6a9fa6f39a5fe",
+  // 2026-09-08：随上面的 recipe 一起前移（重拍过，画面逐字节未变）。
+  chrome: "207f419640f504fad0ff40f76b46326fa43c60f8a4024b6bc63481e0c539b8e0",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2856,7 +2857,16 @@ const CAPTURED_FROM = {
   // 消息会全部显示成新卡收的，且分不回去。
   //
   // 取景是首页，既不画会话也不画消息。同样是真重拍付的账，不是拿样式表抵的。
-  recipe: "2f7a363ef77a077f101234cafd5b626454b9090aef51fd383d1cf30b8ca24718",
+  // 2026-09-08 重拍：**两张图仍然逐字节相同**（`shots` 原样保留）。
+  //
+  // 这一次是收件箱那个发不出去的发送表单：send-sms.tsx 多了一个「从哪根
+  // 模组发」的选择框（网关的 send_sms 是 NeedsModem，表单一直没送它，
+  // 所以收件箱里每一次发送都是 400），inbox/page.tsx 把模组和号码传下去，
+  // 两个语言包各加三个键。首页既不画收件箱也不画这个表单。
+  // 2026-09-08 第二次重拍（同一次改动里的第二轮）：**画面仍逐字节相同**。
+  // 选择框里号码为空时改成分两种说法（「号码待读」/「这张卡没有号码」），
+  // 因为合成一句会让运维等一个永远不来的答案。首页不画收件箱。
+  recipe: "8d5b497fe14a92b8b761e3237f6b8791ad272622ad5b84fd23143e1f5b9498e9",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",
