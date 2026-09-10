@@ -169,7 +169,17 @@ type DeviceStatePayload struct {
 	Modems       []ModemState         `json:"modems"`
 	Host         *HostState           `json:"host,omitempty"`
 	ManagedImeis []string             `json:"managed_imeis,omitempty"`
+	Adoptions    []Adoption           `json:"adoptions,omitempty"`
 	Discoveries  []DiscoveryCandidate `json:"discoveries,omitempty"`
+}
+
+type Adoption struct {
+	ModemImei    string  `json:"modem_imei"`
+	AdoptedAt    int64   `json:"adopted_at"`
+	AdoptedBy    string  `json:"adopted_by"`
+	Family       *string `json:"family,omitempty"`
+	AdoptionNote *string `json:"adoption_note,omitempty"`
+	UsbDevice    *string `json:"usb_device,omitempty"`
 }
 
 type HostState struct {

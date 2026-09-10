@@ -185,7 +185,17 @@ export interface DeviceStatePayload {
   modems: Array<ModemState>;
   host?: HostState | null;
   managed_imeis?: Array<Imei>;
+  adoptions?: Array<Adoption>;
   discoveries?: Array<DiscoveryCandidate>;
+}
+
+export interface Adoption {
+  modem_imei: Imei;
+  adopted_at: number;
+  adopted_by: string;
+  family?: string | null;
+  adoption_note?: string | null;
+  usb_device?: string | null;
 }
 
 export interface HostState {
