@@ -6496,10 +6496,16 @@ test("the four hand-written pills on the device list are the shared badge", () =
   // Roaming is no longer among them: the network cell was duplicated between
   // this page and the device detail page, and it now lives in
   // components/modem-network.tsx with its badge inside it.
+  //
+  // Seven since adoption stopped implying observation: this table is
+  // tenant-wide, so a module that is on the register and has never been
+  // seen on any bus sits here beside modules in service -- with every
+  // observed cell empty, which is the shape of a broken one. It says so
+  // about itself now.
   assert.equal(
     rendered.length,
-    6,
-    "the three remaining hand-written pills, MO, uncharacterised and the alert level",
+    7,
+    "the three remaining hand-written pills, never-seen, MO, uncharacterised and the alert level",
   );
 
   const tones = rendered.map((tag) => /tone="(\w+)"/.exec(tag)?.[1]);
@@ -6507,9 +6513,9 @@ test("the four hand-written pills on the device list are the shared badge", () =
     tones,
     // The alert level is first: its table is drawn above the fleet one, and
     // its tone is computed rather than written, so it reads as undefined here.
-    [undefined, "warn", "warn", "neutral", "neutral", "warn"],
-    "alert level, backlog, not-manageable, MT, MO, uncharacterised — source order, " +
-      "with roaming now drawn by components/modem-network.tsx",
+    [undefined, "warn", "warn", "warn", "neutral", "neutral", "warn"],
+    "alert level, backlog, not-manageable, never-seen, MT, MO, uncharacterised — " +
+      "source order, with roaming now drawn by components/modem-network.tsx",
   );
   // A count and a category are not states, so they take no status dot; the two
   // that qualify a module's condition keep theirs.

@@ -345,56 +345,78 @@ export default async function DevicesPage({
                             {t("modems.unmanaged", locale)}
                           </Badge>
                         ) : null}
-                      </span>
-                    </TableCell>
-                    <TableCell mono faint secondary>
-                      {modem.iccid ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <ModemNetwork
-                        home={modem.homePlmn}
-                        serving={modem.servingPlmn}
-                        locale={locale}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <StateBadge state={modem.state ?? "unknown"} />
-                    </TableCell>
-                    <TableCell mono>
-                      {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
-                    </TableCell>
-                    <TableCell mono secondary>
-                      <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
-                    </TableCell>
-                    <TableCell secondary>
-                      {/* Both directions. Receiving was shown alone here for a
-                          while, which made a card that can take a message and
-                          not send one look fully capable — and that pair is
-                          exactly what the Club profile on this bench is.
-                          A transport is a category rather than a state, so it
-                          takes no dot. */}
-                      <span className="flex flex-wrap items-center gap-2">
-                        <Badge tone="neutral" dot={false}>
-                          ↓ {modem.smsMt ?? "—"}
-                        </Badge>
-                        <Badge tone="neutral" dot={false}>
-                          ↑ {modem.smsMo ?? "—"}
-                        </Badge>
-                        {/* Not a rule but a fallback: nobody has characterised
-                            this (family, carrier) pair at all, which is the one
-                            state a new ledger entry would fix. */}
-                        {modem.capabilityOrigin === "fallback" ? (
-                          <Badge tone="warn" title={t("modems.uncharacterisedHint", locale)}>
-                            {t("modems.uncharacterised", locale)}
-                          </Badge>
+                        {/* 纳管了，但这台机器从没在总线上见过它。
+                            🔴 这张表是跨设备平铺的，它旁边就是在服役的模组 —— 而它每一个
+                            观测格都是空的：`state` 为 null 会画成 `unknown` 徽标，「最后见到」
+                            会画成「从未」。那正好是「模组坏了、已经停止上报」的样子，而事实
+                            是「还没插上」，两者该做的事正好相反。 */}
+                        {modem.observed === false ? (
+                          <Badge tone="warn">{t("modems.neverSeen", locale)}</Badge>
                         ) : null}
                       </span>
                     </TableCell>
-                    <TableCell mono faint secondary>
-                      {modem.lastSeen
-                        ? new Date(modem.lastSeen).toISOString().replace("T", " ").slice(0, 19)
-                        : t("common.never", locale)}
-                    </TableCell>
+                    {modem.observed ? (
+                      <>
+                        <TableCell mono faint secondary>
+                          {modem.iccid ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <ModemNetwork
+                            home={modem.homePlmn}
+                            serving={modem.servingPlmn}
+                            locale={locale}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <StateBadge state={modem.state ?? "unknown"} />
+                        </TableCell>
+                        <TableCell mono>
+                          {modem.signalDbm === null ? "—" : `${modem.signalDbm} dBm`}
+                        </TableCell>
+                        <TableCell mono secondary>
+                          <ModemQuality rsrp={modem.rsrp} rsrq={modem.rsrq} sinr={modem.sinr} />
+                        </TableCell>
+                        <TableCell secondary>
+                          {/* Both directions. Receiving was shown alone here for a
+                              while, which made a card that can take a message and
+                              not send one look fully capable — and that pair is
+                              exactly what the Club profile on this bench is.
+                              A transport is a category rather than a state, so it
+                              takes no dot. */}
+                          <span className="flex flex-wrap items-center gap-2">
+                            <Badge tone="neutral" dot={false}>
+                              ↓ {modem.smsMt ?? "—"}
+                            </Badge>
+                            <Badge tone="neutral" dot={false}>
+                              ↑ {modem.smsMo ?? "—"}
+                            </Badge>
+                            {/* Not a rule but a fallback: nobody has characterised
+                                this (family, carrier) pair at all, which is the one
+                                state a new ledger entry would fix. */}
+                            {modem.capabilityOrigin === "fallback" ? (
+                              <Badge tone="warn" title={t("modems.uncharacterisedHint", locale)}>
+                                {t("modems.uncharacterised", locale)}
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </TableCell>
+                        <TableCell mono faint secondary>
+                          {modem.lastSeen
+                            ? new Date(modem.lastSeen).toISOString().replace("T", " ").slice(0, 19)
+                            : t("common.never", locale)}
+                        </TableCell>
+                      </>
+                    ) : (
+                      /* 七个观测格对这一根全是空的。照常画就是 `unknown` 徽标 + 一排横杠
+                         + 一句「从未」，读起来是一根停止上报的坏模组 —— 而横杠在这张表里
+                         的意思本来就是「读过，没读到」。换成一句话，占的正是那些没有意义
+                         的格子，密度没有变差。
+                         colSpan 偏大会被浏览器截断（手机上这几列多数是 `secondary`，
+                         已经收起），偏小才会在右边留个洞 —— 见 journal.tsx 的同一处结论。 */
+                      <TableCell colSpan={7} wrap>
+                        {t("modems.neverSeenHint", locale)}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

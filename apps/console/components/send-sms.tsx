@@ -72,6 +72,16 @@ export type SendModem = {
    * 永远不来的答案，而对一张真读不到号码的卡说「无号码」又是替它下了结论。
    */
   msisdnPending: boolean;
+  /**
+   * 这台机器**见过**这根硬件没有。
+   *
+   * 🔴 手工纳管、货还没到的那一根也在 /v1/modems 里（0066 起，册子和观测
+   * 各说自己那一半）。它的号码和卡号全是 NULL，于是网关算出的
+   * `msisdnPending` 是 false，选项会被画成「这张卡没有号码」——
+   * 一个看起来完全正常、可以选中的发送方，而那根棒子还在备件柜里。
+   * 发出去必然失败，而且失败在边缘。
+   */
+  observed: boolean;
 };
 
 export type SendDevice = {
@@ -101,6 +111,8 @@ export type SendLabels = {
   msisdnPending: string;
   /** 问过了、这张卡就是没有号码时说的话。和上一句不能合并。 */
   msisdnNone: string;
+  /** 纳管了、但这台机器从没见过它 —— 选不了，且要说清为什么。 */
+  neverSeen: string;
   to: string;
   body: string;
   send: string;
@@ -158,7 +170,12 @@ export function SendSmsForm({
 
   const chosen = devices.find((device) => device.id === deviceId) ?? devices[0];
   const blockedImeis = new Set((chosen?.blocked ?? []).map((module) => module.imei));
-  const sendable = (chosen?.modems ?? []).filter((modem) => !blockedImeis.has(modem.imei));
+  const allowed = (chosen?.modems ?? []).filter((modem) => !blockedImeis.has(modem.imei));
+  // 能发的：没被拉黑，而且这台机器真的见过它。
+  const sendable = allowed.filter((modem) => modem.observed);
+  // 见都没见过的**不藏起来**：藏了运维会以为自己纳管的那一根丢了，
+  // 转头去重新纳管一遍。列出来、选不中、写清为什么。
+  const unseen = allowed.filter((modem) => !modem.observed);
   // 选中的那根还在不在当前设备上；不在就回落到第一根可发的。
   const activeImei = sendable.some((modem) => modem.imei === modemImei)
     ? modemImei
@@ -250,6 +267,14 @@ export function SendSmsForm({
                 </option>
               ))
             )}
+          {/* 纳管了、但从没被观测到的那几根。`disabled` 是真拦住 ——
+              它们的号码字段全是空的，不标出来就和「这张卡没有号码」
+              长得一模一样，而那两种要做的事完全不同。 */}
+          {unseen.map((modem) => (
+            <option key={modem.imei} value={modem.imei} disabled>
+              {`${modem.imei} · ${labels.neverSeen}`}
+            </option>
+          ))}
           </Select>
         </Field>
 

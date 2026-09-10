@@ -106,7 +106,14 @@ export default async function InboxPage({
     loadError = true;
   }
 
-  let modems: { deviceId: string; imei: string; msisdn: string | null; msisdnPending: boolean }[] = [];
+  let modems: {
+    deviceId: string;
+    imei: string;
+    msisdn: string | null;
+    msisdnPending: boolean;
+    // 见过没有。手工纳管、货没到的那一根也在这个列表里，而它选不了。
+    observed: boolean;
+  }[] = [];
   let modemsUnknown = false;
   try {
     // 号码也要带上：发信人选的是「哪张卡」，而运维认卡靠的是号码不是 IMEI。
@@ -115,6 +122,7 @@ export default async function InboxPage({
       imei: modem.imei,
       msisdn: modem.msisdn,
       msisdnPending: modem.msisdnPending,
+      observed: modem.observed,
     }));
   } catch {
     // Empty and "not read" are the same array, so the difference is carried
@@ -132,6 +140,7 @@ export default async function InboxPage({
         imei: modem.imei,
         msisdn: modem.msisdn,
         msisdnPending: modem.msisdnPending,
+        observed: modem.observed,
       })),
     blocked: blockedSendModules(modems, device.id).map((module) => ({
       imei: module.imei,
@@ -203,6 +212,7 @@ export default async function InboxPage({
                 noModem: t("inbox.sendNoModem", locale),
                 msisdnPending: t("inbox.sendMsisdnPending", locale),
                 msisdnNone: t("inbox.sendMsisdnNone", locale),
+                neverSeen: t("modems.neverSeenPick", locale),
                 to: t("inbox.colPeer", locale),
                 body: t("inbox.colBody", locale),
                 send: t("inbox.send", locale),

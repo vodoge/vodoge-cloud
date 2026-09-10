@@ -2823,7 +2823,8 @@ const CAPTURED_FROM = {
   // 2026-09-10：连同上面的 recipe 一起重盖。两张画面拍出来逐字节相同，
   // 改动全在设备页（模组表以注册册子为主，没被观测过的那一根改画一句话），
   // 而取景是首页。
-  chrome: "79ca1a8e3200ea064fa1b9d7c464915b07a06e1fd65623ac4d40c1a1972a1412",
+  // 2026-09-10 第二次：连同上面的 recipe 一起重盖，理由同上。
+  chrome: "45df10a99ebcfc8854411085e7c58063740ca0bca40a8c4e659fd46b86028800",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2875,7 +2876,14 @@ const CAPTURED_FROM = {
   // 观测为辅（0066），`ModemRow` 多了 `observed`，设备页对没被观测过的那一根
   // 不再画八个横杠，改画一句话。横杠在这张表里的意思是「读过，没读到」，
   // 而这一根是「还没插上」——两者该做的事正好相反。取景是首页，不画设备页。
-  recipe: "959923144c7d0a58ac48ef1c7a8ffb65c69ba5f7e1b29acdd9c95e7640e161d0",
+  // 2026-09-10 第二次重拍：**两张图仍然逐字节相同**（`shots` 原样保留）。
+  //
+  // 这一次是把「纳管不等于见过」补到另外两个消费方上。`/v1/modems` 是
+  // 整租户的，三个页面吃同一份数据，而上一版只改了设备详情页 ——
+  // 设备总览页把那一行画成了 `unknown` 徽标加一排横杠加一句「从未」
+  // （也就是「坏了、已停止上报」的样子），收件箱的发送表单则把它列成了
+  // 一个可以选中的发信方。取景是首页，既不画这两张表也不画那个表单。
+  recipe: "056a3a83e73581a40887639506bf7cee1c0996e2c609c72c9dd7e8394693b19b",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

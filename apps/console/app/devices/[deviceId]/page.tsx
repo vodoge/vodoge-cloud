@@ -412,47 +412,47 @@ function OverviewPanel({
                   </TableCell>
                   {modem.observed ? (
                     <>
-                    <TableCell mono faint secondary>
-                      {modem.iccid ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <ModemNetwork home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
-                    </TableCell>
-                    <TableCell mono faint secondary>
-                      {modem.firmware ?? "—"}
-                    </TableCell>
-                    {/*
-                      号码按卡记：换卡即作废（0062/0063）。作废之后这一格会变空，而空有两种
-                      意思 ——「问过了，这张卡没号码」和「换了卡，还没读出来」。运维靠这一格
-                      认卡，两种该做的事正好相反，所以不能画同一个横杠。
-                    */}
-                    <TableCell mono={!modem.msisdnPending} faint secondary>
-                      {modem.msisdn ?? (modem.msisdnPending ? "待读（刚换卡）" : "—")}
-                    </TableCell>
-                    <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
-                      {modem.controlPort ?? "—"}
-                    </TableCell>
-                    {/* The module's own profile table. Which context carries
-                        data is a row on the module rather than a property of the
-                        card, so this is the first thing to read when a stick is
-                        registered and still carrying nothing. */}
-                    <TableCell mono faint secondary>
-                      <ApnContexts contexts={modem.apnContexts} locale={locale} />
-                    </TableCell>
-                    <TableCell mono faint secondary>
-                      <MatrixKey
-                        family={modem.family}
-                        carrier={modem.carrierProfile}
-                        origin={modem.capabilityOrigin}
-                        locale={locale}
-                      />
-                    </TableCell>
-                    <TableCell mono faint secondary>
-                      <ProxyBindings
-                        instances={proxies.filter((row) => row.modemImei === modem.imei)}
-                        locale={locale}
-                      />
-                    </TableCell>
+                      <TableCell mono faint secondary>
+                        {modem.iccid ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <ModemNetwork home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
+                      </TableCell>
+                      <TableCell mono faint secondary>
+                        {modem.firmware ?? "—"}
+                      </TableCell>
+                      {/*
+                        号码按卡记：换卡即作废（0062/0063）。作废之后这一格会变空，而空有两种
+                        意思 ——「问过了，这张卡没号码」和「换了卡，还没读出来」。运维靠这一格
+                        认卡，两种该做的事正好相反，所以不能画同一个横杠。
+                      */}
+                      <TableCell mono={!modem.msisdnPending} faint secondary>
+                        {modem.msisdn ?? (modem.msisdnPending ? "待读（刚换卡）" : "—")}
+                      </TableCell>
+                      <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
+                        {modem.controlPort ?? "—"}
+                      </TableCell>
+                      {/* The module's own profile table. Which context carries
+                          data is a row on the module rather than a property of the
+                          card, so this is the first thing to read when a stick is
+                          registered and still carrying nothing. */}
+                      <TableCell mono faint secondary>
+                        <ApnContexts contexts={modem.apnContexts} locale={locale} />
+                      </TableCell>
+                      <TableCell mono faint secondary>
+                        <MatrixKey
+                          family={modem.family}
+                          carrier={modem.carrierProfile}
+                          origin={modem.capabilityOrigin}
+                          locale={locale}
+                        />
+                      </TableCell>
+                      <TableCell mono faint secondary>
+                        <ProxyBindings
+                          instances={proxies.filter((row) => row.modemImei === modem.imei)}
+                          locale={locale}
+                        />
+                      </TableCell>
                     </>
                   ) : (
                     /* 八个观测格对这一根全是空的，而空在这张表里的意思是
