@@ -116,6 +116,15 @@ export type ModemRow = {
   adoptedAt: string | null;
   /** panel / cloud / migration —— 是谁做的这个决定。履历，不可改。 */
   adoptedBy: string | null;
+  /**
+   * 这台边缘机器**见过**这根硬件没有。
+   *
+   * 纳管是一个决定，观测是一件事实，两者可以只有一半。手工先建后到货的那一根
+   * `observed` 为 false，它的每一个观测字段都是空的 —— 而空在这张表里的常规
+   * 含义是「读过，没读到」。两者画成一样，运维会以为模组坏了，去拔插一根还没
+   * 插上的卡。
+   */
+  observed: boolean;
 };
 
 /** One packet data profile as the module reports it. */
@@ -210,6 +219,7 @@ export function parseModem(value: unknown): ModemRow | null {
     adoptionNote: asString(row.adoption_note),
     adoptedAt: asString(row.adopted_at),
     adoptedBy: asString(row.adopted_by),
+    observed: row.observed !== false,
   };
 }
 

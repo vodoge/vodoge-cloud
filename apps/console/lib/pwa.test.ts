@@ -2820,7 +2820,10 @@ const CAPTURED_FROM = {
   // 2026-09-07：随上面的 recipe 一起前移（重拍过，画面逐字节未变）。
   // 2026-09-07 短信记卡号：随 recipe 一起前移（重拍过，画面逐字节未变）。
   // 2026-09-08：随上面的 recipe 一起前移（重拍过，画面逐字节未变）。
-  chrome: "207f419640f504fad0ff40f76b46326fa43c60f8a4024b6bc63481e0c539b8e0",
+  // 2026-09-10：连同上面的 recipe 一起重盖。两张画面拍出来逐字节相同，
+  // 改动全在设备页（模组表以注册册子为主，没被观测过的那一根改画一句话），
+  // 而取景是首页。
+  chrome: "79ca1a8e3200ea064fa1b9d7c464915b07a06e1fd65623ac4d40c1a1972a1412",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2866,7 +2869,13 @@ const CAPTURED_FROM = {
   // 2026-09-08 第二次重拍（同一次改动里的第二轮）：**画面仍逐字节相同**。
   // 选择框里号码为空时改成分两种说法（「号码待读」/「这张卡没有号码」），
   // 因为合成一句会让运维等一个永远不来的答案。首页不画收件箱。
-  recipe: "8d5b497fe14a92b8b761e3237f6b8791ad272622ad5b84fd23143e1f5b9498e9",
+  // 2026-09-10 重拍：**两张图仍然逐字节相同**（`shots` 原样保留）。
+  //
+  // 这一次是「纳管不等于见过」：模组列表改成以 app.modem_registry 为主、
+  // 观测为辅（0066），`ModemRow` 多了 `observed`，设备页对没被观测过的那一根
+  // 不再画八个横杠，改画一句话。横杠在这张表里的意思是「读过，没读到」，
+  // 而这一根是「还没插上」——两者该做的事正好相反。取景是首页，不画设备页。
+  recipe: "959923144c7d0a58ac48ef1c7a8ffb65c69ba5f7e1b29acdd9c95e7640e161d0",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

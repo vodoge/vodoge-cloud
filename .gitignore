@@ -12,6 +12,12 @@ coverage.out
 
 # Deploy bundle built by the console release step; 8 MB of derived output.
 console-dist.tgz
+admin-dist.tgz
+
+# 网关的交叉编译产物，19 MB。和上面两个是同一类东西、同一个目录，只是一直
+# 漏在忽略之外 —— 而 deploy.sh 要求先 scp 到 deploy/，所以每次发版这个二进制
+# 都会出现在 `git status` 里等着被 `git add .` 顺手扫进去。
+deploy/vodoge-gateway
 
 # Python 字节码。generate.py 被当脚本跑，于是 codegen/ 旁边会长出 __pycache__。
 # 2026-09-05 有一个 .pyc 被 `git add packages/contract/` 扫进过仓库（9c099ad）。

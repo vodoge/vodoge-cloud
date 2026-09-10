@@ -6704,10 +6704,14 @@ test("the device page is drawn by the shared components, at the point of use", (
   // components/modem-network.tsx with the roaming badge inside it. Its own
   // guard is that file being on the ledger; counting it here again would pin a
   // badge this page no longer draws.
+  // Five since adoption stopped implying observation: a module can be on the
+  // registry and never have been seen on this machine's bus, and that row needs
+  // to say so about itself — every observed cell it has is empty, which is the
+  // shape of a broken module.
   assert.equal(
     uses(/<Badge\b/g),
-    4,
-    "unmanaged, configured-APN, uncharacterised-pair and disabled-proxy — roaming moved",
+    5,
+    "unmanaged, never-seen, configured-APN, uncharacterised-pair and disabled-proxy — roaming moved",
   );
   assert.equal(uses(/<StateBadge\b/g), 1, "the device's own state, in the heading");
   const handWritten = classListsIn(source).filter((list) => /(^|\s)badge(-|\s|$)/.test(list));

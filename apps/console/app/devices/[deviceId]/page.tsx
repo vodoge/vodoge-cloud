@@ -402,49 +402,69 @@ function OverviewPanel({
                           {t("modems.unmanaged", locale)}
                         </Badge>
                       ) : null}
+                      {/* 纳管了，但这台机器从没在总线上见过它 —— 手工先建、
+                          硬件还没到货的那一根。它和「模组坏了」长得一样，所以
+                          必须自己说出自己是谁。 */}
+                      {modem.observed === false ? (
+                        <Badge tone="warn">{t("modems.neverSeen", locale)}</Badge>
+                      ) : null}
                     </span>
                   </TableCell>
-                  <TableCell mono faint secondary>
-                    {modem.iccid ?? "—"}
-                  </TableCell>
-                  <TableCell>
-                    <ModemNetwork home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
-                  </TableCell>
-                  <TableCell mono faint secondary>
-                    {modem.firmware ?? "—"}
-                  </TableCell>
-                  {/*
-                    号码按卡记：换卡即作废（0062/0063）。作废之后这一格会变空，而空有两种
-                    意思 ——「问过了，这张卡没号码」和「换了卡，还没读出来」。运维靠这一格
-                    认卡，两种该做的事正好相反，所以不能画同一个横杠。
-                  */}
-                  <TableCell mono={!modem.msisdnPending} faint secondary>
-                    {modem.msisdn ?? (modem.msisdnPending ? "待读（刚换卡）" : "—")}
-                  </TableCell>
-                  <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
-                    {modem.controlPort ?? "—"}
-                  </TableCell>
-                  {/* The module's own profile table. Which context carries
-                      data is a row on the module rather than a property of the
-                      card, so this is the first thing to read when a stick is
-                      registered and still carrying nothing. */}
-                  <TableCell mono faint secondary>
-                    <ApnContexts contexts={modem.apnContexts} locale={locale} />
-                  </TableCell>
-                  <TableCell mono faint secondary>
-                    <MatrixKey
-                      family={modem.family}
-                      carrier={modem.carrierProfile}
-                      origin={modem.capabilityOrigin}
-                      locale={locale}
-                    />
-                  </TableCell>
-                  <TableCell mono faint secondary>
-                    <ProxyBindings
-                      instances={proxies.filter((row) => row.modemImei === modem.imei)}
-                      locale={locale}
-                    />
-                  </TableCell>
+                  {modem.observed ? (
+                    <>
+                    <TableCell mono faint secondary>
+                      {modem.iccid ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <ModemNetwork home={modem.homePlmn} serving={modem.servingPlmn} locale={locale} />
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      {modem.firmware ?? "—"}
+                    </TableCell>
+                    {/*
+                      号码按卡记：换卡即作废（0062/0063）。作废之后这一格会变空，而空有两种
+                      意思 ——「问过了，这张卡没号码」和「换了卡，还没读出来」。运维靠这一格
+                      认卡，两种该做的事正好相反，所以不能画同一个横杠。
+                    */}
+                    <TableCell mono={!modem.msisdnPending} faint secondary>
+                      {modem.msisdn ?? (modem.msisdnPending ? "待读（刚换卡）" : "—")}
+                    </TableCell>
+                    <TableCell mono faint secondary title={modem.usbDevice ?? undefined}>
+                      {modem.controlPort ?? "—"}
+                    </TableCell>
+                    {/* The module's own profile table. Which context carries
+                        data is a row on the module rather than a property of the
+                        card, so this is the first thing to read when a stick is
+                        registered and still carrying nothing. */}
+                    <TableCell mono faint secondary>
+                      <ApnContexts contexts={modem.apnContexts} locale={locale} />
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      <MatrixKey
+                        family={modem.family}
+                        carrier={modem.carrierProfile}
+                        origin={modem.capabilityOrigin}
+                        locale={locale}
+                      />
+                    </TableCell>
+                    <TableCell mono faint secondary>
+                      <ProxyBindings
+                        instances={proxies.filter((row) => row.modemImei === modem.imei)}
+                        locale={locale}
+                      />
+                    </TableCell>
+                    </>
+                  ) : (
+                    /* 八个观测格对这一根全是空的，而空在这张表里的意思是
+                       「读过，没读到」—— 画成八个横杠，运维会当成模组坏了，
+                       去拔插一根还没插上的卡。这里把那八格换成一句话：说清
+                       为什么没有数据，以及接下来该做哪一件事。
+                       colSpan 偏大会被浏览器截断（手机上只剩两列），偏小才
+                       会在右边留个洞，所以按桌面列数写。 */
+                    <TableCell colSpan={8} wrap>
+                      {t("modems.neverSeenHint", locale)}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

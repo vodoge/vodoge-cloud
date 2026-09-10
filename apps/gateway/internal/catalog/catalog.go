@@ -173,6 +173,15 @@ type Modem struct {
 	//
 	// 只有 AdoptionNote 可改（update_modem 命令）。另外两个是履历 ——
 	// 改它们唯一的办法本来是取消纳管再纳管，而那正是 update_modem 要避免的。
+	// Observed 是「这台机器见过它没有」。
+	//
+	// 🔴 false 的那一行是这次改动要救的：纳管是一个**决定**，而 app.modems
+	// 只装**被观测到的硬件**。手工新建的模组按定义没有观测（硬件还没到），
+	// 以前它在云端根本没有行，控制台既显示不了也取消不了。
+	//
+	// 界面上不能只是少画几格：要说出**为什么**没有观测、以及**下一步做什么**。
+	Observed bool `json:"observed"`
+
 	AdoptionNote *string `json:"adoption_note,omitempty"`
 	AdoptedAt    *string `json:"adopted_at,omitempty"`
 	AdoptedBy    *string `json:"adopted_by,omitempty"`
@@ -830,7 +839,10 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			       -- 能带着一句备注去纳管，然后再也读不回来。
 			       adoption_note,
 			       adopted_at,
-			       adopted_by
+			       adopted_by,
+			       -- 这台机器见过它没有。三种状态里最要紧的那一位：
+			       -- 已纳管却从没见过（手工新建的、或硬件被拔走了）。
+			       true AS observed
 			  FROM app.modems
 			 -- Retired rows are kept and not listed. A module the edge no
 			 -- longer manages stops being updated, so leaving it in the list
@@ -838,6 +850,48 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 			 -- unmanaged it -- indistinguishable from a healthy module that
 			 -- went quiet, which is the confusion this whole change removes.
 			 WHERE managed
+			   -- 已经在册子里的，走下面那一支（那一支带得出「从没见过」的那种）。
+			   AND NOT EXISTS (
+			       SELECT 1 FROM app.modem_registry AS r
+			        WHERE r.tenant_id = app.modems.tenant_id
+			          AND r.device_id = app.modems.device_id
+			          AND r.imei = app.modems.imei)
+
+			 UNION ALL
+
+			-- 🔴 册子为主：纳管是一个**决定**，而 app.modems 只装**被观测到的
+			--    硬件**。手工新建的那一根按定义没有观测（硬件还没到），所以它
+			--    在 app.modems 里根本没有行 —— 控制台因此一直既显示不了它、
+			--    也取消不了它。这一支就是把它找回来的那一支。
+			--
+			-- ⚠️ 上面那一支不能删。册子是随上行来的，一台还没上报过 adoptions
+			--    的设备（比如 agent 还是旧版）册子是空的；只查册子会让列表**凭空
+			--    变空** —— 那正是这个仓库反复在防的「缺席当成空」。两支并起来，
+			--    没有任何一行会因为这次改动而消失。
+			SELECT
+			       -- 没有观测行就没有 app.modems.id。造一个稳定且看得懂的键，
+			       -- 而不是给它一个空串 —— 空串会让两行「都没有 id」的记录
+			       -- 在前端撞成同一个。
+			       COALESCE(m.id::text, 'registry:' || r.imei),
+			       r.device_id::text, r.imei,
+			       -- 手工新建时人填的型号；观测那份优先（它是量出来的）。
+			       -- 两边都没有时用 'unknown' —— 和 accept_ingress 里同一个哨兵。
+			       COALESCE(m.family, r.family, 'unknown'), m.iccid, m.state, m.registration,
+			       m.signal_dbm, m.rsrp, m.rsrq, m.sinr, m.discovery, m.manageable,
+			       m.home_plmn, m.serving_plmn,
+			       m.capability ->> 'sms_mo', m.capability ->> 'sms_mt',
+			       m.capability ->> 'carrier_profile', m.capability ->> 'origin',
+			       m.last_seen_at, m.firmware, m.msisdn, m.msisdn_iccid,
+			       m.control_port, m.usb_device, m.apn_contexts,
+			       -- 册子上的那份才是决定本身；观测那份是它的拷贝。
+			       r.note, r.adopted_at, r.adopted_by,
+			       (m.id IS NOT NULL) AS observed
+			  FROM app.modem_registry AS r
+			  LEFT JOIN app.modems AS m
+			         ON m.tenant_id = r.tenant_id
+			        AND m.device_id = r.device_id
+			        AND m.imei = r.imei
+
 			 ORDER BY last_seen_at DESC NULLS LAST, imei`)
 		if err != nil {
 			return err
@@ -863,7 +917,7 @@ func (store SQL) ListModems(ctx context.Context, tenantID string) ([]Modem, erro
 				&homePlmn, &servingPlmn, &smsMo, &smsMt,
 				&carrierProfile, &capabilityOrigin, &lastSeen,
 				&firmware, &msisdn, &msisdnIccid, &controlPort, &usbDevice, &apnContexts,
-				&adoptionNote, &adoptedAt, &adoptedBy,
+				&adoptionNote, &adoptedAt, &adoptedBy, &item.Observed,
 			); err != nil {
 				return err
 			}
