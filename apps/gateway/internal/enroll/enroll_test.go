@@ -440,3 +440,48 @@ func TestAQuotaRefusalDoesNotCountTheFleetOutLoud(t *testing.T) {
 		t.Fatalf("message = %q", message)
 	}
 }
+
+// ParseCSR 必须接受边缘实际发出来的那种 CSR。
+//
+// 🔴 这条和边缘那边的 `the_signature_algorithm_is_the_one_the_cloud_parses`
+//
+//	是**一对**。装机的客户端在 2026-09-10 之前根本不存在（`app.device_certificates`
+//	生产上 0 行，现役证书是手工签的），所以这条链上从来没有一次两端都跑过的
+//	验证 —— 而它失败的样子最难查：装机在现场返回 400，而 400 那句话读起来
+//	像「码不对」，运维会去换码，换多少个都一样。
+//
+// ⚠️ 断言的是**算法**而不是一份固定的 CSR 字节。钉一份 fixture 的话，边缘那边
+//
+//	换了签名算法它照样是绿的 —— 而那正是会咬人的那种改动。边缘那条断言钉住
+//	「我们发 ECDSA P-256 / SHA-256」，这条钉住「云端收得下它」，两条一起才
+//	构成一个约定。
+func TestParseCSRAcceptsTheAlgorithmTheEdgeEmits(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate P-256 key: %v", err)
+	}
+	// 主体留空，和边缘一样：SignCSR 忽略 subject，身份来自被消费的那个码。
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+	}, key)
+	if err != nil {
+		t.Fatalf("create CSR: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+
+	csr, err := ParseCSR(pemBytes)
+	if err != nil {
+		t.Fatalf("边缘发的 ECDSA P-256/SHA-256 CSR 被拒了，装机链路断在这里: %v", err)
+	}
+	if csr.SignatureAlgorithm != x509.ECDSAWithSHA256 {
+		t.Fatalf("signature algorithm = %v, want ECDSAWithSHA256", csr.SignatureAlgorithm)
+	}
+	if _, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok {
+		t.Fatalf("public key = %T, want *ecdsa.PublicKey", csr.PublicKey)
+	}
+	// 主体为空是合法的，而且是边缘那边刻意做到的：rcgen 默认会塞一个
+	// `CN=rcgen self signed cert`，那个字符串会以身份的样子出现在日志里。
+	if subject := csr.Subject.String(); subject != "" {
+		t.Fatalf("subject = %q, want empty —— 空主体必须能过，边缘就是这么发的", subject)
+	}
+}
