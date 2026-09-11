@@ -61,6 +61,20 @@ type ResultHandler interface {
 //
 // Wakeups is optional. Redis is a routing hint only; a nil or failing publisher
 // must not prevent Accept or UplinkAck.
+// Dropped is one record this database could never store.
+//
+// 不带 payload：墓碑本身也不留它（那是 0031 的设计）。这里能说的就是
+// 「哪台设备、第几号、本来是什么类型、为什么存不下」—— 而那四样正好是
+// 定位一次静默丢失需要的全部。
+type Dropped struct {
+	// Seq is the sequence the tombstone now occupies.
+	Seq uint64
+	// Kind is what the record would have been.
+	Kind string
+	// Reason is the database's own refusal, verbatim.
+	Reason string
+}
+
 // Alert is one edge-reported fault, as the agent described it.
 //
 // 字段就是 `AlertPayload` 契约里的那几个。刻意不带整个 payload：这一层要
@@ -117,6 +131,22 @@ type Server struct {
 	// 过不过滤、按什么级别过滤，是**接线方**的决定（见 cmd/gateway）。这里
 	// 只负责把边缘说的话原样递出去。
 	OnAlert func(device identity.Device, alert Alert, at time.Time)
+	// OnRecordDropped fires when a record this database can never store is
+	// tombstoned and dropped.
+	//
+	// 🔴 在这之前**没有任何东西盯着这些墓碑**。代价是量过的：0044 那次
+	//    CREATE OR REPLACE 静默删掉了 accept_ingress 的 SmsStatusReport 分支，
+	//    2026-08-28 到 09-07 之间每一条投递回执都被写成墓碑丢掉 —— 18 条，
+	//    11 天，没有一个人知道。墓碑只留 reason 和 original_kind，不留 payload，
+	//    所以那 18 条消息的投递结果**永久消失**。
+	//
+	//    而屏幕上完全看不出：边缘照样每 8 秒读 SR 存储、解码、删除、上行；
+	//    网关也把它算作合法 kind；只有数据库拒收。
+	//
+	// ⚠️ 在**写墓碑的那一刻**触发，不做定时扫表：扫表要记「看过了没有」，
+	//    而那份状态自己又是一个会坏且没人盯的东西。这里每丢一条就说一次，
+	//    没有状态可坏。
+	OnRecordDropped func(device identity.Device, dropped Dropped, at time.Time)
 	// Metrics is optional; a gateway without one still serves.
 	Metrics interface {
 		Add(name string, delta int64, labels ...string)
@@ -404,6 +434,17 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 					slog.Error("could not tombstone an unstorable record; this device's uplink will stall",
 						"tenant_id", device.TenantID, "device_id", device.DeviceID,
 						"seq", seq, "error", tombstoneErr)
+				} else if server.OnRecordDropped != nil {
+					// 墓碑写成了，也就是说这条记录确实**永久丢了**。说出来。
+					//
+					// ⚠️ 只在写成功那一支说。墓碑没写成的时候整条上行已经卡住，
+					//    上面那行 Error 说的是更严重的事 —— 再叠一条「丢了一条
+					//    记录」会把注意力从「这台设备再也说不出话」引开。
+					server.OnRecordDropped(device, Dropped{
+						Seq:    seq,
+						Kind:   string(envelope.Kind),
+						Reason: err.Error(),
+					}, server.now())
 				}
 				// The ack must describe the journal as it really is, not as
 				// this record would have left it. Claiming committed through

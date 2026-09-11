@@ -238,6 +238,25 @@ func main() {
 			At: at,
 		})
 	}
+	// 一条永久丢掉的记录，立刻说出来。
+	//
+	// 🔴 这一条不过滤级别。墓碑的定义就是「数据没了」，而上一次这样丢
+	//    掉 18 条投递回执用了 11 天才被发现 —— 发现它的方式还是有人
+	//    为了别的事去翻 app.ingress。
+	proc.session.OnRecordDropped = func(
+		device identity.Device, dropped wss.Dropped, at time.Time,
+	) {
+		proc.notify.Notify(notify.Event{
+			Kind:     notify.KindRecordDropped,
+			TenantID: device.TenantID,
+			Title:    "上行记录永久丢失 · " + dropped.Kind,
+			Body: "设备 " + device.DeviceID + " 的第 " +
+				strconv.FormatUint(dropped.Seq, 10) + " 条（" + dropped.Kind +
+				"）这个数据库存不下，已经写成墓碑丢掉。墓碑不留 payload，\n\n" +
+				"数据库给的原因：" + dropped.Reason,
+			At: at,
+		})
+	}
 	go func() {
 		ticker := time.NewTicker(session.IdleTimeout / 2)
 		defer ticker.Stop()

@@ -59,6 +59,14 @@ const (
 	//    连「Alert」这个概念都没有。2026-09-11 在生产上查到 263 条告警，
 	//    一条都没有变成通知。
 	KindEdgeAlert Kind = "edge.alert"
+	// KindRecordDropped fires when a record the database can never store is
+	// tombstoned — that is, when data a device sent is permanently lost.
+	//
+	// 🔴 这一条没有级别可挑：墓碑的定义就是「这条记录永久没了」。
+	//    2026-08-28 到 09-07，18 条投递回执被这样丢掉，11 天没人知道 ——
+	//    墓碑只留 reason 和 original_kind，不留 payload，所以那 18 条消息的
+	//    投递结果彻底不存在了。屏幕上完全看不出：三条路里只有数据库在拒收。
+	KindRecordDropped Kind = "record.dropped"
 	// KindTest is what the "send a test" button produces.
 	KindTest Kind = "test"
 )
@@ -95,7 +103,7 @@ func AlertLevelNotifies(level string) bool {
 func Kinds() []Kind {
 	return []Kind{
 		KindSmsReceived, KindDeviceOffline, KindCommandFailed,
-		KindEdgeAlert,
+		KindEdgeAlert, KindRecordDropped,
 		KindContractViolation, KindBackupFailed, KindTest,
 	}
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -834,4 +836,137 @@ func alertFrame(
 		ID: envelopeID, Ts: now.UnixMilli(), DeviceID: device.DeviceID,
 		Seq: stringPtr(strconv.Itoa(seq)), Payload: body,
 	})
+}
+
+// 一条存不下的记录被丢掉时，必须有人被告知。
+//
+// 🔴 这条路**此前一条测试都没有**，而它静默丢过东西：0044 那次
+//
+//	CREATE OR REPLACE 删掉了 accept_ingress 的 SmsStatusReport 分支，
+//	2026-08-28 到 09-07 每一条投递回执都被写成墓碑，18 条，11 天没人知道。
+//	墓碑只留 reason 和 original_kind，不留 payload —— 那 18 条消息的投递
+//	结果永久消失。
+//
+//	而屏幕上完全看不出：边缘照样读 SR 存储、解码、删除、上行；网关也把它
+//	算作合法 kind；只有数据库在拒收。三条路里两条都说「正常」。
+func TestADroppedRecordTellsSomebody(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	conn := newMemoryConn(
+		resumeFrame(t, device, now),
+		alertFrame(t, device, now, 1, "44444444-4444-4444-8444-444444444450",
+			contract.AlertPayload{
+				Level: "error", Code: "whatever", Message: "m",
+				OccurredAt: now.UnixMilli(), Context: map[string]any{},
+			}),
+	)
+
+	store := &refusingStore{
+		Journal: ingress.NewJournal(),
+		refuse:  fmt.Errorf("%w: ingress kind SmsStatusReport is not accepted", ingress.ErrMalformed),
+	}
+	var dropped []Dropped
+	server := &Server{
+		Region:  "cn",
+		Hub:     session.NewHub(),
+		Journal: store,
+		Now:     func() time.Time { return now },
+		OnRecordDropped: func(_ identity.Device, d Dropped, _ time.Time) {
+			dropped = append(dropped, d)
+		},
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v, want EOF", err)
+	}
+
+	if len(dropped) != 1 {
+		t.Fatalf("丢了一条记录却通知了 %d 次 —— 上一次这样丢，11 天没人知道", len(dropped))
+	}
+	if dropped[0].Seq != 1 {
+		t.Errorf("Seq = %d, want 1", dropped[0].Seq)
+	}
+	if dropped[0].Kind != "Alert" {
+		t.Errorf("Kind = %q，丢掉的是什么类型必须说出来", dropped[0].Kind)
+	}
+	if !strings.Contains(dropped[0].Reason, "SmsStatusReport is not accepted") {
+		t.Errorf("数据库给的原因没有原样带出来: %q", dropped[0].Reason)
+	}
+	// 墓碑本身也要写下去 —— 通知不能取代它：序号必须被填上，否则整条上行卡住。
+	if store.tombstones != 1 {
+		t.Errorf("写了 %d 个墓碑，想要 1 个：通知替代不了填序号这件事", store.tombstones)
+	}
+}
+
+// 🔴 墓碑没写成的时候**不要**说「丢了一条记录」。
+//
+// 那时整条上行已经卡住（序号填不上，补洞永远补不过去），上面那行 Error 说的
+// 是更严重的事。再叠一条「丢了一条记录」会把注意力从「这台设备再也说不出话」
+// 引开 —— 而后者才是要先处理的。
+func TestAFailedTombstoneDoesNotAlsoReportADrop(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	conn := newMemoryConn(
+		resumeFrame(t, device, now),
+		alertFrame(t, device, now, 1, "44444444-4444-4444-8444-444444444451",
+			contract.AlertPayload{
+				Level: "error", Code: "whatever", Message: "m",
+				OccurredAt: now.UnixMilli(), Context: map[string]any{},
+			}),
+	)
+
+	store := &refusingStore{
+		Journal:       ingress.NewJournal(),
+		refuse:        fmt.Errorf("%w: nope", ingress.ErrMalformed),
+		tombstoneFail: errors.New("disk full"),
+	}
+	var count int
+	server := &Server{
+		Region:          "cn",
+		Hub:             session.NewHub(),
+		Journal:         store,
+		Now:             func() time.Time { return now },
+		OnRecordDropped: func(_ identity.Device, _ Dropped, _ time.Time) { count++ },
+	}
+	_ = server.ServeDevice(device, conn)
+	if count != 0 {
+		t.Fatalf("墓碑都没写成却报了 %d 次「丢了一条记录」—— "+
+			"那时该说的是「这台设备的上行卡住了」", count)
+	}
+}
+
+// 一个会拒收的 Store：把 Accept 变成 ErrMalformed，走墓碑那条路。
+type refusingStore struct {
+	*ingress.Journal
+	refuse        error
+	tombstoneFail error
+	tombstones    int
+}
+
+func (store *refusingStore) Accept(record ingress.Record) (ingress.Result, error) {
+	if store.refuse != nil && record.Kind != "Resume" {
+		return ingress.Result{}, store.refuse
+	}
+	return store.Journal.Accept(record)
+}
+
+func (store *refusingStore) RecordUnstorable(record ingress.Record, reason string) error {
+	if store.tombstoneFail != nil {
+		return store.tombstoneFail
+	}
+	store.tombstones++
+	return store.Journal.RecordUnstorable(record, reason)
 }
