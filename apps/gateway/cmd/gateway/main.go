@@ -100,8 +100,12 @@ func main() {
 		// Constructed here rather than later: everything wired below captures
 		// it by value, so a dispatcher created after them would leave each one
 		// holding nil and every notification silently unsent.
+		// OnResult 此前是一个**公开但没人接**的槽位。接上它，每一次投递
+		// （成功或失败）就有了一行持久记录 —— 在这之前通知是这个系统里
+		// 唯一一件「做过但查不到」的事。
+		attempts := notify.AttemptLog{DB: sqlStore.DB}
 		proc.notify = notify.New(proc.config, notify.Registry(),
-			notify.Options{Metrics: proc.metrics})
+			notify.Options{Metrics: proc.metrics, OnResult: attempts.Record})
 		defer proc.notify.Close()
 		proc.inbox = messaging.SQL{DB: sqlStore.DB}
 		proc.cards = cards.SQL{DB: sqlStore.DB}

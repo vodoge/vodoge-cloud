@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -610,4 +611,60 @@ func TestAnUnknownAlertLevelIsNotSilentlyDropped(t *testing.T) {
 		t.Fatal("一个这份代码不认得的等级被静默丢掉了 —— " +
 			"契约多一档时，漏掉一个比 error 更严重的比多响一次坏得多")
 	}
+}
+
+// 🔴 `Options` 上每一个钩子都必须被 main.go 接上。
+//
+// `OnResult` 在这个仓库里公开了很久、**一次都没有被接过**：
+// 投递结果因此只进了一个内存计数器，随网关重启清零，而生产上没有任何东西
+// 在抓 /metrics。结果是通知成了这个系统里唯一一件「做过但查不到」的事 ——
+// 2026-09-11 我两次在交付说明里写「投递那一段没法验证」，就是因为它。
+//
+// ⚠️ 这条和 cmd/gateway 那边的 `TestEveryServerHookIsWired` 是同一个形状：
+//
+//	一个 nil 钩子静默什么都不做，屏幕上和日志里都看不出少了什么。
+//	断言**从源码里数钩子**，不写名单 —— 下一个加钩子的人不改名单也会红。
+func TestEveryDispatcherHookIsWired(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("dispatch.go")
+	if err != nil {
+		t.Fatalf("读 dispatch.go: %v", err)
+	}
+	// Options 结构体里的函数字段。
+	block := regexp.MustCompile(`(?s)type Options struct \{.*?\n\}`).Find(source)
+	if block == nil {
+		t.Fatal("找不到 Options 的定义 —— 这条守卫的前提没了")
+	}
+	hooks := regexp.MustCompile(`(?m)^\t(On[A-Za-z]+)\s+func`).FindAllStringSubmatch(string(block), -1)
+	if len(hooks) == 0 {
+		t.Fatal("Options 上一个 On* 钩子都没数到；前提变了就先确认，别删这条断言")
+	}
+
+	wiring, err := os.ReadFile(filepath.Join("..", "..", "cmd", "gateway", "main.go"))
+	if err != nil {
+		t.Fatalf("读 main.go: %v", err)
+	}
+	for _, hook := range hooks {
+		name := hook[1]
+		// 接线的写法是 `OnResult: …`（结构体字面量里的字段）。只找名字不够：
+		// 类型定义处那一行也含有它。
+		if !regexp.MustCompile(name + `:\s*\S`).Match(wiring) {
+			t.Errorf("notify.Options 有钩子 %s，而 main.go 一次都没给它赋值 —— "+
+				"nil 钩子是静默不做事，屏幕上和日志里都看不出少了什么", name)
+		}
+	}
+}
+
+// 失败的投递要把通道自己那句话原样记下来。
+//
+// ⚠️ 归类成一个枚举等于把下一次的诊断线索提前扔掉。这个仓库上一次靠一句
+//
+//	原文定位到问题是 0065（投递回执被静默删掉那次）。
+func TestARecordedFailureKeepsTheChannelsOwnWords(t *testing.T) {
+	t.Parallel()
+	// DB 为 nil 时 Record 直接返回，不 panic —— 这是这里能在进程内断言的
+	// 部分；真正写下去的形状由 packages/db 那边的迁移和索引钉住。
+	log := AttemptLog{}
+	log.Record("webhook", Event{TenantID: "t", Kind: KindEdgeAlert}, errors.New("dial tcp: no such host"))
 }
