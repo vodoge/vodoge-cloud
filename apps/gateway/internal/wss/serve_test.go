@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"testing"
 	"time"
 
@@ -662,4 +663,175 @@ func TestADeliveryStatusOutsideTheEnumIsReported(t *testing.T) {
 	if len(found) != 1 {
 		t.Fatalf("violations = %v, want the bad status named", found)
 	}
+}
+
+// 边缘报的故障要变成一次通知。
+//
+// 🔴 app.alerts 是 0053 建的，那份迁移开头写着这张表存在的理由：
+//
+//	「a fault nobody thinks to look for is a fault nobody hears about」。
+//	而它从建表那天起就没有出口 —— 告警由一个数据库触发器投影进表，这一侧的
+//	Go 代码里连「Alert」这个概念都没有，`notify` 的七种 kind 里也没有一种
+//	对应它。2026-09-11 在生产上查到 263 条告警，一条都没有变成通知。
+func TestAnEdgeAlertReachesTheNotifier(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	conn := newMemoryConn(
+		resumeFrame(t, device, now),
+		alertFrame(t, device, now, 1, "44444444-4444-4444-8444-444444444441",
+			contract.AlertPayload{
+				Level: "error", Code: "qmi_poll_failed",
+				Message:    "/dev/cdc-wdm1 transport error",
+				OccurredAt: now.UnixMilli(), Context: map[string]any{"repeats": 3},
+			}),
+	)
+
+	var seen []Alert
+	server := &Server{
+		Region:  "cn",
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		OnAlert: func(_ identity.Device, alert Alert, _ time.Time) {
+			seen = append(seen, alert)
+		},
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v, want EOF", err)
+	}
+
+	if len(seen) != 1 {
+		t.Fatalf("通知了 %d 次，想要 1 次 —— 边缘报的故障没有出口", len(seen))
+	}
+	if seen[0].Level != "error" || seen[0].Code != "qmi_poll_failed" {
+		t.Fatalf("递出去的告警不对: %+v", seen[0])
+	}
+	if seen[0].Message != "/dev/cdc-wdm1 transport error" {
+		t.Fatalf("边缘那句话没有原样递出去: %q", seen[0].Message)
+	}
+}
+
+// 🔴 重放的同一条告警**不许**再通知一次。
+//
+// 补洞重传会把同一条告警再送一遍，数据库按 envelope id 幂等。通知这一侧
+// 必须跟上：否则每次重连都把历史告警重新推给运维一遍，而那比不推更坏 ——
+// 人会开始忽略这个通道，然后下一次真故障也就没人看了。
+func TestAReplayedAlertDoesNotNotifyTwice(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	payload := contract.AlertPayload{
+		Level: "error", Code: "agent_silent", Message: "no poll for 90s",
+		OccurredAt: now.UnixMilli(), Context: map[string]any{},
+	}
+	// 同一个 envelope id、同一个 seq，送两遍 —— 这就是补洞重传的形状。
+	const envelopeID = "44444444-4444-4444-8444-444444444442"
+
+	conn := newMemoryConn(
+		resumeFrame(t, device, now),
+		alertFrame(t, device, now, 1, envelopeID, payload),
+		alertFrame(t, device, now, 1, envelopeID, payload),
+	)
+
+	var count int
+	server := &Server{
+		Region:  "cn",
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		OnAlert: func(_ identity.Device, _ Alert, _ time.Time) { count++ },
+	}
+	if err := server.ServeDevice(device, conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("ServeDevice() error = %v, want EOF", err)
+	}
+	if count != 1 {
+		t.Fatalf("同一条告警通知了 %d 次 —— 每次重连都会把历史告警重新推一遍", count)
+	}
+}
+
+// 读不懂的告警不许中断会话。
+//
+// ⚠️ 告警是这台机器在说自己有毛病。一条读不懂的告警让它连带说不出别的话，
+//
+//	是这个仓库反复在防的形状：一条坏记录锁死整条上行。
+func TestAnUnreadableAlertDoesNotEndTheSession(t *testing.T) {
+	t.Parallel()
+
+	device := identity.Device{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		DeviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		Region:   "cn",
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+
+	conn := newMemoryConn(
+		resumeFrame(t, device, now),
+		mustEnvelope(t, contract.Envelope{
+			V: contract.ProtocolVersion, Kind: contract.MessageKindAlert,
+			ID: "44444444-4444-4444-8444-444444444443", Ts: now.UnixMilli(),
+			DeviceID: device.DeviceID, Seq: stringPtr("1"),
+			// level 本该是字符串
+			Payload: []byte(`{"level":42,"code":"x","message":"y","occurred_at":1,"context":{}}`),
+		}),
+	)
+
+	var count int
+	server := &Server{
+		Region:  "cn",
+		Hub:     session.NewHub(),
+		Journal: ingress.NewJournal(),
+		Now:     func() time.Time { return now },
+		OnAlert: func(_ identity.Device, _ Alert, _ time.Time) { count++ },
+	}
+	err := server.ServeDevice(device, conn)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("一条读不懂的告警把会话弄断了: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("读不懂却通知了 %d 次", count)
+	}
+}
+
+func resumeFrame(t *testing.T, device identity.Device, now time.Time) []byte {
+	t.Helper()
+	return mustEnvelope(t, contract.Envelope{
+		V: contract.ProtocolVersion, Kind: contract.MessageKindResume,
+		ID: "11111111-1111-4111-8111-111111111111", Ts: now.UnixMilli(),
+		DeviceID: device.DeviceID,
+		Payload: mustJSON(t, contract.ResumePayload{
+			ConnectionID:            "22222222-2222-4222-8222-222222222222",
+			LastAssignedSeq:         "0",
+			LastAckedSeq:            "0",
+			PendingGapIds:           []string{},
+			CapabilityMatrixVersion: "1",
+		}),
+	})
+}
+
+func alertFrame(
+	t *testing.T, device identity.Device, now time.Time,
+	seq int, envelopeID string, payload contract.AlertPayload,
+) []byte {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mustEnvelope(t, contract.Envelope{
+		V: contract.ProtocolVersion, Kind: contract.MessageKindAlert,
+		ID: envelopeID, Ts: now.UnixMilli(), DeviceID: device.DeviceID,
+		Seq: stringPtr(strconv.Itoa(seq)), Payload: body,
+	})
 }

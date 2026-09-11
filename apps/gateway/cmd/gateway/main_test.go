@@ -3368,3 +3368,49 @@ func TestTheProductionSchedulerIsWiredToTheSendLimit(t *testing.T) {
 			wired, literals)
 	}
 }
+
+// wss.Server 上每一个 On* 钩子都必须真的被接上。
+//
+// 🔴 这些钩子默认是 nil，而 nil 的意思是**静默什么都不做**。
+//
+//	`OnAlert` 就是这么来的：0053 建 app.alerts 时写着「a fault nobody thinks
+//	to look for is a fault nobody hears about」，而通知那一段从来没接 ——
+//	263 条告警一条都没变成通知，而屏幕上和日志里都看不出少了什么。
+//
+//	这个仓库已经有一条同形状的守卫（notify 那边的
+//	`TestEveryConfigurableChannelHasASender`：槽位有、发送器没有）。
+//	这一条是它在钩子这一侧的对应物。
+//
+// ⚠️ 断言**从 wss 的源码里数钩子**，不在这里写一份名单。写名单的话，下一个
+//
+//	加钩子的人只要不改这份名单，它就照样绿 —— 而「加了钩子忘了接」正是这条
+//	守卫要抓的那件事。
+func TestEveryServerHookIsWired(t *testing.T) {
+	t.Parallel()
+
+	serve, err := os.ReadFile(filepath.Join("..", "..", "internal", "wss", "serve.go"))
+	if err != nil {
+		t.Fatalf("读 wss 源码: %v", err)
+	}
+	hooks := regexp.MustCompile(`(?m)^\tOn([A-Za-z]+) func`).FindAllStringSubmatch(string(serve), -1)
+	if len(hooks) < 3 {
+		t.Fatalf("只在 wss.Server 上找到 %d 个 On* 钩子，预期至少 3 个；"+
+			"少于三个说明这条守卫的前提变了，先确认是钩子删了还是正则错了", len(hooks))
+	}
+
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("读 main.go: %v", err)
+	}
+	wiring := string(main)
+	for _, hook := range hooks {
+		name := "On" + hook[1]
+		// 接线的写法是 `proc.session.OnX = ...`。只找名字不够 —— 类型定义处
+		// 那一行也含有这个名字，而那正是「有槽位没接线」的样子。
+		assigned := regexp.MustCompile(`\.` + name + `\s*=`).MatchString(wiring)
+		if !assigned {
+			t.Errorf("wss.Server 有钩子 %s，而 main.go 一次都没给它赋值 —— "+
+				"nil 钩子是静默不做事，屏幕上和日志里都看不出少了什么", name)
+		}
+	}
+}

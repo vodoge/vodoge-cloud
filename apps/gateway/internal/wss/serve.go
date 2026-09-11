@@ -61,6 +61,20 @@ type ResultHandler interface {
 //
 // Wakeups is optional. Redis is a routing hint only; a nil or failing publisher
 // must not prevent Accept or UplinkAck.
+// Alert is one edge-reported fault, as the agent described it.
+//
+// 字段就是 `AlertPayload` 契约里的那几个。刻意不带整个 payload：这一层要
+// 递出去的是「谁、多严重、什么毛病、说了什么」，而不是一段待解析的 JSON。
+type Alert struct {
+	// Level is what the agent decided: "error" or "warning".
+	Level string
+	// Code is a constant the agent chose, never a formatted message —— 它是
+	// 边缘节流时分组用的键，也是将来规则会匹配的东西。
+	Code string
+	// Message is the human-facing sentence.
+	Message string
+}
+
 type Server struct {
 	Region      string
 	Hub         *session.Hub
@@ -86,6 +100,23 @@ type Server struct {
 	// schema. Called per offending payload, so anything that turns these into
 	// notifications has to decide for itself how often to speak. Optional.
 	OnContractViolation func(device identity.Device, kind string, found []string, at time.Time)
+	// OnAlert fires once for each edge-reported alert this session stores.
+	//
+	// 🔴 app.alerts 是 0053 迁移建的，那份迁移开头自己写着这张表存在的理由：
+	//    「a fault nobody thinks to look for is a fault nobody hears about」，
+	//    以及「行数已经等于**应该被告知的次数**」。而通知那一段从来没有接上：
+	//    告警是一个数据库触发器投影进表的，所以这一侧的 Go 代码里根本没有
+	//    「Alert」这个概念，`notify` 的七种 kind 里也没有一种对应它。
+	//    2026-09-11 在生产上查到 262 条告警（其中 20 条 error 级），
+	//    一条都没有变成通知。
+	//
+	// ⚠️ 只在**真的插入了**的时候触发（`StatusInserted`）。补洞重传会把同一条
+	//    告警再送一遍，而那时数据库按 envelope id 幂等 —— 通知这一侧必须跟上，
+	//    否则每次重连都会把历史告警重新推一遍给运维。
+	//
+	// 过不过滤、按什么级别过滤，是**接线方**的决定（见 cmd/gateway）。这里
+	// 只负责把边缘说的话原样递出去。
+	OnAlert func(device identity.Device, alert Alert, at time.Time)
 	// Metrics is optional; a gateway without one still serves.
 	Metrics interface {
 		Add(name string, delta int64, labels ...string)
@@ -410,6 +441,31 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 				MaxInFlight:      32,
 			}, server.now()); err != nil {
 				return err
+			}
+			// 边缘说有毛病的时候，把它递给接线方 —— 这张表当初就是为了这个建的。
+			//
+			// 🔴 只在 `StatusInserted` 时递。补洞重传会把同一条告警再送一遍，
+			//    数据库按 envelope id 幂等，而通知这一侧必须跟上：否则每次重连
+			//    都会把历史告警重新推一遍给运维，而那比不推更坏 —— 人会开始
+			//    忽略这个通道。
+			//
+			// ⚠️ 解析失败**不中断会话**。告警是这台机器在说自己有毛病，而一条
+			//    读不懂的告警不该让它连带说不出别的话。库里那一行已经由触发器
+			//    写好了，丢掉的只是这一次通知，而且它不是无声的。
+			if envelope.Kind == contract.MessageKindAlert && server.OnAlert != nil &&
+				result.Status == ingress.StatusInserted {
+				var payload contract.AlertPayload
+				if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+					slog.Warn("could not read an alert to notify about; the row is stored either way",
+						"tenant_id", device.TenantID, "device_id", device.DeviceID,
+						"seq", seq, "error", err)
+				} else {
+					server.OnAlert(device, Alert{
+						Level:   payload.Level,
+						Code:    payload.Code,
+						Message: payload.Message,
+					}, server.now())
+				}
 			}
 			if envelope.Kind == contract.MessageKindCommandResult && server.Results != nil {
 				var payload contract.CommandResultPayload

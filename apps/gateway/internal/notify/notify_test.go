@@ -5,10 +5,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -537,5 +540,74 @@ func TestEmailStripsNewlinesFromTheSubject(t *testing.T) {
 	cleaned := strings.NewReplacer("\r", " ", "\n", " ").Replace(title)
 	if strings.ContainsAny(cleaned, "\r\n") {
 		t.Fatal("the subject would still carry a newline")
+	}
+}
+
+// 🔴 契约里每一个比 warning 严重的 level 都必须会推。
+//
+// 这条断言是拿我自己的一个错换来的。第一版写的是
+// `if alert.Level != "error" { return }` —— 而契约的枚举是
+// [info, warning, error, critical]，边缘有三个 critical 的 code
+// （capability_matrix_unparsed、retro_would_unbind、retro_unbound），
+// 其中 retro_would_unbind 正是**默认 mark 模式**下会发的那一个。
+// 生产上还没发过，所以那个漏洞在屏幕上完全看不出来：它会在最该响的
+// 那一次沉默。
+//
+// ⚠️ 断言刻意**从 schema 读那个枚举**，不在这里再抄一份名单。抄一份的话，
+//
+//	契约哪天多一个比 error 更严重的等级，这条断言照样绿 —— 而那正是会
+//	咬人的那种改动。
+func TestEveryContractAlertLevelAboveWarningNotifies(t *testing.T) {
+	t.Parallel()
+
+	// 两份 schema 是逐字节相同的两个副本（codegen --check 钉着），任取一份。
+	raw, err := os.ReadFile(filepath.Join(
+		"..", "..", "..", "..", "packages", "contract", "schema", "edge-cloud.v1.schema.json"))
+	if err != nil {
+		t.Fatalf("读契约: %v", err)
+	}
+	var document struct {
+		Defs map[string]struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("解析契约: %v", err)
+	}
+	levels := document.Defs["AlertPayload"].Properties["level"].Enum
+	if len(levels) == 0 {
+		t.Fatal("契约里读不到 AlertPayload.level 的枚举 —— 这条断言的前提没了")
+	}
+
+	// 不推的只有这两档。其余每一档都必须推，包括将来新加的。
+	quiet := map[string]bool{"info": true, "warning": true}
+	var loud int
+	for _, level := range levels {
+		notifies := AlertLevelNotifies(level)
+		if quiet[level] {
+			if notifies {
+				t.Errorf("level %q 会推 —— 生产上 warning 是每天 24 条，推它等于训练运维忽略这个通道", level)
+			}
+			continue
+		}
+		loud++
+		if !notifies {
+			t.Errorf("契约里有 level %q，而它不会推 —— 那一档会在最该响的时候沉默", level)
+		}
+	}
+	if loud < 2 {
+		t.Fatalf("只找到 %d 个该推的等级，预期至少 error 和 critical 两个；"+
+			"少于两个说明枚举变了，先确认是契约改了还是这条断言的前提错了", loud)
+	}
+}
+
+// 未知的 level 宁可多响一次。
+func TestAnUnknownAlertLevelIsNotSilentlyDropped(t *testing.T) {
+	t.Parallel()
+	if !AlertLevelNotifies("emergency") {
+		t.Fatal("一个这份代码不认得的等级被静默丢掉了 —— " +
+			"契约多一档时，漏掉一个比 error 更严重的比多响一次坏得多")
 	}
 }

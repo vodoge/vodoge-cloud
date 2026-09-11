@@ -19,6 +19,11 @@ admin-dist.tgz
 # 都会出现在 `git status` 里等着被 `git add .` 顺手扫进去。
 deploy/vodoge-gateway
 
+# `go build ./...` 在 apps/gateway 里会按目录名吐一个同名二进制，同样 19 MB。
+# 2026-09-11 差点被 `git add -A` 扫进去 —— 上面那条补完的第二天就又撞了一次，
+# 所以这里按**模式**忽略，而不是再列一个路径。
+apps/gateway/gateway
+
 # Python 字节码。generate.py 被当脚本跑，于是 codegen/ 旁边会长出 __pycache__。
 # 2026-09-05 有一个 .pyc 被 `git add packages/contract/` 扫进过仓库（9c099ad）。
 __pycache__/

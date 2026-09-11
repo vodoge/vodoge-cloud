@@ -217,6 +217,27 @@ func main() {
 	) {
 		offences.Raise(proc.notify, device, kind, found, at)
 	}
+	// 边缘自己报的故障，推给运维。
+	//
+	// 🔴 哪些级别值得推，见 notify.AlertLevelNotifies —— 那条线是拿生产上的
+	//    真实速率定的，理由和一个我犯过的错都写在那个函数上面。
+	//
+	// ⚠️ 这里不做去重。边缘已经按 code 分组节流过了（见 0053 迁移的注释：
+	//    「行数已经等于应该被告知的次数」），在这里再去重会把那个设计
+	//    抵消掉，而且会把「同一个故障又发生了一次」这个信息吃掉。
+	proc.session.OnAlert = func(device identity.Device, alert wss.Alert, at time.Time) {
+		if !notify.AlertLevelNotifies(alert.Level) {
+			return
+		}
+		proc.notify.Notify(notify.Event{
+			Kind:     notify.KindEdgeAlert,
+			TenantID: device.TenantID,
+			Title:    "边缘故障 · " + alert.Code,
+			Body: alert.Message + "\n\n设备 " + device.DeviceID +
+				"。在控制台的日志页看这台机器同一时刻的上下文。",
+			At: at,
+		})
+	}
 	go func() {
 		ticker := time.NewTicker(session.IdleTimeout / 2)
 		defer ticker.Stop()
