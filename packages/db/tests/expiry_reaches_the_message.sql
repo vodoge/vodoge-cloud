@@ -240,4 +240,59 @@ END
 $$;
 COMMIT;
 
+-- ⑥ 🔴 **每一个**过期函数都要结算消息，不是其中一个。
+--
+-- 这条断言是拿一次漏改换来的。0067 给 `app.expire_overdue_commands` 加了
+-- 「命令过期 → 短信落地」，而生产上有**三个**过期函数：
+--
+--   app.expire_overdue_commands         0067 补了
+--   app.expire_overdue_tenant_commands  漏了 —— **scheduler 定时扫的就是它**
+--   app.expire_command                  漏了
+--
+-- 也就是说 0067 补掉了历史那 3 条，却没堵住来源：定时器每一轮仍然会生产新的
+-- 卡住的 queued 行。0068 补上了另外两个。
+--
+-- ⚠️ 上面那几条断言为什么没抓住：它们只调了一个函数。一条只覆盖一个入口的
+--    断言，在有三个入口的地方等于没覆盖。
+--
+-- 所以这一条**从 pg_proc 把过期函数数出来**，不写名单 —— 将来再多一个入口，
+-- 它会自己变红。判据是「函数体里提到 app.messages」：不是完美的判据（一个
+-- 提到了但写错了的函数照样通过），但它挡住的是这次真正发生的那件事 ——
+-- 整段忘了写。
+DO $$
+DECLARE
+    v_missing text;
+    v_count   integer;
+BEGIN
+    SELECT count(*), string_agg(proname, ', ' ORDER BY proname)
+      INTO v_count, v_missing
+      FROM pg_proc
+     WHERE pronamespace = 'app'::regnamespace
+       AND proname LIKE '%expire%'
+       -- purge_expired_sessions 管的是会话，和命令/短信无关。
+       AND proname NOT LIKE '%session%'
+       AND position('app.messages' in prosrc) = 0;
+
+    IF v_count > 0 THEN
+        RAISE EXCEPTION
+            '有 % 个过期函数不结算消息：% —— '
+            '命令进了终态而短信留在 queued，运维看到的是「排队中」，'
+            '而那读起来像「马上就发」（生产上这样停过 20 天）',
+            v_count, v_missing;
+    END IF;
+
+    -- 前提检查：至少要数到三个，否则这条断言可能什么都没查到。
+    SELECT count(*) INTO v_count
+      FROM pg_proc
+     WHERE pronamespace = 'app'::regnamespace
+       AND proname LIKE '%expire%'
+       AND proname NOT LIKE '%session%';
+    IF v_count < 3 THEN
+        RAISE EXCEPTION
+            '只数到 % 个过期函数，预期至少 3 个；少于三个说明这条断言的前提变了，'
+            '先确认是函数删了还是名字变了，别直接把数字调小', v_count;
+    END IF;
+END
+$$;
+
 RESET ROLE;
