@@ -147,6 +147,10 @@ type Server struct {
 	//    而那份状态自己又是一个会坏且没人盯的东西。这里每丢一条就说一次，
 	//    没有状态可坏。
 	OnRecordDropped func(device identity.Device, dropped Dropped, at time.Time)
+	// Revocations refuses a certificate somebody took back.
+	//
+	// `nil` 表示不查 —— 进程内测试走这条。生产那条路由 cmd/gateway 接上。
+	Revocations Revocations
 	// Metrics is optional; a gateway without one still serves.
 	Metrics interface {
 		Add(name string, delta int64, labels ...string)

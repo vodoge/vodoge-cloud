@@ -97,6 +97,15 @@ func main() {
 		proc.rules = rules.SQL{DB: sqlStore.DB}
 		proc.config = settings.SQL{DB: sqlStore.DB}
 		proc.proxies = proxy.SQL{DB: sqlStore.DB}
+		// 吊销的证书当场拒掉。
+		//
+		// 🔴 `app.device_certificates.revoked_at` 从 0006 就在，而认证路径
+		//    从来没查过它 —— 任何这个 CA 签过的证书都永久有效，机器丢了
+		//    收不回来，而现役那张有效到 2028-08-31。
+		//
+		// ⚠️ 只在明确被吊销时拒；查不到记录的照旧放行（理由见
+		//    wss/upgrade.go 里那一段）。生产上这张表今天是 0 行。
+		proc.session.Revocations = &enroll.SQLRevocations{DB: sqlStore.DB}
 		// Constructed here rather than later: everything wired below captures
 		// it by value, so a dispatcher created after them would leave each one
 		// holding nil and every notification silently unsent.
