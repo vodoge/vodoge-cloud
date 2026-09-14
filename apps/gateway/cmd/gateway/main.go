@@ -121,6 +121,7 @@ func main() {
 		proc.ledger = ledger.SQL{DB: sqlStore.DB}
 		proc.supportedDevices = ledger.SQLDevices{DB: sqlStore.DB}
 		proc.codes = enroll.SQLCodes{DB: sqlStore.DB}
+		proc.certs = enroll.SQLCertificates{DB: sqlStore.DB}
 		authStore := auth.SQL{DB: sqlStore.DB}
 		proc.authSessions = authStore
 		proc.users = authStore
@@ -899,6 +900,7 @@ type process struct {
 	// sweep retires a tenant's overdue commands (L3). Nil without a database.
 	sweep   schedule.Sweeper
 	codes   enroll.CodeStore
+	certs   enroll.SQLCertificates
 	metrics *observe.Registry
 	notify  *notify.Dispatcher
 	config  settings.Store
@@ -1063,6 +1065,13 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("POST /v1/rules", process.createRule)
 	mux.HandleFunc("GET /v1/enrollment-codes", process.listEnrollmentCodes)
 	mux.HandleFunc("POST /v1/enrollment-codes", process.createEnrollmentCode)
+	// 证书这一半。吊销此前只能用 psql 改一列 —— 而 M7 的整个理由是
+	// 「机器丢了要收得回来」，一个只能靠数据库客户端执行的收回不算能力。
+	//
+	// ⚠️ 写操作自动被 `readOnly` 那道闸管住（它套在整个 mux 外面，理由见
+	//    那个函数的注释），所以这里不重复检查角色。
+	mux.HandleFunc("GET /v1/device-certificates", process.listCertificates)
+	mux.HandleFunc("POST /v1/device-certificates/{id}/revoke", process.revokeCertificate)
 	// Metrics wrap the mux rather than each handler, so a route added later
 	// is measured without anyone remembering to measure it. The read-only
 	// guard is inside them for the same reason, and so a refusal is counted.
@@ -2121,7 +2130,13 @@ func (process *process) createEnrollmentCode(writer http.ResponseWriter, request
 		http.Error(writer, "enrollment unavailable", http.StatusInternalServerError)
 		return
 	}
-	detail, _ := json.Marshal(map[string]any{"code": code.Code, "expires_at": code.ExpiresAt})
+	// 🔴 审计明细里**不放那个码**。审计行是永久的，而一个还没被用掉的码是活的
+	//    凭据 —— 把它写进审计，等于把一个一次性秘密存进一张谁都能读、而且永远
+	//    不删的表。`/v1/audit` 对任何控制台会话开放。
+	//
+	//    要回答的问题是「谁在什么时候发了一个码、它什么时候过期」，`Target` 已经
+	//    带着那一行的 id，配上过期时间就够了。
+	detail, _ := json.Marshal(map[string]any{"expires_at": code.ExpiresAt})
 	_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
 		Actor:  "console",
 		Action: "create_enrollment_code",
@@ -2131,6 +2146,67 @@ func (process *process) createEnrollmentCode(writer http.ResponseWriter, request
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(writer).Encode(code)
+}
+
+func (process *process) listCertificates(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	if process.certs.DB == nil {
+		http.Error(writer, "certificates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	items, err := process.certs.List(request.Context(), entry.TenantID)
+	if err != nil {
+		slog.Warn("certificate list failed", "tenant_id", entry.TenantID, "error", err)
+		http.Error(writer, "certificates unavailable", http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []enroll.Certificate{}
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"certificates": items})
+}
+
+// revokeCertificate takes one device certificate back.
+//
+// 🔴 吊销此前只能用 psql 改一列。M7 的整个理由是「机器丢了要收得回来」，
+//
+//	而一个只能靠数据库客户端执行的收回，在真出事的那天是没有人会去做的。
+func (process *process) revokeCertificate(writer http.ResponseWriter, request *http.Request) {
+	entry, ok := process.tenantFromRequest(writer, request)
+	if !ok {
+		return
+	}
+	if process.certs.DB == nil {
+		http.Error(writer, "certificates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := request.PathValue("id")
+	changed, err := process.certs.Revoke(request.Context(), entry.TenantID, id)
+	switch {
+	case errors.Is(err, enroll.ErrCertificateNotFound):
+		http.Error(writer, "certificate not found", http.StatusNotFound)
+		return
+	case err != nil:
+		slog.Warn("certificate revoke failed",
+			"tenant_id", entry.TenantID, "certificate_id", id, "error", err)
+		http.Error(writer, "certificates unavailable", http.StatusInternalServerError)
+		return
+	}
+	// ⚠️ 只在真的改动了的时候记审计。重复点击不该在审计里留下第二条
+	//    「吊销了」——那会让人以为吊销发生过两次。
+	if changed {
+		_ = process.audit.Append(request.Context(), entry.TenantID, audit.Event{
+			Actor:  "console",
+			Action: "revoke_device_certificate",
+			Target: id,
+		})
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(writer).Encode(map[string]any{"revoked": true, "changed": changed})
 }
 
 func (process *process) afterInsert(tenantID, _deviceID, kind string, payload []byte) {

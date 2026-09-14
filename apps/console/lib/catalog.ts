@@ -174,6 +174,101 @@ function asApnContexts(value: unknown): ApnContextRow[] | null {
   });
 }
 
+/**
+ * 一张已签发的设备证书，控制台看到的那一份。
+ *
+ * ⚠️ **不带证书本身**。这个界面要回答三个问题：这台机器用的是哪一张、
+ * 还有效多久、被吊销了没有。把整张 PEM 送到浏览器对这三个问题一点帮助
+ * 都没有，只是多一处泄露面。
+ */
+export type CertificateRow = {
+  id: string;
+  deviceId: string;
+  /** 十六进制，长，界面上只显示尾段。 */
+  serial: string;
+  /** leaf DER 的 SHA-256 —— 网关查吊销用的就是这个键。 */
+  fingerprint: string;
+  notBefore: number;
+  notAfter: number;
+  /**
+   * 被吊销的时刻，毫秒；`null` = 没被吊销。
+   *
+   * 🔴 这个时刻是「这台机器什么时候不再可信」的唯一记录。网关侧的吊销是
+   * 幂等的（重复吊销不改写它），界面因此可以放心重复点。
+   */
+  revokedAt: number | null;
+};
+
+export async function fetchCertificates(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CertificateRow[]> {
+  const body = await getCatalog(host, "/v1/device-certificates", token, fetchImpl);
+  return arrayOf(body.certificates)
+    .map(parseCertificate)
+    .filter((row): row is CertificateRow => row !== null);
+}
+
+export function parseCertificate(value: unknown): CertificateRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const id = asString(row.id);
+  const fingerprint = asString(row.fingerprint);
+  if (!id || !fingerprint) return null;
+  return {
+    id,
+    deviceId: asString(row.device_id) ?? "",
+    serial: asString(row.serial) ?? "",
+    fingerprint,
+    notBefore: asNumber(row.not_before) ?? 0,
+    notAfter: asNumber(row.not_after) ?? 0,
+    revokedAt: asNumber(row.revoked_at),
+  };
+}
+
+/**
+ * 一个还没被用掉的装机码，**不含码本身**。
+ *
+ * 🔴 网关的 `GET /v1/enrollment-codes` 以前原样返回明文码；2026-09-13 改成
+ *    不返回（`internal/enroll/codes.go` 的 `CodeSummary`）。这个类型照着那个
+ *    形状写，所以这里**没有** `code` 字段 —— 如果哪天网关又开始发回来，这里
+ *    不解析它，它也就不会落到浏览器里。
+ */
+export type EnrollmentCodeRow = {
+  id: string;
+  expiresAt: number;
+  usedAt: number | null;
+  deviceId: string | null;
+};
+
+export async function fetchEnrollmentCodes(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<EnrollmentCodeRow[]> {
+  const body = await getCatalog(host, "/v1/enrollment-codes", token, fetchImpl);
+  return arrayOf(body.codes)
+    .map(parseEnrollmentCode)
+    .filter((row): row is EnrollmentCodeRow => row !== null);
+}
+
+export function parseEnrollmentCode(value: unknown): EnrollmentCodeRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const id = asString(row.id);
+  const expiresAt = asNumber(row.expires_at);
+  // 🔴 缺席 ≠ 空。没有过期时间的行没法判断它是不是还活着，而把它当成
+  //    「已过期」会让界面少报一个活凭据 —— 那正是这个计数要防的事。丢掉它。
+  if (!id || expiresAt === null) return null;
+  return {
+    id,
+    expiresAt,
+    usedAt: asNumber(row.used_at),
+    deviceId: asString(row.device_id) ?? null,
+  };
+}
+
 export async function fetchModems(
   host: string,
   token: string | undefined,

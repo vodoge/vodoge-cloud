@@ -160,7 +160,19 @@ of it would discard the client certificate the gateway authenticates with.
 ### 6. Enrolling a device
 
 Create a one-time code, then run the edge agent's enrollment with it. The code
-is consumed exactly once and yields a fresh device with its own certificate:
+is consumed exactly once and yields a fresh device with its own certificate.
+
+In the console, **Devices → Enrollment and certificates**: *Mint a code* mints
+one and shows it, and *Revoke* in the certificates table below takes one back.
+Both need an admin session; a read-only account is offered neither control.
+
+> **The code is shown once, and that is not merely a UI choice.** `GET
+> /v1/enrollment-codes` returns each code's id, expiry and whether it has been
+> used — never the code — and the audit entry for minting one records only the
+> expiry. Write it down while it is on screen; nothing hands it back. Only the
+> database still holds it, because `POST /v1/enroll` compares against it.
+
+By API instead:
 
 ```sh
 curl -X POST https://console.example.com/v1/enrollment-codes \

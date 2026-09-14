@@ -88,16 +88,82 @@ const SESSIONS = Array.from({ length: 10 }, (_, i) => ({
   last_received_at: Date.parse("2026-08-27T08:58:00Z"),
 }));
 
+// 装机那张卡要的两样东西。
+//
+// ⚠️ 两张证书刻意一活一吊销：吊销那一行不该有「吊销」按钮（已经吊销了，再点
+//    一次什么都不会发生），而这件事只有在同一张表里同时看到两种行时才看得出来。
+const CERTIFICATES = [
+  {
+    id: "c1",
+    device_id: "d1",
+    serial: "5b8f2a1c9e04d7361f",
+    fingerprint: "9e2c4a7f13b58d06e4917cab2d3f6058e71b94c2af0d63857e19b4cd207a3f6e",
+    not_before: Date.parse("2026-08-31T00:00:00Z"),
+    not_after: Date.parse("2028-08-31T00:00:00Z"),
+    revoked_at: null,
+  },
+  {
+    id: "c2",
+    device_id: "d2",
+    serial: "77a3e01b4c8f2590da",
+    fingerprint: "41d7b3e8265fa09c1e73482bd6a5f01937ce24b8d05f69a7c3182e4f70b9d5a6",
+    not_before: Date.parse("2026-07-02T00:00:00Z"),
+    not_after: Date.parse("2028-07-02T00:00:00Z"),
+    revoked_at: Date.parse("2026-09-11T06:14:00Z"),
+  },
+];
+
+// 🔴 **不带 code 字段**，照网关 2026-09-13 改过之后的形状。这个架子如果发回
+//    明文码，那它测的就不是生产上跑的那个契约了。
+const ENROLLMENT_CODES = [
+  { id: "k1", expires_at: Date.parse("2026-09-14T02:00:00Z"), used_at: null, device_id: null },
+  { id: "k2", expires_at: Date.parse("2026-09-13T23:30:00Z"), used_at: null, device_id: null },
+  {
+    id: "k3",
+    expires_at: Date.parse("2026-08-31T00:00:00Z"),
+    used_at: Date.parse("2026-08-31T00:12:00Z"),
+    device_id: "d1",
+  },
+];
+
 const ROUTES = {
   "/v1/devices": { devices: DEVICES },
   "/v1/messages": { messages: [...SHOWN, ...FILLER] },
   "/v1/sessions": { sessions: SESSIONS },
+  "/v1/device-certificates": { certificates: CERTIFICATES },
+  "/v1/enrollment-codes": { codes: ENROLLMENT_CODES },
+  // 设备总览页还要这几样，少一样整页就变成「无法从网关加载设备列表」——
+  // 这个架子原来只为首页 `/` 写的，所以它们一直不在。
+  "/v1/auth/session": { role: "admin" },
+  "/v1/alerts": { alerts: [] },
+  "/v1/modems": { modems: [] },
+  "/v1/cards/policies": { policies: [] },
+  // 信箱页要的两样。发短信那个确认框的形状缺陷（见 tokens.test.ts 里那条
+  // 「确认框是条件挂载的」）只有在表单真的渲出来之后才验得到。
+  "/v1/messages/threads": { threads: [] },
+  "/v1/messages/contacts": { contacts: [] },
 };
 
 createServer((incoming, response) => {
   const path = (incoming.url ?? "").split("?")[0];
 
   if (path.startsWith("/v1/")) {
+    // 🔴 POST 单独处理。原来这里不看方法，于是 `POST /v1/enrollment-codes`
+    //    会拿到 GET 的那个列表（200 但没有 `code`）—— 控制台侧正好因此暴露过
+    //    一次它的防线（「没有码却当成成功」那一支），但这个架子要能验成功路径，
+    //    就得真的发一个码回去。
+    if (incoming.method === "POST" && path === "/v1/enrollment-codes") {
+      const code = "STUB" + String(ENROLLMENT_CODES.length + 1).padStart(4, "0");
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          id: `k${ENROLLMENT_CODES.length + 1}`,
+          code,
+          expires_at: Date.parse("2026-09-14T12:00:00Z"),
+        }),
+      );
+      return;
+    }
     const body = path.startsWith("/v1/tenants/") ? TENANT : ROUTES[path];
     response.writeHead(body ? 200 : 404, { "content-type": "application/json" });
     response.end(JSON.stringify(body ?? { error: "not found" }));

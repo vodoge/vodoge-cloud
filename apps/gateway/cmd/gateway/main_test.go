@@ -373,12 +373,40 @@ func TestEnrollmentCodesAndRulesAreTenantScoped(t *testing.T) {
 		t.Fatalf("create code status = %d body=%s", created.Code, created.Body.String())
 	}
 
+	// 🔴 装机码只在创建响应里出现一次 —— 这是 OpenAPI 自己写下的契约
+	//    （「It is returned once here」「The code, in full, for the only time」）。
+	//    在这之前列表端点把它原样发回来，而审计明细也存了明文：一个还没被用掉
+	//    的码因此永久可读，任何有控制台会话的人 curl 一下就拿到。
+	//
+	//    所以下面比对的是**那一次真的发出去的那个码**，不是某个占位串：拿一个
+	//    假字符串去搜，搜不到也证明不了任何事。
+	var createdBody struct {
+		Code string `json:"code"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatalf("create response: %v", err)
+	}
+	if createdBody.Code == "" {
+		t.Fatalf("create returned no code, so nothing below is being searched for: %s", created.Body.String())
+	}
+
 	listed := getJSON(t, handler, "http://a.vodoge.com/v1/enrollment-codes")
-	if got := stringSlice(listed["codes"], "code"); len(got) != 1 {
+	// 数行按 id 数，不按 code 数 —— code 已经不在列表里了。
+	if got := stringSlice(listed["codes"], "id"); len(got) != 1 {
 		t.Fatalf("tenant a codes = %#v", listed)
 	}
+	listedRaw := getRaw(t, handler, "http://a.vodoge.com/v1/enrollment-codes")
+	if strings.Contains(listedRaw, createdBody.Code) {
+		t.Fatalf("GET /v1/enrollment-codes handed the code back, so it is not one-time: %s", listedRaw)
+	}
+	auditRaw := getRaw(t, handler, "http://a.vodoge.com/v1/audit")
+	if strings.Contains(auditRaw, createdBody.Code) {
+		t.Fatalf("the audit trail records the code in the clear, and audit rows are permanent: %s", auditRaw)
+	}
+
 	other := getJSON(t, handler, "http://b.vodoge.com/v1/enrollment-codes")
-	if got := stringSlice(other["codes"], "code"); len(got) != 0 {
+	if got := stringSlice(other["codes"], "id"); len(got) != 0 {
 		t.Fatalf("tenant b saw tenant a codes: %#v", other)
 	}
 
@@ -453,6 +481,23 @@ func authorize(request *http.Request) *http.Request {
 		request.Header.Set("Authorization", token)
 	}
 	return request
+}
+
+// getRaw returns the response body verbatim.
+//
+// 🔴 用原文搜，不解码。一个秘密可能出现在任何一层：某个 detail 字段里、一句
+//
+//	错误消息里、或者将来某个人加的字段里。按字段名去查只能查到今天想到的那些
+//	地方，而「这个串出现在响应里」是整个响应面的断言。
+func getRaw(t *testing.T, handler http.Handler, rawURL string) string {
+	t.Helper()
+	request := authorize(httptest.NewRequest(http.MethodGet, rawURL, nil))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s status = %d body=%s", rawURL, response.Code, response.Body.String())
+	}
+	return response.Body.String()
 }
 
 func getJSON(t *testing.T, handler http.Handler, rawURL string) map[string]any {

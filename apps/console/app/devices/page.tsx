@@ -3,6 +3,7 @@ import { Badge, StateBadge } from "@/components/ui/badge";
 import { ModemNetwork } from "@/components/modem-network";
 import { Button } from "@/components/ui/button";
 import { CardEmpty, CardPanel as Card } from "@/components/ui/card";
+import { Enrollment } from "@/components/enrollment";
 import { Field, Input, Select } from "@/components/ui/form";
 import {
   Table,
@@ -16,6 +17,8 @@ import { CardPolicies } from "@/components/card-policies";
 import {
   fetchCardPolicies,
   fetchConsoleRole,
+  fetchCertificates,
+  fetchEnrollmentCodes,
   fetchDevices,
   fetchAlerts,
   fetchModems,
@@ -23,6 +26,7 @@ import {
   type DeviceRow,
   alertTone,
   type AlertRow,
+  type CertificateRow,
   type ModemRow,
 } from "@/lib/catalog";
 import { isRoaming, operatorName, territoryFlag, territoryName } from "@/lib/plmn";
@@ -127,6 +131,30 @@ export default async function DevicesPage({
   } catch {
     loadError = true;
   }
+  // ⚠️ 证书单独读，读不到**不**让整页变成「加载失败」。装机这张卡是这一页上
+  //    最不关键的一块（其余几块是运维盯着的实时状态），而
+  //    /v1/device-certificates 在没配 CA 的部署上返回 503 —— 那种部署的
+  //    设备列表照样该显示。
+  let certificates: CertificateRow[] = [];
+  try {
+    certificates = await fetchCertificates(host, token);
+  } catch {
+    certificates = [];
+  }
+  // 还没被用掉、也没过期的码有几个。同上：单独读，读不到不拖垮整页。
+  //
+  // 🔴 读不到的时候用 0，而 0 的意思是「不显示那行提示」—— 也就是说一次读取
+  //    失败会**少报**活凭据，不会多报。反过来（读不到就编一个数）会让运维以为
+  //    外面漂着一个不存在的秘密，然后去找一张不存在的纸条。
+  let outstanding = 0;
+  try {
+    const now = Date.now();
+    outstanding = (await fetchEnrollmentCodes(host, token)).filter(
+      (code) => code.usedAt === null && code.expiresAt > now,
+    ).length;
+  } catch {
+    outstanding = 0;
+  }
 
   return (
     <>
@@ -196,6 +224,43 @@ export default async function DevicesPage({
               </TableBody>
             </Table>
           )}
+        </Card>
+
+        {/* 装机。放在设备卡**之前**：设备列表的空态从很早就写着「先生成一个
+            接入码，再用它启动边缘 agent」，而界面上一直没有任何地方能生成 ——
+            那句话指的就是这张卡，所以它该在那句话的上面。 */}
+        <Card title={t("enroll.title", locale)} note={t("enroll.description", locale)}>
+          <Enrollment
+            certificates={certificates}
+            outstanding={outstanding}
+            writable={writable}
+            labels={{
+              intro: t("enroll.intro", locale),
+              outstanding: t("enroll.outstanding", locale),
+              mint: t("enroll.mint", locale),
+              minting: t("enroll.minting", locale),
+              mintFailed: t("enroll.mintFailed", locale),
+              codeOnce: t("enroll.codeOnce", locale),
+              codeExpires: t("enroll.codeExpires", locale),
+              codeHow: t("enroll.codeHow", locale),
+              noCertificates: t("enroll.noCertificates", locale),
+              colDevice: t("enroll.colDevice", locale),
+              colFingerprint: t("enroll.colFingerprint", locale),
+              colExpires: t("enroll.colExpires", locale),
+              colState: t("enroll.colState", locale),
+              colActions: t("enroll.colActions", locale),
+              stateActive: t("enroll.stateActive", locale),
+              stateRevoked: t("enroll.stateRevoked", locale),
+              revoke: t("enroll.revoke", locale),
+              revokeConfirm: t("enroll.revokeConfirm", locale),
+              revokeWarning: t("enroll.revokeWarning", locale),
+              revokeFailed: t("enroll.revokeFailed", locale),
+              // 对话框里的「确定继续？」和「取消」用全站共享的 confirm.*，
+              // 和这个页面上另外三处 ConfirmDialog 同一对句子。
+              confirmQuestion: t("confirm.question", locale),
+              confirmCancel: t("confirm.cancel", locale),
+            }}
+          />
         </Card>
 
         <Card bodyless>

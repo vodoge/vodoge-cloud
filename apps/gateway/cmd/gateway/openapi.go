@@ -845,13 +845,50 @@ func apiOperations() []openapi.Operation {
 			},
 		},
 
+		// ── device certificates ───────────────────────────────────────────
+		{
+			Method: "GET", Path: "/v1/device-certificates", Tag: tagEnrollment,
+			Summary: "Issued device certificates.",
+			Description: "What each device authenticates with, when it expires, and whether " +
+				"it has been revoked. The certificate itself is deliberately not returned: " +
+				"the console answers those three questions and nothing else needs the PEM.",
+			Security: []string{schemeSession},
+			Responses: []openapi.Response{
+				jsonOK("The certificates, newest first.",
+					wrap("certificates", "One issued certificate, without its PEM.")),
+				plain(503, "Certificates are not configured."),
+				plain(500, "Certificate state could not be read."),
+			},
+		},
+		{
+			Method: "POST", Path: "/v1/device-certificates/{id}/revoke", Tag: tagEnrollment,
+			Summary: "Take one device certificate back.",
+			Description: "A revoked certificate is refused at the next mTLS handshake, within " +
+				"the gateway's revocation cache window. Idempotent: revoking an " +
+				"already-revoked certificate leaves the original revocation time alone, " +
+				"because that time is the only record of when the machine stopped being trusted.",
+			Security: []string{schemeSession},
+			PathParams: []openapi.Parameter{
+				{Name: "id", Description: "The certificate's id, from GET /v1/device-certificates."},
+			},
+			Responses: []openapi.Response{
+				{Status: 200, Description: "Revoked. `changed` is false when it already was.",
+					MediaType: "application/json", Schema: &freeObject},
+				plain(404, "No such certificate in this tenant."),
+				plain(503, "Certificates are not configured."),
+				plain(500, "The revocation could not be stored."),
+			},
+		},
 		// ── enrollment codes ──────────────────────────────────────────────
 		{
 			Method: "GET", Path: "/v1/enrollment-codes", Tag: tagEnrollment,
 			Summary:  "Outstanding enrollment codes.",
 			Security: []string{schemeSession},
 			Responses: []openapi.Response{
-				jsonOK("The codes.", wrap("codes", "One code, with its expiry and whether it has been used.")),
+				jsonOK("The codes.", wrap("codes",
+					"One code's id, expiry, and whether it has been used — **not the code**. "+
+						"The code itself exists only in the 201 response of POST to this path; "+
+						"nothing hands it back, and neither does /v1/audit.")),
 				plain(500, "Enrollment state could not be read."),
 			},
 		},

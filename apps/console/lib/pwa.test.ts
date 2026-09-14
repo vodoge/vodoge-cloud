@@ -2613,6 +2613,36 @@ function renderRecipeDigest(files: string[]): string {
  * note that guard B will not accept it for anything structural.
  */
 const CAPTURED_FROM = {
+  // 🔴 2026-09-13/14：`recipe` 和 `chrome` 动了**四次**，四次重拍都逐字节没变
+  // （mobile 060824bb…、wide b13cea17…，一个像素都没差）。
+  //
+  // 四次的起因各不相同，分开记：
+  //
+  //   ① `lib/catalog.ts` 多了一个导出（装机那块要用的 fetchCertificates）。
+  //   ② `messages/*.json` 改了几个 key（装机那块的文案）。
+  //   ③ 同样是 `messages/*.json`，但这次只动了 **key 的顺序** —— 提交前把那
+  //      两个文件重建成纯增行（22 个新 key，0 删行），字节因此变了。
+  //   ④ `lib/tokens.ts` 的 `CONFIRM_CONSEQUENCE_KEYS` 多了两条 —— 那是一个
+  //      **测试用的常量**，一个像素都碰不到，但它在 `components/ui/*` 的
+  //      import 链上，所以它在闭包里。
+  //
+  // ⚠️ ③ 和 ④ 说明这个摘要盯的是**文件字节**，不是「画面会不会变」。那是这道闸
+  //    有意的保守：换一个 key 的位置、给一个测试常量加两行，确实都改不了画面，
+  //    但要证明这一点只能去拍，而拍一次比推理一次可靠。四次都是 0 个像素差，
+  //    也就给了这条规则四次实证。
+  //
+  // 起因是 M7 往 `lib/catalog.ts` 加了 `fetchCertificates`（装机码那一块要用），
+  // 而 `app/page.tsx` import 那个文件，所以它在闭包里 —— recipe 照设计动了。
+  // 仪表盘自己的 markup 一行没改。
+  //
+  // 按上面那句「移动它只能靠重拍」重拍了一次，两张图的 sha256 和钉住的值
+  // **完全相同**（mobile 060824bb…、wide b13cea17…，一个像素都没差）。也就是说
+  // 「加一个仪表盘用不到的导出不会改变画面」这件事是拍出来的，不是我推出来的 ——
+  // 这一对新摘要仍然是观察，不是推断。
+  //
+  // ⚠️ 顺带给上面那两个百分比添一个第三种读数：这次是 **0 个像素**。所以
+  //    「哈希动了」的三种解释现在各有一次实例 —— 抗锯齿（散、窄）、
+  //    真布局变化（集中、宽）、和纯粹的依赖变动（零）。
   // The tree these frames were CAPTURED AGAINST — an observation, not a claim.
   // Move it only by reshooting.
   //
@@ -2824,7 +2854,7 @@ const CAPTURED_FROM = {
   // 改动全在设备页（模组表以注册册子为主，没被观测过的那一根改画一句话），
   // 而取景是首页。
   // 2026-09-10 第二次：连同上面的 recipe 一起重盖，理由同上。
-  chrome: "45df10a99ebcfc8854411085e7c58063740ca0bca40a8c4e659fd46b86028800",
+  chrome: "5b110b7010edcdd5a5e039ee79a0c8b85754460a5bce4a84877c5492a7182b11",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2883,7 +2913,7 @@ const CAPTURED_FROM = {
   // 设备总览页把那一行画成了 `unknown` 徽标加一排横杠加一句「从未」
   // （也就是「坏了、已停止上报」的样子），收件箱的发送表单则把它列成了
   // 一个可以选中的发信方。取景是首页，既不画这两张表也不画那个表单。
-  recipe: "056a3a83e73581a40887639506bf7cee1c0996e2c609c72c9dd7e8394693b19b",
+  recipe: "0b2fefb8c81ed6ffcfa03268aa1058d098310ed641c5c3d03f7486cba9bbc546",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

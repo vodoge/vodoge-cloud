@@ -1216,6 +1216,17 @@ export const CONFIRM_CONSEQUENCE_KEYS = [
   "proxy.confirmRemoveRule",
   "proxy.confirmStop",
   "proxy.confirmRestart",
+  // 🔴 这两条是 2026-09-14 由「每一处 consequence 都落在名单上」那条守卫**数出来**
+  //    的，不是谁想起来的：
+  //
+  //      enroll.revokeWarning    M7 新加的，吊销一张设备证书
+  //      ledger.confirmPublish   早就在了 —— sms-safety.ts 把 publish 称为这个
+  //                              控制台上影响面最大的写入（它替换掉每个租户读的
+  //                              那张支持结论表），而它的英文后果句从来没被检过
+  //
+  //    两者原先都只有渲染时的 `assertConsequence` 在看，而那只检当前语言。
+  "enroll.revokeWarning",
+  "ledger.confirmPublish",
   /**
  * The settings page adds three. Two of them belong to "send a test
  * notification", which was the only unguarded action in this console that
@@ -2097,6 +2108,7 @@ export const MIGRATED_SOURCES = [
   "components/conversation.tsx",
   "components/device-admin.tsx",
   "components/device-console.tsx",
+  "components/enrollment.tsx",
   "components/esim-panel.tsx",
   "components/journal.tsx",
   "components/live-reload.tsx",

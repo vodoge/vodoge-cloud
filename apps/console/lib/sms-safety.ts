@@ -53,6 +53,15 @@ export const CONFIRMED_WRITES = {
   // is the widest-blast-radius write in this console and it was on no ledger at
   // all until 2026-09-03 — the dialog had been written, the line here never was.
   "components/support-ledger.tsx": ["publish"],
+  // 吊销一张证书就是把一台正在服务的机器关在门外，而它**回不来** —— 除非有人
+  // 再发一个装机码，而那需要有人到现场重启 agent。这个后果比这张表上任何一条
+  // 都更不可撤销，所以它必须走对话框。
+  //
+  // 🔴 我第一版手搓了一个内联的两段式确认（点一下变成「确认吊销 / 取消」）。
+  //    那东西没有焦点陷阱、不认 Escape、而且**危险按钮就在焦点上** —— 一次误按
+  //    回车就吊销了。换成 `ConfirmDialog` 之后这三件事由 Radix 兜着，而这一行
+  //    是让下一个人没法再悄悄换回去的那道锁。
+  "components/enrollment.tsx": ["revoke"],
 } as const;
 
 /* ── Modules this console will not send a message from ───────────────────
@@ -193,6 +202,13 @@ export const WRITES_WITHOUT_A_DIALOG: Readonly<Record<string, { count: number; w
       "POST /v1/messages/thread/read fires from an effect, not from a control — " +
       "there is no moment to ask about. PUT /v1/messages/contact renames a " +
       "contact, which the next rename undoes. Both sit behind the role gate.",
+  },
+  "components/enrollment.tsx": {
+    count: 1,
+    why:
+      "POST /v1/enrollment-codes 生成一个新的一次性装机码。它不动任何已有的东西：" +
+      "旧码照旧有效到自己过期，没有机器会因此掉线，多生成一个的代价是多一张纸条。" +
+      "需要问的是 `revoke`，它有对话框。",
   },
   "components/support-ledger.tsx": {
     count: 1,

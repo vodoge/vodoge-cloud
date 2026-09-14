@@ -1023,6 +1023,9 @@ test("no wash is painted inside another wash", () => {
       "app/devices/[deviceId]/page.tsx: bg-bad-wash",
       "components/connection-status.tsx: bg-bad-wash",
       "components/device-console.tsx: bg-bad-wash",
+      // 手工确认过：装机码那一块的 warn wash 直接在 CardPanel 的 body 里，
+      // 外层没有任何 wash（和下面 send-sms 那个同构）。
+      "components/enrollment.tsx: bg-warn-wash",
       "components/send-sms.tsx: bg-bad-wash",
       "components/send-sms.tsx: bg-warn-wash",
       "components/ui/badge.tsx: bg-bad-wash",
@@ -2666,6 +2669,174 @@ test("the consequence rule accepts the two that work and refuses the two that do
   assert.equal(assertConsequence("  This deletes the profile from the eUICC.  "), "This deletes the profile from the eUICC.");
 });
 
+/**
+ * 每一处 `consequence={…}` 都要落到 `CONFIRM_CONSEQUENCE_KEYS` 上 —— 名单从
+ * **源码枚举**出来，不是谁记得写进去。
+ *
+ * 🔴 2026-09-14 写这条的时候，树上有**两个**漏网的：
+ *
+ *      enroll.revokeWarning    M7 刚加的，吊销一张设备证书那句话
+ *      ledger.confirmPublish   早就在了，而 sms-safety.ts 自己的注释把它称为
+ *                              「this console 上影响面最大的写入」（publish 会
+ *                              替换掉每个租户读的那张支持结论表）
+ *
+ *    两者都被 `assertConsequence` 在渲染时检过 —— 但那只检**当前语言**。上面那条
+ *    「both languages」的规则只遍历 `CONFIRM_CONSEQUENCE_KEYS`，所以不在名单上的
+ *    key 的英文版从来没有被任何东西读过一次。一句英文的「确定吗？」冒充后果，
+ *    可以一直活到有人用英文界面点那个按钮。
+ *
+ * ⚠️ 在这之前唯一做这件事的是 proxy 那条（`proxy.confirm*` 前缀枚举）——
+ *    也就是说它只管一个功能域。一道只覆盖一个前缀的检查，在有十一处调用点的地方
+ *    等于没覆盖，而这正是这个仓库反复写下的那句话：**名单要从源码数出来**。
+ *
+ * ## 怎么解析
+ *
+ * 静态能定到 key 的两种形状直接解析：`t("KEY", …)` 和 `labels.NAME`（NAME 在调用
+ * 方由 `NAME: t("KEY", locale)` 映射，跨文件找）。剩下的形状把 consequence 放在
+ * state 里传，静态定不到 —— 那些必须写在下面的清单里，并且指名是哪条守卫在管；
+ * 那条守卫的名字会在本文件里被核对，所以这个豁免活不过它依赖的那道检查。
+ *
+ * 🔴 解析不了又不在清单上的，**报错**，不是跳过。一道悄悄跳过没见过的形状的检查，
+ *    会在下一个人换一种写法的那天变成绿色的谎。
+ */
+test("每一处 consequence 都落在 CONFIRM_CONSEQUENCE_KEYS 上，而且这个名单是数出来的", () => {
+  /** 把 consequence 放在 state 里传的那几处：解析不到 key，由别的守卫管。 */
+  const viaState = new Map<string, { why: string; guardedBy: string }>([
+    [
+      "components/card-policies.tsx",
+      {
+        why:
+          "`asked.consequence` 来自 `confirmations[pending.guard]`，那张表由调用方传入，" +
+          "每一项的 consequence 在下面那条守卫里逐个对照名单",
+        guardedBy: "every card policy edit has a dialog, and every dialog has both halves",
+      },
+    ],
+    [
+      "components/esim-panel.tsx",
+      {
+        why:
+          "`pending.consequence` 由 `t(guard.consequence, locale)` 现算，guard 来自一张" +
+          "命令守卫表，那张表里的每个 consequence 由下面那条守卫对照名单",
+        guardedBy: "every command either states a consequence or says why it does not",
+      },
+    ],
+    [
+      "components/conversation.tsx",
+      {
+        why:
+          "`asked.consequence` 在同文件里由 `labels.confirmDeleteThread` / " +
+          "`labels.confirmDeleteMessage` 赋值，两者都已在名单上；另一处 " +
+          "`interpolate(labels.confirmForgetContact, …)` 本条已经能解析",
+        guardedBy: "every request the conversation makes refuses without the role, not only without the button",
+      },
+    ],
+    [
+      "components/proxy-manager.tsx",
+      {
+        why: "`pending.consequence` 来自 `proxy.confirm*` 那一族，整族由下面那条守卫枚举对照名单",
+        guardedBy: "every proxy confirmation is wired up and fills every name it uses",
+      },
+    ],
+    [
+      "components/settings-form.tsx",
+      {
+        why: "`pending?.consequence ?? saveConsequence` 两支都是 settings.* 的 key，由下面那条守卫覆盖",
+        guardedBy: "the settings confirmations name the channel and the section",
+      },
+    ],
+    [
+      "components/device-console.tsx",
+      {
+        why:
+          "`t(pending.consequence, locale)` 的参数不是字面量，它是命令守卫表里带过来的 key；" +
+          "那张表的每一项由下面那条守卫对照名单",
+        guardedBy: "every command either states a consequence or says why it does not",
+      },
+    ],
+  ]);
+
+  const listed = new Set<string>(CONFIRM_CONSEQUENCE_KEYS as readonly string[]);
+  // 组件加上 app/ 下每一个 .tsx —— `labels.NAME` 的那一跳落在页面里，
+  // 所以两边都要扫，而且都是**数出来的**，不是列出来的。
+  const sources = [
+    ...readdirSync(join(root, "components"), { recursive: true, encoding: "utf8" })
+      .filter((name): name is string => typeof name === "string" && name.endsWith(".tsx"))
+      .map((name) => `components/${name}`),
+    ...readdirSync(join(root, "app"), { recursive: true, encoding: "utf8" })
+      .filter((name): name is string => typeof name === "string" && name.endsWith(".tsx"))
+      .map((name) => `app/${name}`),
+  ];
+  assert.ok(sources.length > 20, `只枚举到 ${sources.length} 个 .tsx —— 枚举本身坏了`);
+
+  // `NAME: t("KEY", locale)` 的全树映射，用来解析 `labels.NAME`。
+  const labelToKey = new Map<string, string>();
+  for (const relative of sources) {
+    for (const m of readSource(relative).matchAll(/(\w+):\s*t\(\s*"([\w.]+)"/g)) {
+      labelToKey.set(m[1], m[2]);
+    }
+  }
+
+  const unresolved: string[] = [];
+  const notListed: string[] = [];
+  let seen = 0;
+
+  for (const relative of sources) {
+    const code = scan(readSource(relative)).code;
+    for (let i = code.indexOf("consequence={"); i !== -1; i = code.indexOf("consequence={", i + 1)) {
+      // 花括号配平地取出表达式：send-sms 那处里面带一个对象字面量。
+      let depth = 0;
+      let end = -1;
+      for (let j = i + "consequence=".length; j < code.length; j += 1) {
+        if (code[j] === "{") depth += 1;
+        else if (code[j] === "}") {
+          depth -= 1;
+          if (depth === 0) { end = j; break; }
+        }
+      }
+      assert.notEqual(end, -1, `${relative}: consequence={…} 没有配平的花括号`);
+      const expression = code.slice(i + "consequence=".length + 1, end).trim();
+      seen += 1;
+
+      const literal = /^(?:interpolate\()?t\(\s*"([\w.]+)"/.exec(expression);
+      const viaLabel = /^(?:interpolate\()?labels\.(\w+)/.exec(expression);
+      let key: string | null = null;
+      if (literal) key = literal[1];
+      else if (viaLabel) key = labelToKey.get(viaLabel[1]) ?? null;
+
+      if (key === null) {
+        const exempt = viaState.get(relative);
+        if (!exempt) {
+          unresolved.push(`${relative}: ${expression.slice(0, 60)}`);
+          continue;
+        }
+        assert.ok(exempt.why.length > 40, `${relative} 的豁免没写理由`);
+        assert.match(
+          readSource("lib/tokens.test.ts"),
+          new RegExp(`test\\("${exempt.guardedBy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`),
+          `${relative} 的豁免依赖一条叫「${exempt.guardedBy}」的守卫，而它已经不在了`,
+        );
+        continue;
+      }
+      if (!listed.has(key)) notListed.push(`${relative}: ${key}`);
+    }
+  }
+
+  // 十一处调用点。这个数不是上限，是「扫描没有在数空气」的下限。
+  assert.ok(seen >= 11, `只找到 ${seen} 处 consequence={…} —— 扫描本身坏了，不是树变干净了`);
+  assert.deepEqual(
+    unresolved,
+    [],
+    "一处 consequence 的写法这条守卫认不出来，而它也没写进 viaState —— " +
+      "先确认它是怎么拿到那句话的，再决定是解析它还是登记它",
+  );
+  assert.deepEqual(
+    notListed,
+    [],
+    "一处 consequence 的 key 不在 CONFIRM_CONSEQUENCE_KEYS 上，" +
+      "于是它的另一种语言从来没有被任何东西读过",
+  );
+});
+
 test("every consequence key resolves, in both languages, and states a consequence", () => {
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));
@@ -3270,8 +3441,14 @@ test("every write on the confirmation ledger checks the role before it sends", (
       checked += 1;
     }
   }
-  // Not scanning air: the ledger has four files and seven writes on it today.
-  assert.ok(checked >= 6, `only ${checked} confirmed writes checked — the ledger shrank`);
+  // Not scanning air: the ledger has five files and eight writes on it today, and
+  // `send-sms.tsx` is the one render-gated exemption above, so the loop checks 7.
+  //
+  // ⚠️ 这个地板和上面那句话都是手写的，而 M7 加进 `enrollment.tsx` 之后它们有一轮
+  //    是错的：账本变成 5 文件 / 8 写入（checked=7），而这里还写着「四个文件、七个
+  //    写入」、地板还停在 6。地板比真值低一格的后果不是「宽松一点」，是**一个写入
+  //    从账本上掉下去这条断言不会响** —— 也就是这条断言存在的唯一理由失效了。
+  assert.equal(checked, 7, `${checked} confirmed writes checked, not the 7 the ledger holds`);
 });
 
 test("every request the conversation makes refuses without the role, not only without the button", () => {
@@ -5860,9 +6037,11 @@ test("the tables being scanned are derived from the tree, not typed out", () => 
     tables += parsed.length;
     for (const table of parsed) columns += table.headers.length;
   }
-  assert.equal(found.length, 14, `${found.length} files render a table, not 14`);
-  assert.equal(tables, 23, `${tables} tables found, not 23`);
-  assert.equal(columns, 113, `${columns} columns found, not 113`);
+  // 2026-09-13 装机码那张证书表进来：14 → 15 个文件，23 → 24 张表，
+  // 113 → 118 列（设备 / 指纹 / 到期 / 状态 / 操作）。
+  assert.equal(found.length, 15, `${found.length} files render a table, not 15`);
+  assert.equal(tables, 24, `${tables} tables found, not 24`);
+  assert.equal(columns, 118, `${columns} columns found, not 118`);
 });
 
 test("a column that drops off the phone drops off in its header and its body alike", () => {
@@ -5934,7 +6113,9 @@ test("a column that drops off the phone drops off in its header and its body ali
     assert.match(why, /DEFECT/, `${key} is recorded as a defect but no longer says so`);
   }
 
-  assert.equal(checked, 113, `${checked} columns found, not the 113 these tables have`);
+  // 2026-09-13 装机码那张证书表的 5 列（设备 / 指纹 / 到期 / 状态 / 操作）进来：113 → 118。
+  // 其中只有「指纹」在窄屏掉：头和体都带 `secondary`，所以上面的配对检查是绿的。
+  assert.equal(checked, 118, `${checked} columns found, not the 118 these tables have`);
 });
 
 test("a column with a control in it never drops off the phone", () => {
@@ -6445,7 +6626,9 @@ test("the device list is drawn by the shared components, at the point of use", (
   // fails rather than arrives.
   assert.equal(uses(/<TableHead\b/g), 21, "four, then nine, then eight");
   assert.equal(uses(/<CardEmpty\b/g), 3, "each empty case still says what would be here");
-  assert.equal(uses(/<Card\b/g), 4, "alerts, devices, modules, card policies");
+  // 2026-09-13 装机那一块是第五张卡，而且刻意排在设备卡**之前**：设备卡的空态
+  // 从很早就写着「先生成一个接入码，再用它启动边缘 agent」，那句话指的就是它。
+  assert.equal(uses(/<Card\b/g), 5, "enrollment, alerts, devices, modules, card policies");
   // Preflight is off, so a bare `<table>` is not merely a second implementation:
   // the legacy stylesheet would style it, which is the mechanism by which two
   // implementations drift apart.
