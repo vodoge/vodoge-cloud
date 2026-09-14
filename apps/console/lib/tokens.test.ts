@@ -2837,6 +2837,66 @@ test("每一处 consequence 都落在 CONFIRM_CONSEQUENCE_KEYS 上，而且这�
   );
 });
 
+/**
+ * 根 README 里那个「多少项检查」的数字，必须和真的跑了多少条对得上。
+ *
+ * 🔴 2026-09-14 发现它写着 365，而实际是 359 —— 而且它在这次改动**之前**就已经
+ *    是错的（那时是 358）。一个没人检查的数字必然会 stale，而 stale 的方向总是
+ *    偏大：加测试的人不会想起来去改 README，删测试的人更不会。
+ *
+ *    代价不是「数字不准」。README 是新人判断「这套检查有多厚」的唯一入口，
+ *    而一个虚高的数字会让人以为覆盖比实际更好。
+ *
+ * ## 文件清单从 package.json 的 test 脚本里数出来
+ *
+ * ⚠️ **不要在这里再抄一份文件名清单**。`npm test` 跑的是 package.json 里那一行，
+ *    在这里复制一份就是第二处会分家的地方 —— 而且分家之后这条断言仍然是绿的
+ *    （它只是少数了一个文件），那正是这个仓库反复写下的那种「绿色的谎」。
+ *
+ * 🔴 `scripts/check-i18n.mjs` 也在那一行里，而它自己带一条 `test(...)`。
+ *    所以 358（lib/*.test.ts）+ 1 = 359。少算它就会得出一个差一的数，
+ *    然后有人会去把 README 改成那个差一的数。
+ */
+test("README 里那个检查条数，是从真的跑了什么数出来的", () => {
+  const repoRoot = join(root, "..", "..");
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  const script = manifest.scripts?.test;
+  assert.ok(script, "package.json 里没有 test 脚本了");
+
+  // `node --test --experimental-strip-types a.ts b.ts …` 里那些路径。
+  const listed = script!
+    .split(/\s+/)
+    .filter((token) => /\.(ts|mjs|js)$/.test(token) && !token.startsWith("-"));
+  assert.ok(listed.length > 10, `从 test 脚本里只解析出 ${listed.length} 个文件 —— 解析坏了`);
+
+  let counted = 0;
+  const missing: string[] = [];
+  for (const relative of listed) {
+    const absolute = join(root, relative);
+    if (!existsSync(absolute)) {
+      missing.push(relative);
+      continue;
+    }
+    // 顶层的 `test("…"` —— 缩进的那些是 `t.test` 子项，`node --test` 单独计数，
+    // 而 `# tests` 那一行数的是顶层。
+    counted += (readFileSync(absolute, "utf8").match(/^test\(/gm) ?? []).length;
+  }
+  assert.deepEqual(missing, [], "test 脚本指向一个不存在的文件");
+  assert.ok(counted > 300, `只数出 ${counted} 条 —— 计数方式和 node --test 不一致了`);
+
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const claim = /console:\s*(\d+)\s*checks/.exec(readme);
+  assert.ok(claim, "根 README 里那句「console: N checks」不见了；要么加回去，要么删掉这条断言");
+  assert.equal(
+    Number(claim![1]),
+    counted,
+    `根 README 说控制台有 ${claim![1]} 项检查，实际是 ${counted}。` +
+      `改 README 那个数，不要改这条断言 —— 它数的是 package.json 的 test 脚本真的跑了什么。`,
+  );
+});
+
 test("every consequence key resolves, in both languages, and states a consequence", () => {
   const zh = JSON.parse(readFileSync(join(root, "messages", "zh.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(root, "messages", "en.json"), "utf8"));

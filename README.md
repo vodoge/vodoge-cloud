@@ -248,10 +248,21 @@ A rebuilt agent starts numbering at 1 and the uplink refuses to proceed:
 ack cursor 119517 exceeds last allocated sequence 5
 ```
 
-That refusal is correct — those sequence numbers are already spent. Shift the
-new agent's pending rows above the cloud's cursor rather than clearing them,
-so nothing queued is lost and nothing is reused. The edge repository's README
-carries the exact steps.
+That refusal is correct — those sequence numbers are already spent. The edge
+repository carries a command for it (`uplink-rescue <that first number>`), which
+renumbers the pending queue above the cloud's cursor in one transaction, so
+nothing queued is lost and nothing is reused.
+
+> ⚠️ **Nothing needs to be read from this side.** The number the agent prints is
+> the cloud's own cursor, delivered in every `ResumeAck` from
+> `app.ingress_window()` — the longest contiguous run from
+> `app.ingress_pruned.pruned_through`. An earlier version of this section sent
+> the operator to `SELECT MAX(seq) FROM app.ingress`, which is a *different*
+> number: too high whenever the device has rows above that contiguous prefix
+> (`missing_ranges` exists to describe exactly those holes), and too low — or
+> NULL — once `app.ingress` retention has deleted the acknowledged prefix, which
+> is the state any device down long enough to be rebuilt will be in. There is no
+> per-device cursor column to read instead; the value is computed on each call.
 
 ## Non-negotiable invariants
 
@@ -280,7 +291,7 @@ docs/               Protocol semantics, roadmap, execution plan
 
 ```sh
 cd apps/gateway && go test ./...      # gateway
-cd apps/console && npm test           # console: 365 checks, no gateway needed
+cd apps/console && npm test           # console: 360 checks, no gateway needed
 cd apps/console && npm run typecheck
 ```
 
