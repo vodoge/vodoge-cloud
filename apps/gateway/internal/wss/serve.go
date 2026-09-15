@@ -173,8 +173,16 @@ type Server struct {
 type DeviceReport struct {
 	EdgeVersion   string
 	MatrixVersion string
-	QueueRecords  int64
-	QueueBytes    int64
+	// The card-policy set this device holds. Empty when it holds none, which
+	// an older agent that does not send the field reports the same way.
+	//
+	// Both mean the same thing for the decision the caller makes with it --
+	// there is nothing in force on that device -- so both are treated as
+	// stale. The field is optional in the contract precisely so an agent that
+	// predates it still connects, and still gets the set pushed to it.
+	CardPolicyVersion string
+	QueueRecords      int64
+	QueueBytes        int64
 }
 
 func (server *Server) now() time.Time {
@@ -272,10 +280,11 @@ func (server *Server) ServeDevice(device identity.Device, conn FrameConn) (err e
 	}
 	if server.ResumeReport != nil {
 		server.ResumeReport(device.TenantID, device.DeviceID, DeviceReport{
-			EdgeVersion:   stringValue(resume.EdgeVersion),
-			MatrixVersion: resume.CapabilityMatrixVersion,
-			QueueRecords:  int64Value(resume.QueueRecords),
-			QueueBytes:    int64Value(resume.QueueBytes),
+			EdgeVersion:       stringValue(resume.EdgeVersion),
+			MatrixVersion:     resume.CapabilityMatrixVersion,
+			CardPolicyVersion: stringValue(resume.CardPolicyVersion),
+			QueueRecords:      int64Value(resume.QueueRecords),
+			QueueBytes:        int64Value(resume.QueueBytes),
 		})
 	}
 

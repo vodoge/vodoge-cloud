@@ -1983,6 +1983,60 @@ func (process *process) recordResume(tenantID, deviceID string, report wss.Devic
 		slog.Warn("device resume not recorded",
 			"tenant_id", tenantID, "device_id", deviceID, "error", err)
 	}
+	process.reconcileCardPolicies(ctx, tenantID, deviceID, report.CardPolicyVersion)
+}
+
+// reconcileCardPolicies re-sends the tenant's policy set to a device holding a
+// different one.
+//
+// 🔴 在这之前**一次对账都没有**：`pushCardPolicies` 只在 Save / Delete 两个路由
+//
+//	上跑，也就是只在运维改策略的那一刻。设备当时离线、命令过期、或者行是用
+//	别的方式写进去的，那台机器就永远按「没有任何限制」在跑。
+//
+//	2026-09-15 在生产上量到的就是这个：云端三张卡**全部**声明了
+//	`sms_send: false`，而那台设备本地的 `card_policies` 是 0 行。命令历史里
+//	5 次下发，2 次因设备离线过期、1 次因当时的边缘不认识这个命令而失败，
+//	之后再没有人重试。`pushCardPolicies` 自己的头注释预见过这件事 ——
+//	「a device that missed one change would otherwise be wrong about that card
+//	forever」—— 只是没有东西去纠正它。
+//
+// ⚠️ 空版本（设备手上没有、或者是个还不报这个字段的老 agent）算陈旧。两者对
+//
+//	这个判断是同一件事：那台机器上没有任何生效的限制。老 agent 会每次重连都
+//	收到一条 —— 那是可接受的代价，它本身就是个要修的状态，而多一条命令比一台
+//	不设防的机器好。
+//
+// 幂等靠 `commands.CardPolicyKey(device, version, payload)`：同一套策略推给同一
+// 台设备只会入队一次，所以一台版本对得上的设备每 5 秒重连一次也不会堆命令 ——
+// 但那条路根本走不到这里，上面那个 `current == held` 先返回了。
+func (process *process) reconcileCardPolicies(
+	ctx context.Context,
+	tenantID, deviceID, held string,
+) {
+	if process.cards == nil || process.queue == nil {
+		return
+	}
+	current, err := process.cards.Version(ctx, tenantID)
+	if err != nil {
+		// ⚠️ 读不到就什么都不做。补推一套我们自己都没读出来的策略，比不补更糟。
+		slog.Warn("card policy version not read, skipping reconcile",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+		return
+	}
+	if held != "" && held == current {
+		return
+	}
+	policies, err := process.cards.List(ctx, tenantID)
+	if err != nil || len(policies) == 0 {
+		// 空集合不推：契约要求至少一条，而「没有策略」的另一种解读是「全部
+		// 拒绝」，把那个解读推给一支机队会非常壮观。同 `pushCardPolicies`。
+		return
+	}
+	slog.Info("device holds a different card policy set, pushing",
+		"tenant_id", tenantID, "device_id", deviceID,
+		"held", held, "current", current, "policies", len(policies))
+	process.enqueueCardPolicies(ctx, tenantID, deviceID, current, policies)
 }
 
 // newRegistry declares every metric this process reports.

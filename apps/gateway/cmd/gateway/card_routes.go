@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -160,6 +161,23 @@ func (process *process) pushCardPolicies(request *http.Request, tenantID string)
 	if err != nil {
 		return
 	}
+	for _, device := range devices {
+		process.enqueueCardPolicies(request.Context(), tenantID, device.ID, version, policies)
+	}
+}
+
+// enqueueCardPolicies queues one policy-set push for one device.
+//
+// 🔴 抽出来是因为现在有**两条**路走到这里：运维改策略时的下发
+// (`pushCardPolicies`)，和设备连上来时发现版本对不上的补推
+// (`reconcileCardPolicies`)。两条路必须造出字节相同的 payload —— 否则
+// `commands.CardPolicyKey` 算出来的幂等键不同，同一套策略会入队两次，而那正是
+// 这个键存在要防的事。复制一份迟早会分家，所以只有一份。
+func (process *process) enqueueCardPolicies(
+	ctx context.Context,
+	tenantID, deviceID, version string,
+	policies []cards.Policy,
+) {
 	command := contract.UpdateCardPolicyCommand{
 		Kind:          "UpdateCardPolicy",
 		PolicyVersion: version,
@@ -193,10 +211,10 @@ func (process *process) pushCardPolicies(request *http.Request, tenantID string)
 	if err != nil {
 		return
 	}
-	for _, device := range devices {
-		_, _ = process.queue.Enqueue(request.Context(), commands.Item{
+	{
+		_, _ = process.queue.Enqueue(ctx, commands.Item{
 			TenantID: tenantID,
-			DeviceID: device.ID,
+			DeviceID: deviceID,
 			Kind:     commands.CardPolicyKind,
 			// Derived from the device, the version and the payload, and from
 			// nothing else. It used to carry time.Now().UnixNano(), which made
@@ -204,7 +222,7 @@ func (process *process) pushCardPolicies(request *http.Request, tenantID string)
 			// see commands.CardPolicyKey. The same derivation is what lets a
 			// redelivery on resume name itself as another attempt at this
 			// intent instead of a second intention.
-			IdempotencyKey: commands.CardPolicyKey(device.ID, version, payload),
+			IdempotencyKey: commands.CardPolicyKey(deviceID, version, payload),
 			Payload:        payload,
 			// The window is short on purpose and the redelivery in
 			// internal/commands carries the durability instead: a still-queued

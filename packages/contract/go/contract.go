@@ -62,6 +62,7 @@ type ResumePayload struct {
 	LastAckedSeq            string   `json:"last_acked_seq"`
 	PendingGapIds           []string `json:"pending_gap_ids"`
 	CapabilityMatrixVersion string   `json:"capability_matrix_version"`
+	CardPolicyVersion       *string  `json:"card_policy_version,omitempty"`
 	EdgeVersion             *string  `json:"edge_version,omitempty"`
 	QueueRecords            *int64   `json:"queue_records,omitempty"`
 	QueueBytes              *int64   `json:"queue_bytes,omitempty"`

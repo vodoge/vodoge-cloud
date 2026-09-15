@@ -78,6 +78,7 @@ export interface ResumePayload {
   last_acked_seq: string;
   pending_gap_ids: Array<Uuid>;
   capability_matrix_version: string;
+  card_policy_version?: string;
   edge_version?: string;
   queue_records?: number;
   queue_bytes?: number;
