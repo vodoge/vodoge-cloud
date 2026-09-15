@@ -1984,6 +1984,68 @@ func (process *process) recordResume(tenantID, deviceID string, report wss.Devic
 			"tenant_id", tenantID, "device_id", deviceID, "error", err)
 	}
 	process.reconcileCardPolicies(ctx, tenantID, deviceID, report.CardPolicyVersion)
+	process.reconcileMatrix(ctx, tenantID, deviceID, report.MatrixVersion)
+}
+
+// reconcileMatrix re-sends the tenant's capability matrix to a device holding a
+// different version.
+//
+// 和 `reconcileCardPolicies` 同一个缺口：矩阵也只在发布那一刻下发一次
+// （`ledger_routes.go` 的 publish 路由），之后没有任何对账。设备在 Resume 里报
+// `capability_matrix_version`，而这个值此前**只被记录**（写进设备行、在目录里
+// 展示），从来没有人拿它和云端手上那份比过。
+//
+// ⚠️ 漂移的方向在这里是**安全**的那一边，所以这不是救火：一台错过推送的机器会
+//
+//	回落到内置矩阵，把绝大多数 (型号, 运营商) 读成「没测过」，于是**拒绝**它本
+//	可以做的事；而 `MatrixAuthority::BuiltinNoRow` / `BuiltinUnparsed` 还会禁止
+//	追溯解绑。2026-09-15 量过：云端和生产那台设备都是 `2026-09-05T07:36:10Z`，
+//	今天没有漂移。补它是为了收掉这一类。
+//
+// 🔴 云端没有矩阵时**什么都不做**，不推一份空的。设备手上那份（哪怕是内置的）
+//
+//	是它今天唯一的判据，而一份空矩阵会被读成「什么都没测过」，进而拒绝整支机队
+//	的每一个操作。`matrix.Empty`（没有配 PostgreSQL 时）正是这个状态。
+//
+// ⚠️ 这条补推会把一台一直跑在内置矩阵上的机器切成 `MatrixAuthority::Stored`，
+//
+//	也就是**重新打开追溯解绑**。那是正确的 —— 它本来就该有这份矩阵 —— 但它是
+//	一个真实的下游后果，不是纯粹的读取对齐。
+func (process *process) reconcileMatrix(
+	ctx context.Context,
+	tenantID, deviceID, held string,
+) {
+	if process.matrix == nil || process.queue == nil {
+		return
+	}
+	overlay, found, err := process.matrix.Get(ctx, tenantID)
+	if err != nil {
+		slog.Warn("capability matrix not read, skipping reconcile",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+		return
+	}
+	if !found || overlay.Version == "" || held == overlay.Version {
+		return
+	}
+	payload, err := matrix.CommandPayload(overlay)
+	if err != nil {
+		slog.Warn("capability matrix payload not built, skipping reconcile",
+			"tenant_id", tenantID, "device_id", deviceID, "error", err)
+		return
+	}
+	slog.Info("device holds a different capability matrix, pushing",
+		"tenant_id", tenantID, "device_id", deviceID,
+		"held", held, "current", overlay.Version)
+	_, _ = process.queue.Enqueue(ctx, commands.Item{
+		TenantID: tenantID,
+		DeviceID: deviceID,
+		Kind:     commands.MatrixKind,
+		// 和 publish 那条路算出来的键相同（同样是 device+version+payload），
+		// 所以一次 publish 之后紧接着的重连不会把同一份文档排两遍。
+		IdempotencyKey: commands.MatrixKey(deviceID, overlay.Version, payload),
+		Payload:        payload,
+		ExpiresAt:      time.Now().Add(commands.MatrixTTL),
+	})
 }
 
 // reconcileCardPolicies re-sends the tenant's policy set to a device holding a
