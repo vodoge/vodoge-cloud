@@ -22,7 +22,7 @@
   "cards.add": "Add policy",
   "cards.addFor": "Card",
   "cards.capabilityData": "Data",
-  "cards.capabilityHint": "What the plan on this card is sold as doing. Only \\u201cnot included\\u201d changes anything: it withholds the operation. It can never grant one the module and network were not measured to have.",
+  "cards.capabilityHint": "What the plan on this card is sold as doing. It can never grant a capability the module and network were not measured to have — only withhold one, and only two of these four can actually be withheld: **SMS send** and **data**, which the agent asks about before it attempts them. Receiving cannot be withheld (the message is already on the module; not collecting it only loses it), and this agent has no voice path at all, so voice is refused two layers earlier. The last two are recorded, not enforced.",
   "cards.capabilityNo": "Not included",
   "cards.capabilitySmsReceive": "Receive SMS",
   "cards.capabilitySmsSend": "Send SMS",

@@ -22,7 +22,7 @@
   "cards.add": "添加策略",
   "cards.addFor": "卡",
   "cards.capabilityData": "数据",
-  "cards.capabilityHint": "这张卡的套餐卖的是什么。只有「不含」会改变行为——它会扣留该操作;它永远不能授予模组与运营商未实测过的能力。",
+  "cards.capabilityHint": "这张卡的套餐卖的是什么。它永远不能授予模组与运营商未实测过的能力，只能扣留 —— 而真正扣留得到的只有**发短信**和**数据**这两项：agent 在发起之前会问一次，「不含」就不发起。收短信扣留不了（消息已经到了模组上，不去收它只会丢掉它）；语音这台 agent 根本没有通路，早两层就被拒了。后两项填了只是记录，不改变行为。",
   "cards.capabilityNo": "不含",
   "cards.capabilitySmsReceive": "收短信",
   "cards.capabilitySmsSend": "发短信",
