@@ -32,7 +32,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import postcss from "postcss";
@@ -2699,6 +2699,107 @@ test("the consequence rule accepts the two that work and refuses the two that do
  * 🔴 解析不了又不在清单上的，**报错**，不是跳过。一道悄悄跳过没见过的形状的检查，
  *    会在下一个人换一种写法的那天变成绿色的谎。
  */
+/**
+ * 组件读的每一个 `labels.X`，调用方都必须真的传进来。
+ *
+ * 🔴 2026-09-15 发现 `components/card-policies.tsx` 读七个 label，而
+ *    `app/devices/page.tsx` 的 `labels={{…}}` 里**一个都没有**：
+ *
+ *      capabilityUndeclared / capabilityYes / capabilityNo
+ *      capabilitySmsSend / capabilitySmsReceive / capabilityData / capabilityVoice
+ *
+ *    七个文案在 `messages/*.json` 里全都写好了、也翻译好了，只是没接上。后果按
+ *    账号分两种，两种都很糟：
+ *
+ *    - 可写账号：那个三态下拉框的三个 `<option>` 全是**空白**。而这一列的三个
+ *      状态里只有「不含」会改变行为（`Some(true)` 和 `None` 在边缘都不拦任何
+ *      东西），所以在三个没有文字的选项里挑错一个，产出的正是静默的 fail-open。
+ *    - 只读账号：那一格渲染成 `{nameOf(op)}: {shown(value)}`，`nameOf` 回落到
+ *      原始 key、`shown` 拿到 `undefined` —— 屏幕上是 `smsSend: `。
+ *
+ * ⚠️ TypeScript 抓不到：`labels` 的类型是 `Record<string, string>`，读一个不存在
+ *    的键是合法的，结果是 `undefined`，而 React 把 `undefined` 渲染成空。
+ *    这条断言补的就是类型系统在这个形状上放弃的那一寸。
+ *
+ * ## 怎么配对
+ *
+ * 从源码两跳：组件里出现的 `labels.NAME`，和调用方 JSX 里 `labels={{ NAME: … }}`
+ * 提供的名字。两边都**枚举**出来，不写清单。
+ *
+ * ⚠️ 只查「组件被谁渲染」这一跳能确定的那些：一个组件如果有多个调用方，每个
+ *    调用方都要单独满足。找不到任何调用方的组件会被报出来 —— 那要么是死代码，
+ *    要么是这条扫描漏了一种渲染方式，两种都该有人看一眼。
+ */
+test("组件读的每一个 labels.X，调用方都真的传了", () => {
+  const files = [
+    ...readdirSync(join(root, "components"), { recursive: true, encoding: "utf8" })
+      .filter((name): name is string => typeof name === "string" && name.endsWith(".tsx"))
+      .map((name) => `components/${name}`),
+    ...readdirSync(join(root, "app"), { recursive: true, encoding: "utf8" })
+      .filter((name): name is string => typeof name === "string" && name.endsWith(".tsx"))
+      .map((name) => `app/${name}`),
+  ];
+  const source = new Map(files.map((relative) => [relative, readSource(relative)]));
+
+  // 组件名 → 它读的 label 名字。只看 `components/`：`app/` 里的是调用方。
+  const needs = new Map<string, Set<string>>();
+  for (const [relative, text] of source) {
+    if (!relative.startsWith("components/")) continue;
+    const code = scan(text).code;
+    const names = new Set<string>();
+    for (const m of code.matchAll(/\blabels\.(\w+)/g)) names.add(m[1]);
+    // `labels[...]` 这种动态取法这条断言看不到，但 card-policies 里那四个操作名
+    // 走的正是 `labels[capabilityLabelSlot(op)]` —— 所以把那个函数返回的字面量
+    // 也收进来。
+    for (const m of code.matchAll(/return\s+"(capability\w+)"/g)) names.add(m[1]);
+    if (names.size > 0) needs.set(relative, names);
+  }
+  assert.ok(needs.size > 5, `只找到 ${needs.size} 个读 labels 的组件 —— 扫描坏了`);
+
+  const missing: string[] = [];
+  const unrendered: string[] = [];
+  for (const [relative, names] of needs) {
+    const component = basename(relative, ".tsx");
+    // 组件名：文件名转驼峰，再看哪个文件 `<Name` 渲染它。
+    const exported = [...source.get(relative)!.matchAll(/export function (\w+)/g)].map((m) => m[1]);
+    const callers = files.filter((other) => {
+      if (other === relative) return false;
+      const code = scan(source.get(other)!).code;
+      return exported.some((name) => code.includes(`<${name}`));
+    });
+    if (callers.length === 0) {
+      unrendered.push(`${relative} (${component})`);
+      continue;
+    }
+    for (const caller of callers) {
+      const code = scan(source.get(caller)!).code;
+      // 调用方 `labels={{ … }}` 里给出的名字。一个文件可能渲染多个组件，
+      // 所以把所有 labels 块里的名字并起来 —— 这会放宽一点点，但不会漏报。
+      const supplied = new Set<string>();
+      for (const block of code.matchAll(/labels=\{\{([\s\S]*?)\}\}/g)) {
+        for (const m of block[1].matchAll(/(\w+):/g)) supplied.add(m[1]);
+      }
+      // 调用方把整个对象透传下去（`labels={labels}`）就不在这条断言的射程内。
+      if (/labels=\{[a-zA-Z]/.test(code)) continue;
+      for (const name of names) {
+        if (!supplied.has(name)) missing.push(`${caller} → ${component}: labels.${name}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    unrendered,
+    [],
+    "一个读 labels 的组件找不到任何渲染它的地方 —— 要么是死代码，要么这条扫描漏了一种渲染方式",
+  );
+  assert.deepEqual(
+    missing.sort(),
+    [],
+    "组件读了一个调用方没传的 label。TypeScript 看不到（labels 是 Record<string, string>），" +
+      "React 把 undefined 渲染成空 —— 屏幕上是一个空白的控件或者一句半截的话",
+  );
+});
+
 test("每一处 consequence 都落在 CONFIRM_CONSEQUENCE_KEYS 上，而且这个名单是数出来的", () => {
   /** 把 consequence 放在 state 里传的那几处：解析不到 key，由别的守卫管。 */
   const viaState = new Map<string, { why: string; guardedBy: string }>([

@@ -291,7 +291,7 @@ docs/               Protocol semantics, roadmap, execution plan
 
 ```sh
 cd apps/gateway && go test ./...      # gateway
-cd apps/console && npm test           # console: 360 checks, no gateway needed
+cd apps/console && npm test           # console: 361 checks, no gateway needed
 cd apps/console && npm run typecheck
 ```
 

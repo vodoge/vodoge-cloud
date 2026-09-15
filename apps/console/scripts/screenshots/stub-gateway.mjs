@@ -137,7 +137,23 @@ const ROUTES = {
   "/v1/auth/session": { role: "admin" },
   "/v1/alerts": { alerts: [] },
   "/v1/modems": { modems: [] },
-  "/v1/cards/policies": { policies: [] },
+  // 一张真的卡策略：那个三态选择器的选项文案此前一个都没传下来，三个
+  // <option> 全是空白，而只有「不含」会改变行为 —— 空队列渲不出这一列，
+  // 所以这个架子要有一行。
+  "/v1/cards/policies": {
+    policies: [
+      {
+        iccid: "89860000000000000001",
+        cellular_enabled: true,
+        vertical: "iot",
+        apn: null,
+        sms_send: false,
+        sms_receive: true,
+        data: null,
+        voice: null,
+      },
+    ],
+  },
   // 信箱页要的两样。发短信那个确认框的形状缺陷（见 tokens.test.ts 里那条
   // 「确认框是条件挂载的」）只有在表单真的渲出来之后才验得到。
   "/v1/messages/threads": { threads: [] },

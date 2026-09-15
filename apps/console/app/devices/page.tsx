@@ -518,6 +518,25 @@ export default async function DevicesPage({
               addFor: t("cards.addFor", locale),
               remove: t("cards.remove", locale),
               failed: t("cards.failed", locale),
+              // 🔴 这九个此前**一个都没传**（2026-09-15 由 tokens.test.ts 的
+              //    「组件读的每一个 labels.X，调用方都真的传了」数出来）。九句
+              //    文案在 messages/*.json 里全都写好、也翻译好了，只是没接上：
+              //
+              //    - 可写账号看到的是三个**空白**的 <option>。而这一列三个状态
+              //      里只有「不含」会改变行为（`Some(true)` 和 `None` 在边缘都
+              //      不拦任何东西），所以挑错一个产出的正是静默的 fail-open ——
+              //      而 `capabilityHint` 那句话恰好就是解释这件事的。
+              //    - 只读账号看到的是 `smsSend: `（名字回落到原始 key，状态是
+              //      undefined）。
+              colCapability: t("cards.colCapability", locale),
+              capabilityHint: t("cards.capabilityHint", locale),
+              capabilityUndeclared: t("cards.capabilityUndeclared", locale),
+              capabilityYes: t("cards.capabilityYes", locale),
+              capabilityNo: t("cards.capabilityNo", locale),
+              capabilitySmsSend: t("cards.capabilitySmsSend", locale),
+              capabilitySmsReceive: t("cards.capabilitySmsReceive", locale),
+              capabilityData: t("cards.capabilityData", locale),
+              capabilityVoice: t("cards.capabilityVoice", locale),
               // Read-only keeps the table and loses the controls. Hiding the
               // whole card would take away the answer to "where did the
               // policies go"; a sentence in place of the add form says which
