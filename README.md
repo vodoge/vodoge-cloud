@@ -226,6 +226,38 @@ CI replays **every** migration against an empty database on each push. That is
 what proves the set can be restored, which is a different claim from "it worked
 against the one live database".
 
+### Restoring from nothing
+
+⚠️ **Replaying the migrations is not the whole restore.** Three things the
+migrations cannot establish have to be in place first, in this order. Until
+2026-09-15 none of this was written down, and a database built by replaying the
+70 migrations alone refused every device uplink with `permission denied for
+schema app` — it looked complete (zero migration errors, RLS and every policy
+byte-identical to production) and could not accept a single envelope.
+
+1. **The roles.** `packages/db/bootstrap/roles.sql` creates two of the five the
+   migrations name. `vodoge_owner`, `vodoge_gateway` and `vodoge_resolver` come
+   from the installer, and two of them are `LOGIN` with passwords — inherently
+   an install step, because a password cannot live in a migration.
+2. **The database owner.** `deploy/postgres-init/10-create-owner.sh` runs
+   `ALTER DATABASE … OWNER TO vodoge_owner`, and it only runs from
+   `docker-entrypoint-initdb.d` — i.e. on a *fresh* data directory. Restoring
+   into an existing cluster skips it, and then `vodoge_owner` cannot create
+   anything.
+3. **The migrations**, all of them, with `deploy/bin/migrate.sh`.
+
+> `deploy/migrate.sh` (the other runner) applies 0001–0009 as `vodoge_owner` and
+> is how production got its ownership. Do not rely on that: since 0071 the
+> migrations set ownership explicitly, so any runner produces the same result.
+> That is the point of 0071 — before it, *who ran the migration* decided who
+> owned the object, and 0001–0009 contain no `OWNER TO` at all.
+
+`packages/db/tests/a_replayed_database_accepts_an_uplink.sql` is what keeps this
+honest: it switches to `vodoge_gateway` and drives a real `accept_ingress` plus a
+real `enqueue_command` against the replayed database. It is the only test in the
+suite that runs as anything other than a superuser — which is why the suite was
+structurally blind to this whole class until it existed.
+
 ### Replacing an edge machine
 
 Rebuilt hardware keeps its identity only if you carry two things across.

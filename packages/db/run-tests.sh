@@ -53,22 +53,17 @@ SQL
     ./deploy/bin/migrate.sh packages/db/migrations/*.sql >/dev/null || {
       echo "迁移重放失败" >&2; exit 1; }
 
-  # ⚠️ 夹具，不是修复。accept_ingress / ingress_window 是 SECURITY DEFINER、
-  #    属主 vodoge_owner，它们要读 app.* 和调 app.current_tenant_id()。
-  #    生产上这些对象本来就归 vodoge_owner（安装时手工 SET ROLE 建的），而
-  #    **迁移里没有任何 SET ROLE**，所以 bin/migrate.sh 单独重放出来的库里
-  #    它们归执行者，vodoge_owner 什么都够不着。
+  # 这里曾经有四条 GRANT，注释写着「夹具，不是修复」，并且说明那是个真问题：
+  # 「一次照迁移做的灾难恢复，会得到一个每封设备上行都 permission denied 的库…
+  #   需要单独决定怎么修（补授权？还是让迁移显式设属主？）」。
   #
-  #    也就是说：一次照迁移做的灾难恢复，会得到一个每封设备上行都
-  #    「permission denied for table ingress」的库。那是个真问题，需要单独
-  #    决定怎么修（补授权？还是让迁移显式设属主？后者会动生产的权限模型），
-  #    不该由这里顺手定。这几行只让测试跑得起来。
-  psql -h "$HOST" -p "$PORT" -U "$USER" -d "$BASE" -v ON_ERROR_STOP=1 -q <<'SQL'
-GRANT USAGE ON SCHEMA app TO vodoge_owner;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app TO vodoge_owner;
-GRANT ALL ON ALL TABLES IN SCHEMA app TO vodoge_owner;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA app TO vodoge_owner;
-SQL
+  # 🔴 2026-09-15 做了那个决定：迁移显式设属主（0071_ownership_is_explicit.sql）。
+  #    那四条没了，而 base 库仍然是对的 —— 因为现在它的正确性来自迁移本身，
+  #    不再来自这个脚本事后补的一刀。
+  #
+  # ⚠️ 别把它们加回来。加回来之后
+  #    packages/db/tests/a_replayed_database_accepts_an_uplink.sql 会变成绿色的谎：
+  #    它测的正是「照迁移重放出来的库收不收得下上行」，而补丁会替迁移把那件事做了。
 fi
 
 pass=0; fail=0; failed=()
