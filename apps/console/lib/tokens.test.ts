@@ -2958,6 +2958,51 @@ test("每一处 consequence 都落在 CONFIRM_CONSEQUENCE_KEYS 上，而且这�
  *    所以 358（lib/*.test.ts）+ 1 = 359。少算它就会得出一个差一的数，
  *    然后有人会去把 README 改成那个差一的数。
  */
+/**
+ * 根 README 不许再教「直接 psql -f 一个迁移」。
+ *
+ * 🔴 2026-09-17 发现的：账本 `app.schema_migrations` 停在 66，而生产库实际已经
+ *    到 71 —— 0067 到 0071 五条都是照 README 那段 `docker exec … psql -f` 手工
+ *    应用的，而记账发生在 `deploy/bin/migrate.sh` 里。
+ *
+ *    代价不是"数字不准"：**灾备恢复读的就是这个账本**来决定重放什么。M6 刚证明
+ *    照迁移重放出来的库本来就很脆弱，而这个账本是那条路径唯一的输入。
+ *
+ * ⚠️ 顺着跑一次真 runner 还翻出一件更老的：生产记录的 0066 校验和**不对应任何
+ *    一个提交版本** —— 那一版是 2026-09-10 事故当天应用的，文件事后被改过。
+ *    「迁移一旦应用就不该再改」这条规矩，runner 早就在查，只是从来没人让它查过
+ *    生产。
+ *
+ * 所以这条断言钉的是**文档不再指向那条绕开账本的路**。它不能证明运维照做了，
+ * 但它能保证那段话不会再悄悄变回去 —— 而它变回去过一次，代价是五条没记账的迁移。
+ */
+test("README 教的迁移应用方式要经过会记账的那个 runner", () => {
+  const repoRoot = join(root, "..", "..");
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+
+  const section = readme.slice(readme.indexOf("### Migrations"));
+  assert.ok(section.length > 200, "README 里找不到 Migrations 那一节");
+  const migrations = section.slice(0, section.indexOf("### ", 4));
+
+  assert.match(
+    migrations,
+    /bin\/migrate\.sh/,
+    "Migrations 那一节没有提到 deploy/bin/migrate.sh —— 那是唯一会写 " +
+      "app.schema_migrations 的路径，而灾备恢复读的就是它",
+  );
+
+  // 🔴 关键的一条：那一节里不许再出现直接把迁移喂给 psql 的写法。
+  //    `psql -f /tmp/m.sql` 正是让五条迁移没进账本的那一句。
+  const bypass = /psql[^\n]*-f\s+\S*\.sql/.exec(migrations);
+  assert.equal(
+    bypass,
+    null,
+    `Migrations 那一节又教了直接 psql -f：「${bypass?.[0] ?? ""}」。` +
+      "那条路不写 app.schema_migrations，而账本是灾备恢复唯一的输入 —— " +
+      "2026-09-17 发现它因此停在 66，而库已经在 71",
+  );
+});
+
 test("README 里那个检查条数，是从真的跑了什么数出来的", () => {
   const repoRoot = join(root, "..", "..");
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {

@@ -213,14 +213,35 @@ ssh root@CLOUD_HOST 'cd /opt/vodoge-cloud/deploy \
 
 ### Migrations
 
-Applied in filename order by the `migrate` service. To apply one by hand:
+Applied in filename order by the `migrate` service. To apply one by hand, use
+the **runner** — never `psql -f` directly:
 
 ```sh
-scp packages/db/migrations/00NN_change.sql root@CLOUD_HOST:/tmp/m.sql
-ssh root@CLOUD_HOST 'docker cp /tmp/m.sql vodoge-cloud-postgres-1:/tmp/m.sql \
-  && docker exec vodoge-cloud-postgres-1 \
-       psql -U vodoge -d vodoge -v ON_ERROR_STOP=1 -f /tmp/m.sql'
+scp packages/db/migrations/*.sql root@CLOUD_HOST:/opt/vodoge-cloud/packages/db/migrations/
+ssh root@CLOUD_HOST 'cd /opt/vodoge-cloud \
+  && PG_CONTAINER=vodoge-cloud-postgres-1 PG_USER=vodoge PG_DB=vodoge \
+     ./bin/migrate.sh packages/db/migrations/*.sql'
 ```
+
+It skips what `app.schema_migrations` already records, applies the rest, and
+records each one with its sha256. Pass every file, not just the new one: the
+skip is cheap and the checksum comparison is the only thing that ever notices an
+applied migration being edited afterwards.
+
+> ⚠️ **This section used to show a bare `docker exec … psql -f`, and that is how
+> five migrations came to be applied without being recorded.** The ledger sat at
+> 66 while the database was actually at 71 — and the ledger is what a restore
+> reads to decide what to replay, so the one artifact disaster recovery depends
+> on was silently wrong. Found on 2026-09-17 while checking something else.
+>
+> Running the real runner afterwards also surfaced an older one: production's
+> recorded sha256 for `0066_modem_registry` matched **no committed version of
+> that file**. It was applied during the 2026-09-10 incident and the file was
+> corrected afterwards — exactly what "a migration, once applied, must not be
+> edited" exists to prevent. Reconciled by deleting the stale row and letting the
+> runner re-apply (0066 is `IF NOT EXISTS` / `DROP … IF EXISTS` /
+> `CREATE OR REPLACE` throughout, and production's schema already matched the
+> committed version, both checked first).
 
 CI replays **every** migration against an empty database on each push. That is
 what proves the set can be restored, which is a different claim from "it worked
@@ -323,7 +344,7 @@ docs/               Protocol semantics, roadmap, execution plan
 
 ```sh
 cd apps/gateway && go test ./...      # gateway
-cd apps/console && npm test           # console: 361 checks, no gateway needed
+cd apps/console && npm test           # console: 362 checks, no gateway needed
 cd apps/console && npm run typecheck
 ```
 
