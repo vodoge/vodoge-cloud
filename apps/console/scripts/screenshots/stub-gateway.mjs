@@ -158,7 +158,24 @@ const ROUTES = {
   // 「确认框是条件挂载的」）只有在表单真的渲出来之后才验得到。
   "/v1/messages/threads": { threads: [] },
   "/v1/messages/contacts": { contacts: [] },
-};
+  // 设置页要的。渠道健康用的是**生产上真实量到的那组数字**（2026-09-17）：
+  // webhook 连续失败 40 次、另两条各 40 次全成功。
+  "/v1/settings": {
+    settings: {
+      notifications: { webhook: { enabled: true, urls: ["http://hooktest:19999/hook"] } },
+    },
+    notification_health: {
+      webhook: {
+        consecutive_failures: 40,
+        last_success: null,
+        last_detail: 'webhook: http://hooktest:19999/hook: dial tcp: lookup hooktest',
+        total: 40,
+      },
+      pushplus: { consecutive_failures: 0, last_success: "2026-09-17T13:43:48Z", last_detail: "", total: 40 },
+      telegram: { consecutive_failures: 0, last_success: "2026-09-17T13:43:49Z", last_detail: "", total: 40 },
+    },
+  },
+  };
 
 createServer((incoming, response) => {
   const path = (incoming.url ?? "").split("?")[0];

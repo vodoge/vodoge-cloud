@@ -2103,6 +2103,7 @@ export const MIGRATED_SOURCES = [
   "app/settings/page.tsx",
   "app/unknown-tenant/page.tsx",
   "components/card-policies.tsx",
+  "components/channel-health.tsx",
   "components/support-ledger.tsx",
   "components/connection-status.tsx",
   "components/conversation.tsx",

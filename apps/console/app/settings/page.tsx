@@ -1,8 +1,15 @@
+import { ChannelHealth } from "@/components/channel-health";
 import { PasswordForm, SettingsForm, type ChannelTest } from "@/components/settings-form";
 import { Badge } from "@/components/ui/badge";
 import { CardDisclosure, CardPanel as Card } from "@/components/ui/card";
 import { SpecRow, SpecTable, TableBody } from "@/components/ui/table";
-import { fetchConsoleRole, fetchSettings, type SettingsBySection } from "@/lib/catalog";
+import {
+  fetchChannelHealth,
+  fetchConsoleRole,
+  fetchSettings,
+  type ChannelHealthRow,
+  type SettingsBySection,
+} from "@/lib/catalog";
 import { MISSING_KEY_PATTERN, t, type Locale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
 import {
@@ -49,6 +56,19 @@ export default async function SettingsPage() {
     settings = await fetchSettings(host, token);
   } catch {
     loadError = true;
+  }
+  // ⚠️ 单独读，读不到**不**让整页变成「加载失败」：渠道健康是这一页上最不关键
+  //    的一块（其余是运维要改的配置），而它多一次失败不该挡住改配置。同
+  //    app/devices/page.tsx 里证书那一块的理由。
+  //
+  // 🔴 读不到时给空数组，而组件把「空」画成「还没有投递记录」而不是一片绿色 ——
+  //    网关在读不到记录时根本不放那个字段，所以空的意思是「没有记录可看」，
+  //    不是「一切正常」。
+  let channelHealth: ChannelHealthRow[] = [];
+  try {
+    channelHealth = await fetchChannelHealth(host, token);
+  } catch {
+    channelHealth = [];
   }
   const role = await fetchConsoleRole(host, token);
   const writable = mayWrite(role);
@@ -118,6 +138,25 @@ export default async function SettingsPage() {
           title={t("settings.notifications", locale)}
           note={t("settings.notificationsNote", locale)}
         >
+          {/* 🔴 放在表单**之前**。运维打开这一页大多是来改配置的，而「你配的
+              东西有一条从来没成功过」应当在他开始改之前就看见 —— 生产上
+              webhook 连续失败 40 次，而这一页此前只显示它「已启用」。 */}
+          <div className="mb-4 flex flex-col gap-2">
+            <h3 className="m-0 text-sm font-semibold text-foreground">
+              {t("settings.channelHealthTitle", locale)}
+            </h3>
+            <ChannelHealth
+              rows={channelHealth}
+              labels={{
+                delivering: t("settings.channelDelivering", locale),
+                failing: t("settings.channelFailing", locale),
+                neverSucceeded: t("settings.channelNeverSucceeded", locale),
+                lastSuccess: t("settings.channelLastSuccess", locale),
+                attempts: t("settings.channelAttempts", locale),
+                noAttempts: t("settings.channelNoAttempts", locale),
+              }}
+            />
+          </div>
           {section(
             NOTIFICATION_FIELDS,
             settings.notifications ?? {},

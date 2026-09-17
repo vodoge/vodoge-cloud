@@ -1001,6 +1001,48 @@ function everyBackdrop(
  * 或者只装文字，没有一个装着另一个。第九处洗色出现时这条会红，那时要重新回答
  * 「它会不会落在另一个洗色里」，而不是默认答案还成立。
  */
+/**
+ * 渠道健康那一块：空的时候说「还没有记录」，不是画一片绿色。
+ *
+ * 🔴 网关在读不到投递记录时**根本不放那个字段**（readSettings 里那段注释写了
+ *    理由），所以控制台拿到的空数组意思是「没有记录可看」——可能是还没发过，
+ *    也可能是那张表读不到。把它画成「全部正常」，正好是这个功能要推翻的那句话：
+ *    生产上 webhook 连续失败 40 次，而这一页此前只显示它「已启用」。
+ *
+ * ⚠️ 这条是**源码形状**的断言，不是渲染断言：这个仓库没有组件渲染测试的框架，
+ *    而这一寸（空态画什么）恰恰是最容易被顺手改成 `return null` 的。钉住
+ *    「空的时候引用了那句文案」比不钉强，而它守不到的那一寸也说清楚了 ——
+ *    它证明不了那句话真的出现在屏幕上。
+ */
+test("渠道健康的空态说的是「还没有记录」，不是「一切正常」", () => {
+  const source = readSource("components/channel-health.tsx");
+  const code = scan(source).code;
+
+  const guard = /rows\.length === 0[\s\S]{0,200}?labels\.noAttempts/;
+  assert.match(
+    code,
+    guard,
+    "空态没有引用 noAttempts —— 一条投递记录都没有的时候，这一块要说「还没有记录」，" +
+      "而不是什么都不画、也不是画成全绿",
+  );
+
+  // 🔴 「从来没成功过」必须和「上次成功于 …」是两句不同的话。生产上 webhook
+  //    正是前者，而那是配置从没通过的证据 —— 和「上次成功很久以前」严重程度
+  //    和修法都不同。
+  assert.match(
+    code,
+    /lastSuccess === null[\s\S]{0,120}?labels\.neverSucceeded/,
+    "「从来没成功过」和「上次成功于…」被合并成了一句",
+  );
+
+  // 失败原文要显示出来。压成「投递失败」就得有人再去翻库。
+  assert.match(
+    code,
+    /row\.lastDetail/,
+    "失败原文没有显示 —— `dial tcp: lookup hooktest` 那一句直接说明是配置写错了",
+  );
+});
+
 test("no wash is painted inside another wash", () => {
   const painted: string[] = [];
   for (const relative of MIGRATED_SOURCES) {

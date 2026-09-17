@@ -435,6 +435,27 @@ export async function fetchSettings(
   return out;
 }
 
+/**
+ * 渠道健康，和设置来自**同一个响应**。
+ *
+ * ⚠️ 单独一个函数而不是改 `fetchSettings` 的返回类型：后者有多处调用点，而它们
+ *    要的就是设置本身。两次 fetch 也不对 —— 那会让「设置」和「健康」来自两个
+ *    时刻，而这一页正是要把它们并排给人看。所以这里再读一次同一个端点，由
+ *    Next 的请求级缓存去合并；宁可多一次请求，也不让两块数据来自不同的时刻。
+ *
+ * 🔴 读不到就返回空数组，而**上层要把「空」和「有但都健康」分开**：网关在读不到
+ *    记录时根本不放这个字段（见 readSettings 的注释），所以空数组的意思是
+ *    「没有投递记录可看」，不是「一切正常」。
+ */
+export async function fetchChannelHealth(
+  host: string,
+  token: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ChannelHealthRow[]> {
+  const body = await getCatalog(host, "/v1/settings", token, fetchImpl);
+  return parseChannelHealth(body.notification_health);
+}
+
 export type UpstreamRow = {
   id: string;
   name: string;
