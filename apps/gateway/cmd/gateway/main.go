@@ -113,6 +113,10 @@ func main() {
 		// （成功或失败）就有了一行持久记录 —— 在这之前通知是这个系统里
 		// 唯一一件「做过但查不到」的事。
 		attempts := notify.AttemptLog{DB: sqlStore.DB}
+		// 同一份日志，两个方向：Record 写、RecentAttempts 读。
+		// 挂到 process 上是为了让 readSettings 能把渠道健康交给控制台 ——
+		// 在这之前这张表只有写入者。
+		proc.attempts = &attempts
 		proc.notify = notify.New(proc.config, notify.Registry(),
 			notify.Options{Metrics: proc.metrics, OnResult: attempts.Record})
 		defer proc.notify.Close()
@@ -898,15 +902,16 @@ type process struct {
 	// live is the scheduler's tenant carrier. See newLiveDevices.
 	live *liveDevices
 	// sweep retires a tenant's overdue commands (L3). Nil without a database.
-	sweep   schedule.Sweeper
-	codes   enroll.CodeStore
-	certs   enroll.SQLCertificates
-	metrics *observe.Registry
-	notify  *notify.Dispatcher
-	config  settings.Store
-	proxies proxy.Store
-	inbox   messaging.Store
-	cards   cards.Store
+	sweep    schedule.Sweeper
+	codes    enroll.CodeStore
+	certs    enroll.SQLCertificates
+	metrics  *observe.Registry
+	notify   *notify.Dispatcher
+	config   settings.Store
+	proxies  proxy.Store
+	inbox    messaging.Store
+	cards    cards.Store
+	attempts *notify.AttemptLog
 	// Defaulted to a working empty store rather than left nil: every route
 	// that reads it would otherwise panic on a build with no database, which
 	// is the shape the tests run in.
@@ -1812,8 +1817,33 @@ func (process *process) readSettings(writer http.ResponseWriter, request *http.R
 	for section, document := range all {
 		shown[section] = settings.Redact(section, document)
 	}
+
+	// 每条通知渠道最近投递成没成。
+	//
+	// 🔴 `app.notification_attempts` 在这之前**只有写入者，没有任何读者**。加它
+	//    的理由是「通知发出去没有，系统一点痕迹都不留」—— 痕迹有了，但没人看，
+	//    所以生产上 webhook 连续失败 **40 次**（40/40，而 pushplus 和 telegram
+	//    各 40 次全成功），界面上那条渠道依然只显示「已启用」。
+	//
+	//    失败原因每一次都一样：`dial tcp: lookup hooktest` —— 配的是
+	//    `http://hooktest:19999/hook`，一个解析不了的占位主机。**没有人会发现**，
+	//    因为唯一能看出来的地方是一个要主动点的「测试」按钮。
+	//
+	// ⚠️ 读不到就不放这个字段，而不是放一个空对象。空对象读起来是「所有渠道都
+	//    没有失败记录」，那正好是它要推翻的那句话。缺席 ≠ 空。
+	response := map[string]any{"settings": shown}
+	if process.attempts != nil {
+		recent, err := process.attempts.RecentAttempts(request.Context(), entry.TenantID, 50)
+		if err != nil {
+			slog.Warn("notification health unavailable",
+				"tenant_id", entry.TenantID, "error", err)
+		} else if len(recent) > 0 {
+			response["notification_health"] = notify.Summarise(recent)
+		}
+	}
+
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(writer).Encode(map[string]any{"settings": shown})
+	_ = json.NewEncoder(writer).Encode(response)
 }
 
 func (process *process) writeSettings(writer http.ResponseWriter, request *http.Request) {

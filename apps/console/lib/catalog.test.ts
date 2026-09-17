@@ -39,6 +39,7 @@ import {
   ussdSessionState,
   ussdStageLabelKey,
   ussdStartRequest,
+  parseChannelHealth,
 } from "./catalog.ts";
 
 test("parseDevice ignores malformed rows", () => {
@@ -1765,4 +1766,73 @@ test("uptimeRatio divides by the hours that were reported", () => {
 // fault. Null is what lets the console say "no history" rather than "0%".
 test("uptimeRatio has no answer when nothing was reported", () => {
   assert.equal(uptimeRatio([]), null);
+});
+
+/**
+ * 渠道健康的解析，尤其是那个时间戳的形状。
+ *
+ * 🔴 `last_success` 过来的是 RFC3339 **字符串**（Go 的 `*time.Time`），不是毫秒
+ *    数。我第一版按数字解析，结果每条渠道都读成「从来没成功过」—— 而那正是这个
+ *    功能要报警的状态，也就是说一个解析错误会把**全部**渠道染红，而它看起来
+ *    完全像真的出事了。
+ *
+ *    实测过线上形状之后才定的：
+ *    `{"consecutive_failures":1,"last_success":null,"last_detail":"dial tcp","total":1}`
+ */
+test("渠道健康：成功时刻是字符串，不是毫秒数", () => {
+  const rows = parseChannelHealth({
+    telegram: {
+      consecutive_failures: 0,
+      last_success: "2026-09-17T14:00:00Z",
+      last_detail: "",
+      total: 40,
+    },
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0].lastSuccess,
+    Date.parse("2026-09-17T14:00:00Z"),
+    "把字符串时间戳读成了 null —— 那会让一条健康的渠道显示成从没成功过",
+  );
+});
+
+/** 从来没成功过的那条，`lastSuccess` 必须是 null，而不是某个零值。 */
+test("渠道健康：从没成功过就是 null", () => {
+  const rows = parseChannelHealth({
+    webhook: {
+      consecutive_failures: 40,
+      last_success: null,
+      last_detail: "dial tcp: lookup hooktest",
+      total: 40,
+    },
+  });
+  assert.equal(rows[0].lastSuccess, null);
+  assert.equal(rows[0].consecutiveFailures, 40);
+  assert.match(
+    rows[0].lastDetail,
+    /hooktest/,
+    "失败原文没带出来 —— 那一句直接说明是配置写错了",
+  );
+});
+
+/**
+ * 坏的排前面。
+ *
+ * ⚠️ 运维打开这一页是来看有没有东西坏了的。按名字排会把 webhook 排到最后，
+ *    而它正是唯一坏掉的那条。
+ */
+test("渠道健康：坏的排在前面", () => {
+  const rows = parseChannelHealth({
+    telegram: { consecutive_failures: 0, last_success: "2026-09-17T14:00:00Z", last_detail: "", total: 40 },
+    pushplus: { consecutive_failures: 0, last_success: "2026-09-17T14:00:00Z", last_detail: "", total: 40 },
+    webhook: { consecutive_failures: 40, last_success: null, last_detail: "boom", total: 40 },
+  });
+  assert.equal(rows[0].channel, "webhook", "坏掉的那条没有排在最前面");
+});
+
+/** 缺席 ≠ 空：没有分母的行丢掉，而不是当成「0 次失败」。 */
+test("渠道健康：没有 total 的行丢掉", () => {
+  assert.deepEqual(parseChannelHealth({ webhook: { consecutive_failures: 3 } }), []);
+  assert.deepEqual(parseChannelHealth(null), []);
+  assert.deepEqual(parseChannelHealth({}), []);
 });

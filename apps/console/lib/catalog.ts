@@ -369,6 +369,55 @@ export type SettingsBySection = Record<string, Record<string, unknown>>;
  * Every settings section, with secrets already replaced by a placeholder — the
  * console is never given a real credential.
  */
+/**
+ * 一条通知渠道最近投递成没成。
+ *
+ * 🔴 加这个的理由是生产上量到的：webhook 连续失败 **40 次**（40/40，而 pushplus
+ *    和 telegram 各 40 次全成功），而设置页上那条渠道只显示「已启用」。失败原因
+ *    每次都一样 —— `dial tcp: lookup hooktest`，配的是一个解析不了的占位主机。
+ *    唯一能看出来的地方是一个要**主动点**的「测试」按钮。
+ *
+ * ⚠️ `lastSuccess` 为 `null` 的意思是「在记录范围内从来没成功过」，不是「很久
+ *    以前成功过」。两者对运维是完全不同的结论，所以它是 `null` 而不是 0。
+ */
+export type ChannelHealthRow = {
+  channel: string;
+  consecutiveFailures: number;
+  lastSuccess: number | null;
+  lastDetail: string;
+  total: number;
+};
+
+export function parseChannelHealth(value: unknown): ChannelHealthRow[] {
+  if (!value || typeof value !== "object") return [];
+  const rows: ChannelHealthRow[] = [];
+  for (const [channel, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const total = asNumber(row.total);
+    // 缺席 ≠ 空：没有分母的行读不出轻重，丢掉它而不是当成 0 次。
+    if (total === null) continue;
+    // ⚠️ `last_success` 过来的是 RFC3339 **字符串**（Go 的 *time.Time），
+    //    不是毫秒数。第一版按数字解析，于是每条渠道都读成「从来没成功过」——
+    //    而那正是这个功能要报警的状态，一个解析错误会把全部渠道变成红的。
+    //    实测过线上形状再定的：{"last_success":"2026-09-17T14:00:00Z"} / null。
+    const successAt = asString(row.last_success);
+    const parsed = successAt ? Date.parse(successAt) : NaN;
+    rows.push({
+      channel,
+      consecutiveFailures: asNumber(row.consecutive_failures) ?? 0,
+      lastSuccess: Number.isFinite(parsed) ? parsed : null,
+      lastDetail: asString(row.last_detail) ?? "",
+      total,
+    });
+  }
+  // 坏的排前面，然后按名字 —— 运维打开这一页是来看有没有东西坏了的。
+  return rows.sort(
+    (a, b) =>
+      b.consecutiveFailures - a.consecutiveFailures || a.channel.localeCompare(b.channel),
+  );
+}
+
 export async function fetchSettings(
   host: string,
   token: string | undefined,
