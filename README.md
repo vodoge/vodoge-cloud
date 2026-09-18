@@ -228,6 +228,29 @@ records each one with its sha256. Pass every file, not just the new one: the
 skip is cheap and the checksum comparison is the only thing that ever notices an
 applied migration being edited afterwards.
 
+**To look without touching anything**, add `--check`:
+
+```sh
+ssh root@CLOUD_HOST 'cd /opt/vodoge-cloud \
+  && PG_CONTAINER=vodoge-cloud-postgres-1 PG_USER=vodoge PG_DB=vodoge \
+     ./bin/migrate.sh --check packages/db/migrations/*.sql'
+```
+
+It applies nothing, records nothing, and does not even create the ledger table —
+so it is safe to run against production at any time, which is the point: the
+drift it finds is the kind nobody goes looking for. It reports three things, and
+does not stop at the first:
+
+| what it finds | what it means |
+|---|---|
+| a migration with no ledger row | applied by hand; a restore will replay it again |
+| a checksum that does not match | an applied migration was edited afterwards |
+| a ledger row with no file | production ran a migration that has left the tree — **a restore can never reproduce it** |
+
+⚠️ **CI cannot do this for you.** CI replays onto a fresh database, so its ledger
+is correct by construction and always green. The only thing that sees production
+drift is running the line above against production.
+
 > ⚠️ **This section used to show a bare `docker exec … psql -f`, and that is how
 > five migrations came to be applied without being recorded.** The ledger sat at
 > 66 while the database was actually at 71 — and the ledger is what a restore
