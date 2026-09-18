@@ -3827,3 +3827,69 @@ func TestNoRateLimitKeysDirectlyOnThePeerAddress(t *testing.T) {
 			guards)
 	}
 }
+
+// 调度器真的拿到了那份「最近见过」的租户名单。
+//
+// 🔴 上一条（internal/schedule 里的）测的是 Runner 收到名单之后的行为，而
+//
+//	`Recent` 是 nil 时它退回修复前的样子 —— **静悄悄地**。这一条读 `run()` 里
+//	那个 `schedule.Runner` 字面量：字段必须在，而且必须接的是
+//	`RecentTenants`。同一天在限流和通知渠道上各逃掉过一次同形状的变异。
+//
+// ⚠️ 顺带钉住「和静默看门狗共用同一个 window」：`RecentTenants` 会顺手删掉过期
+//
+//	条目，两个调用方用不同窗口时，短的那个会替长的那个删 —— 于是看门狗会在
+//	它该报警之前就忘掉那个租户。
+func TestTheSchedulerGetsTheRecentlySeenTenants(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("读 main.go：%v", err)
+	}
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "main.go", source, 0)
+	if err != nil {
+		t.Fatalf("解析 main.go：%v", err)
+	}
+
+	var recent string
+	var found bool
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		selector, ok := literal.Type.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Runner" {
+			return true
+		}
+		if pkg, ok := selector.X.(*ast.Ident); !ok || pkg.Name != "schedule" {
+			return true
+		}
+		for _, element := range literal.Elts {
+			pair, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := pair.Key.(*ast.Ident)
+			if !ok || key.Name != "Recent" {
+				continue
+			}
+			found = true
+			start := fileSet.Position(pair.Value.Pos()).Offset
+			end := fileSet.Position(pair.Value.End()).Offset
+			recent = string(source[start:end])
+		}
+		return true
+	})
+
+	if !found {
+		t.Fatal("schedule.Runner 没有 Recent 字段 —— 租户清理会退回只跑连着设备的租户，" +
+			"而设备断了的那些正是有东西要清的那些（生产实测最久迟了 24.7 小时）")
+	}
+	if !strings.Contains(recent, "RecentTenants(tenantMemory") {
+		t.Fatalf("Recent = %s，期望用 RecentTenants(tenantMemory, …)。"+
+			"换一个 window 会让它和静默看门狗互相删对方的条目。", recent)
+	}
+}

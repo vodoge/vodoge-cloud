@@ -178,6 +178,74 @@ jobs:
             exit 1
           fi
           echo "every catalogue kind is storable ($(wc -l < /tmp/kinds.txt) kinds)"
+      - name: Every sequenced uplink kind the contract defines is one accept_ingress accepts
+        env:
+          PGPASSWORD: ci
+        # 🔴 同样的洞已经在生产上开过一次：0044 那次 CREATE OR REPLACE 把
+        #    SmsStatusReport 从 accept_ingress 的白名单里漏掉了，此后每一条投递
+        #    回执都被写成墓碑丢掉 —— 生产上现在还躺着 18 条
+        #    `ingress kind SmsStatusReport is not a sequenced uplink kind`
+        #    （2026-08-29 到 09-06）。
+        #
+        #    那次之后补的守卫（packages/db/tests/delivery_report.sql）点名的是
+        #    **已经坏过的那两个**类型。契约一共定义 7 个可定序上行类型，而
+        #    packages/db/tests 里 CommandResult、EsimInventory、Alert 一个都没有 ——
+        #    下一次白名单漏的要是它们，测试照样全绿。
+        #
+        #    所以这一条从**契约**枚举，不点名：schema 里的 `sequenced` 标记就是
+        #    那份名单，Go 和 Rust 两侧也都从它来。accept_ingress 已经被十一个
+        #    CREATE OR REPLACE 整体重写过，第十二个漏掉哪一个都会在这里变红。
+        #
+        # ⚠️ 只认「被白名单拒绝」这一种失败。投影分支要更多字段是另一回事，
+        #    把那也算失败就会变成一条为了绿而不断塞字段的测试。
+        run: |
+          set -euo pipefail
+          kinds=$(python3 -c "
+          import json
+          schema = json.load(open('packages/contract/schema/edge-cloud.v1.schema.json'))
+          catalog = schema['x-vodoge-message-catalog']
+          print(' '.join(k for k, v in catalog.items() if v.get('sequenced')))")
+          if [ -z "$kinds" ]; then
+            echo "契约里一个可定序上行类型都没读出来 —— 这条检查会永远绿"
+            exit 1
+          fi
+          echo "契约里的可定序上行类型: $kinds"
+          for kind in $kinds; do
+            # 🔴 显式看 psql 的退出码。第一版靠 `set -e` 兜底，本机实测：
+            #    DO 块里的 RAISE 打在屏幕上，而这一步照样**退出 0** 并打印
+            #    「收得下每一个」—— 一条发现了问题却报成功的检查。
+            psql -h localhost -U vodoge -d vodoge -v ON_ERROR_STOP=1 -q <<SQL || { echo "上面那个类型没过，见 ERROR 行"; exit 1; }
+          BEGIN;
+          INSERT INTO app.tenants (id, slug, name, status, region)
+          VALUES ('7c1d0000-0000-4000-8000-000000000001', 'kindcheck', 'kind check', 'active', 'cn');
+          INSERT INTO app.devices (id, tenant_id, imei, name, vertical)
+          VALUES ('7c1d0000-0000-4000-8000-000000000002',
+                  '7c1d0000-0000-4000-8000-000000000001',
+                  '869999999999999', 'kind-check', 'iot');
+          DO \$\$
+          BEGIN
+              PERFORM set_config('app.tenant_id', '7c1d0000-0000-4000-8000-000000000001', true);
+              BEGIN
+                  PERFORM app.accept_ingress(
+                      '7c1d0000-0000-4000-8000-000000000001'::uuid,
+                      '7c1d0000-0000-4000-8000-000000000002'::uuid,
+                      1::bigint,
+                      gen_random_uuid(),
+                      '$kind',
+                      '{"kind":"$kind"}'::jsonb);
+              EXCEPTION WHEN OTHERS THEN
+                  IF SQLERRM LIKE '%is not a sequenced uplink kind%' THEN
+                      RAISE EXCEPTION
+                          'accept_ingress 不收契约里的上行类型 %，它会被写成墓碑丢掉', '$kind';
+                  END IF;
+                  -- 其它错误不算：投影分支要更多字段是另一回事。
+              END;
+          END
+          \$\$;
+          ROLLBACK;
+          SQL
+          done
+          echo "accept_ingress 收得下契约定义的每一个可定序上行类型"
       - name: The database tests actually run
         env:
           PGPASSWORD: ci

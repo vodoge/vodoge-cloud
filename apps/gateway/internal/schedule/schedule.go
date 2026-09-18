@@ -392,6 +392,28 @@ type Runner struct {
 	// app.tenants is under FORCE row-level security and cannot be listed, so
 	// the tenant has to arrive from a live mTLS session instead of a query.
 	Live func() map[string][]string
+	// Recent reports tenants seen on a live session recently, whether or not
+	// anything of theirs is connected **now**.
+	//
+	// 🔴 租户清理（到期命令、上行保留窗口）跑在这份名单上，而不是 `Live` 上。
+	//    `Live` 里没有「设备已经断了」的租户 —— 而那恰恰是有东西要清的租户：
+	//
+	//    生产实测（2026-09-18 量 app.commands）：到期命令最久的一条**迟了
+	//    24.7 小时**才结算，另有九条共用同一个时刻（设备重连时的一次补算）；
+	//    设备在线的那一条只迟了 13 秒。迁移 0068 之后，命令到期会顺带把镜像
+	//    出去的那条短信结算掉，所以这段时间里控制台上那条短信一直显示「发送
+	//    中」—— 运维看到的补救办法是再发一条，而那是再花一次钱。
+	//
+	//    `lifecycle.go` 里那段注释本来就写着这个位置是为了「够到那些再也没
+	//    回来的设备」。够不到：一个租户的设备全断了，它就从枚举里消失了。
+	//
+	// ⚠️ 定时任务**不**跑在这份名单上，仍然只跑 `Live`。给一台离线设备下发
+	//    命令只会排出一条必然过期的命令，或者让公网 IP 检查每一跳都失败 ——
+	//    那是拿噪声换不回任何东西。`TestATenantWithNoLiveDeviceDoesNotTick`
+	//    钉着这一点。
+	//
+	// nil 表示「没有这份名单」，于是清理退回只跑 `Live` —— 也就是修复前的行为。
+	Recent func() []string
 	// Owner names this process in a lease so a stalled worker's tasks become
 	// claimable again without anything having to notice it stalled.
 	Owner string
@@ -455,7 +477,10 @@ type Runner struct {
 
 // Report is what one tick did, for tests and logging.
 type Report struct {
-	Tenants  int
+	Tenants int
+	// 这一跳清理跑到了多少个租户。比 Tenants 多的那些是设备已经断了的 ——
+	// 而那正是有东西要清的那些。
+	Swept    int
 	Claimed  int
 	Issued   int
 	Checked  int
@@ -505,7 +530,21 @@ func (runner *Runner) Tick(ctx context.Context) Report {
 	}
 	live := runner.Live()
 	report.Tenants = len(live)
+
+	// 清理的名单比定时任务的名单宽：它要够到设备已经断了的租户。见 `Recent`。
+	housekeeping := make(map[string]struct{}, len(live))
 	for tenantID := range live {
+		housekeeping[tenantID] = struct{}{}
+	}
+
+	if runner.Recent != nil {
+		for _, tenantID := range runner.Recent() {
+			housekeeping[tenantID] = struct{}{}
+		}
+	}
+	report.Swept = len(housekeeping)
+
+	for tenantID := range housekeeping {
 		if ctx.Err() != nil {
 			return report
 		}
@@ -536,6 +575,14 @@ func (runner *Runner) Tick(ctx context.Context) Report {
 					"trigger", "schedule_tick")
 			}
 		}
+	}
+
+	// 定时任务只跑连着设备的租户。
+	for tenantID := range live {
+		if ctx.Err() != nil {
+			return report
+		}
+		now := runner.now()
 		claims, err := runner.Store.ClaimDue(
 			ctx, tenantID, runner.Owner, now, runner.lease(), runner.batch())
 		if err != nil {

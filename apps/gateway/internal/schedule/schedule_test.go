@@ -850,3 +850,113 @@ func TestANonSMSScheduleIsNotSubjectToTheSendLimit(t *testing.T) {
 		t.Fatalf("public_ip_check ran %d times with the SMS budget exhausted, want 60", checked)
 	}
 }
+
+// 设备断了的租户，清理照跑；定时任务不跑。
+//
+// 🔴 这是生产上量到的那件事：到期命令最久一条**迟了 24.7 小时**才结算，九条
+//
+//	共用同一个时刻（设备重连时的一次补算），而设备在线的那一条只迟了 13 秒。
+//	迁移 0068 之后，命令到期会顺带把镜像出去的那条短信结算掉 —— 所以这 24 小时
+//	里控制台上那条短信一直显示「发送中」，运维看到的补救办法是再发一条，
+//	而那是再花一次钱。
+//
+// ⚠️ 两个方向都查。只查「清理跑到了」的话，一个把定时任务也放开的实现同样会绿 ——
+//
+//	而那会给一台离线设备排出必然过期的命令，或者让公网 IP 检查每一跳都失败。
+func TestHousekeepingReachesATenantWhoseDevicesAreAllGone(t *testing.T) {
+	store := bench()
+	start := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Minute)
+
+	var swept []string
+	runner := &Runner{
+		Store:  store,
+		Owner:  "test",
+		Logger: quiet(),
+		Now:    func() time.Time { return now },
+		// 什么都没连着。
+		Live: func() map[string][]string { return map[string][]string{} },
+		// 但这个租户一天之内有过会话。
+		Recent: func() []string { return []string{"t1"} },
+		Sweep: func(_ context.Context, tenantID string, _ time.Time) (commands.SweepResult, error) {
+			swept = append(swept, tenantID)
+			return commands.SweepResult{ExpiredCommands: 1}, nil
+		},
+	}
+	store.Seed("t1", smsTask(2*time.Minute, start))
+
+	report := runner.Tick(context.Background())
+
+	if len(swept) != 1 || swept[0] != "t1" {
+		t.Fatalf("清理跑到的租户 = %v，期望 [t1] —— 设备断了的租户正是有东西要清的那个", swept)
+	}
+	if report.Expired != 1 {
+		t.Fatalf("report.Expired = %d，期望 1", report.Expired)
+	}
+	if report.Swept != 1 {
+		t.Fatalf("report.Swept = %d，期望 1", report.Swept)
+	}
+	// 另一半：定时任务没有跟着跑。
+	if report.Claimed != 0 {
+		t.Fatalf("给一个没有设备在线的租户领了 %d 个定时任务 —— "+
+			"排出去的命令只会过期，而公网 IP 检查会每一跳都失败", report.Claimed)
+	}
+	if got := len(store.Issued["t1"]); got != 0 {
+		t.Fatalf("给一个没有设备在线的租户下发了 %d 条命令", got)
+	}
+}
+
+// 没有 Recent 时，行为和以前一样。
+//
+// ⚠️ 负面对照：`Recent` 是 nil 的 Runner（测试里到处都是）不能因此把清理跑到
+//
+//	一个空名单上，也不能 panic。
+func TestWithoutARecentListHousekeepingStillRunsForLiveTenants(t *testing.T) {
+	store := bench()
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
+	var swept []string
+	runner := &Runner{
+		Store:  store,
+		Owner:  "test",
+		Logger: quiet(),
+		Now:    func() time.Time { return now },
+		Live:   func() map[string][]string { return map[string][]string{"t1": {"d1"}} },
+		Sweep: func(_ context.Context, tenantID string, _ time.Time) (commands.SweepResult, error) {
+			swept = append(swept, tenantID)
+			return commands.SweepResult{}, nil
+		},
+	}
+	runner.Tick(context.Background())
+	if len(swept) != 1 || swept[0] != "t1" {
+		t.Fatalf("清理跑到的租户 = %v，期望 [t1]", swept)
+	}
+}
+
+// 同一个租户既在 Live 又在 Recent 里时，只清一次。
+func TestATenantInBothListsIsSweptOnce(t *testing.T) {
+	store := bench()
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
+	var swept []string
+	runner := &Runner{
+		Store:  store,
+		Owner:  "test",
+		Logger: quiet(),
+		Now:    func() time.Time { return now },
+		Live:   func() map[string][]string { return map[string][]string{"t1": {"d1"}} },
+		Recent: func() []string { return []string{"t1"} },
+		Sweep: func(_ context.Context, tenantID string, _ time.Time) (commands.SweepResult, error) {
+			swept = append(swept, tenantID)
+			return commands.SweepResult{ExpiredCommands: 1}, nil
+		},
+	}
+	report := runner.Tick(context.Background())
+	if len(swept) != 1 {
+		t.Fatalf("同一个租户被清了 %d 次：%v —— 清两次会把 report 里的数字也数两遍",
+			len(swept), swept)
+	}
+	if report.Expired != 1 {
+		t.Fatalf("report.Expired = %d，期望 1", report.Expired)
+	}
+}

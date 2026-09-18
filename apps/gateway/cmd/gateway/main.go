@@ -302,8 +302,16 @@ func main() {
 	// idempotency key is what stops the race that gets through the lease from
 	// becoming a second SMS.
 	scheduler := &schedule.Runner{
-		Store:           proc.schedules,
-		Live:            func() map[string][]string { return proc.live.Tenants(proc.session.Hub) },
+		Store: proc.schedules,
+		Live:  func() map[string][]string { return proc.live.Tenants(proc.session.Hub) },
+		// 🔴 清理要够到设备已经断了的租户 —— 而那正是有东西要清的租户。
+		//    生产实测：到期命令最久一条迟了 24.7 小时才结算（设备重连时补算），
+		//    而 0068 之后命令到期会顺带结算镜像出去的那条短信，所以这段时间里
+		//    控制台上那条短信一直显示「发送中」。
+		//
+		// ⚠️ 和静默看门狗用**同一个** window 不是巧合：`RecentTenants` 会顺手
+		//    把过期条目删掉，两个调用方用不同窗口时，短的那个会替长的那个删。
+		Recent:          func() []string { return proc.live.RecentTenants(tenantMemory, time.Now()) },
 		Owner:           schedulerOwner(),
 		Sweep:           proc.sweep,
 		OnCommandIssued: proc.mirrorScheduledCommand,
@@ -347,7 +355,7 @@ func main() {
 				return
 			case <-ticker.C:
 				now := time.Now()
-				for _, tenantID := range proc.live.RecentTenants(silenceMemory, now) {
+				for _, tenantID := range proc.live.RecentTenants(tenantMemory, now) {
 					raised, err := proc.catalog.RaiseSilenceAlerts(
 						schedulerCtx, tenantID, silenceAfter, now)
 					if err != nil {
@@ -768,7 +776,10 @@ const silenceAfter = 5 * time.Minute
 // and stays stopped: the tenant has to remain sweepable for far longer than
 // the silence threshold, or the watchdog forgets the tenant before it notices
 // the silence.
-const silenceMemory = 24 * time.Hour
+// ⚠️ 两个调用方（静默看门狗、调度器的清理名单）必须用同一个值：
+//
+//	`RecentTenants` 会顺手删掉过期条目，用两个窗口的话短的那个会替长的那个删。
+const tenantMemory = 24 * time.Hour
 
 const scheduleTick = 15 * time.Second
 
