@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/commands"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/tenant"
 )
 
@@ -756,15 +758,19 @@ func (store SQL) ListCommands(
 			       -- it is the one that must not carry a credential. Stripped
 			       -- in SQL rather than in Go because this row is serialised
 			       -- straight to the console as json.RawMessage: whatever is
-			       -- left in it is on the wire. configure_apn is the only
-			       -- command carrying a password, and dropping the key
-			       -- everywhere costs nothing where there is none.
-			       payload - 'password',
+			       -- left in it is on the wire.
+			       --
+			       -- 🔴 名单是传进来的（commands.SecretKeys()，从 Request 的
+			       --    标记反射而来），不是写死在这条 SQL 里。写死的那一版就在
+			       --    这里待过：它只删 'password'，注释还写着「configure_apn
+			       --    是唯一带凭据的命令」—— 而 download_esim_profile 后来带着
+			       --    activation_code 进来了，这条 SQL 一直原样把它交给控制台。
+			       payload - string_to_array($3, ','),
 			       result
 			  FROM app.commands
 			 WHERE ($1 = '' OR device_id = $1::uuid)
 			 ORDER BY issued_at DESC
-			 LIMIT $2`, deviceID, limit)
+			 LIMIT $2`, deviceID, limit, strings.Join(commands.SecretKeys(), ","))
 		if err != nil {
 			return err
 		}

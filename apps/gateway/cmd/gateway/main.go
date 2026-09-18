@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
@@ -182,8 +183,12 @@ func main() {
 			os.Exit(1)
 		}
 		tlsServer = &http.Server{
-			Addr:              tlsAddr,
-			Handler:           handler,
+			Addr: tlsAddr,
+			// 🔴 不是 `handler` —— 这一口在公网上（compose 里是
+			//    `${VODOGE_EDGE_TLS_PORT:-444}:8443`，没有 127.0.0.1 前缀，
+			//    而它旁边那行有）。共用 `handler` 时 /metrics、/readyz、
+			//    /healthz 就跟着上了公网。
+			Handler:           proc.publicHandler(),
 			TLSConfig:         tlsConfig,
 			ReadHeaderTimeout: 5 * time.Second,
 			IdleTimeout:       60 * time.Second,
@@ -981,11 +986,50 @@ func healthHandler() http.Handler {
 	return newProcess("", nil, nil, nil, nil).handler()
 }
 
+// 运维那三条路径 —— 只从环回那一口出去的那三条。
+//
+// ⚠️ 这里只列路径，注册仍然写成字面量（在 `handler()` 里）：`routesFromSource`
+//
+//	按字面量读全包的路由，读不到就整条测试失败 ——「读不到的路由就是查不了的
+//	路由」。所以不能改成按这份名单循环注册。
+//
+// 🔴 于是名单有两份，而两份就会分家。钉住它的是
+//
+//	`TestEveryNonAPIRouteIsDeclaredOperational`：它从源码枚举出全部注册路由，
+//	要求「不在 /v1/ 下的」和这份名单**一一对应**，两个方向都查。加一条
+//	`/debug/pprof` 而忘了声明，那条测试就红。
+func operationalRoutes() map[string]struct{} {
+	return map[string]struct{}{
+		"/metrics": {},
+		"/healthz": {},
+		"/readyz":  {},
+	}
+}
+
+func (process *process) publicHandler() http.Handler {
+	inner := process.handler()
+	operational := operationalRoutes()
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, isOperational := operational[request.URL.Path]; isOperational {
+			// 404 而不是 403：这一口上这条路径本来就不该存在，而 403 会顺带
+			// 确认「存在但不给你」。
+			http.NotFound(writer, request)
+			return
+		}
+		inner.ServeHTTP(writer, request)
+	})
+}
+
 func (process *process) handler() http.Handler {
 	mux := http.NewServeMux()
 	// Served on the plain HTTP listener only, which is published to
 	// 127.0.0.1 — operational numbers should not be reachable from the
 	// internet, and the device listener is a different port with mTLS.
+	//
+	// 🔴 「only」这个词从 2026-09-18 起才是真的：在那之前两口共用同一个
+	//    handler，这句注释、openapi_test 里那段一样的话、以及上线的 OpenAPI
+	//    文档里的 "Served on the loopback listener only"，三处说的都是一件
+	//    并没有兑现的事。兑现它的是 `publicHandler`。
 	mux.HandleFunc("GET /metrics", observe.Handler(process.metrics))
 	mux.HandleFunc("GET /healthz", healthResponse("healthy", http.StatusOK))
 	mux.HandleFunc("GET /readyz", process.readyz)
@@ -1005,8 +1049,16 @@ func (process *process) handler() http.Handler {
 	// attempts then one every twelve seconds is invisible to a person typing
 	// a password and ruinous to anything trying a dictionary.
 	signIn := ratelimit.New(1.0/12.0, 5)
+	// 🔴 谁算「一个调用方」这件事，在这套部署里不能只看对端地址：浏览器的
+	//    /v1/* 走 Next 的 rewrite、登录走 console 那条服务端 fetch，所以网关
+	//    看到的对端**永远**是 console 容器。按对端限流于是变成全平台共用一个
+	//    桶 —— 任何人打五次废凭据就能让每一个租户的每一位运维都登不进去。
+	//
+	//    也就是说上面那段注释里说的「不要把防御变成拒绝服务」，在这套拓扑下
+	//    并没有做到：被锁的范围不是一个账号，是全部账号。
+	clientKey := ratelimit.ClientKeyBehind(process.trustedProxies())
 	mux.HandleFunc("POST /v1/auth/login",
-		ratelimit.Guard(signIn, ratelimit.ClientKey, process.login))
+		ratelimit.Guard(signIn, clientKey, process.login))
 	// A password change is a credential guess too — it needs the current one.
 	passwordChange := ratelimit.New(1.0/12.0, 5)
 	mux.HandleFunc("POST /v1/auth/logout", process.logout)
@@ -1049,7 +1101,7 @@ func (process *process) handler() http.Handler {
 	// device page; the rate is well above what a person generates.
 	commandRate := ratelimit.New(2, 30)
 	mux.HandleFunc("POST /v1/commands",
-		ratelimit.Guard(commandRate, process.tenantKey, process.enqueueCommand))
+		ratelimit.Guard(commandRate, process.tenantKey(clientKey), process.enqueueCommand))
 	mux.HandleFunc("GET /v1/commands/kinds", process.commandKinds)
 	mux.HandleFunc("GET /v1/commands", process.listCommands)
 	mux.HandleFunc("GET /v1/journal", process.listJournal)
@@ -1058,7 +1110,7 @@ func (process *process) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/settings/{section}", process.writeSettings)
 	mux.HandleFunc("POST /v1/settings/notifications/{channel}/test", process.testNotification)
 	mux.HandleFunc("POST /v1/auth/password",
-		ratelimit.Guard(passwordChange, ratelimit.ClientKey, process.changePassword))
+		ratelimit.Guard(passwordChange, clientKey, process.changePassword))
 	process.registerProxyRoutes(mux)
 	process.registerMessagingRoutes(mux)
 	process.registerCardRoutes(mux)
@@ -1631,7 +1683,20 @@ func (process *process) enqueueCommand(writer http.ResponseWriter, request *http
 		Actor:  "console",
 		Action: spec.Kind,
 		Target: body.DeviceID,
-		Detail: payload,
+		// 🔴 隐去之后再写。审计行是**只追加、从不删除**的，而 `GET /v1/audit`
+		//    对每一个会话开放，包括 readonly —— 也就是那个连
+		//    `download_esim_profile` 都发不出去的角色（readOnly 那道闸只拦
+		//    改动类方法，GET 一律放行，那是它的设计）。
+		//
+		//    在此之前这里写的是 `payload` 原样，于是生产的 app.audit_log 里
+		//    躺着 2 行明文 eSIM 激活码（2026-09-18 实测），而那个租户正好有
+		//    一个在用的 readonly 账号。SGP.22 的激活码是**一次性**的：被别人
+		//    先兑掉，这一单就废了，profile 再也下不到那只模块上，重开一张要
+		//    找运营商、要重新计费。
+		//
+		//    Request.ActivationCode 上那段注释说它「never written to a log
+		//    line」—— 那句话从今天起才是真的。
+		Detail: commands.RedactJSON(payload),
 	})
 	// A sent message belongs in the conversation immediately, with an honest
 	// `queued` status. Waiting for the device would mean it vanishing for
@@ -2147,14 +2212,40 @@ func newRegistry() *observe.Registry {
 	return registry
 }
 
+// trustedProxies 是 `VODOGE_TRUSTED_PROXIES` 里那几段网段。
+//
+// ⚠️ 解不开就喊一声并**当作没配**：一条写错的信任名单要么让人人自选限流桶
+//
+//	（等于没有限流），要么把整段解析结果扔掉。默认谁都不信，是这两个方向里
+//	安全的那一个；而喊出来是为了让「配了但没生效」不至于无声无息。
+func (process *process) trustedProxies() []netip.Prefix {
+	spec := strings.TrimSpace(os.Getenv("VODOGE_TRUSTED_PROXIES"))
+	if spec == "" {
+		return nil
+	}
+	prefixes, err := ratelimit.TrustedProxies(spec)
+	if err != nil {
+		slog.Error("VODOGE_TRUSTED_PROXIES 解析失败，按谁都不信处理 —— "+
+			"登录限流会退回按对端地址，而对端在这套部署里是 console 容器",
+			"error", err)
+		return nil
+	}
+	return prefixes
+}
+
 // tenantKey limits by tenant, falling back to the client address when the
 // tenant cannot be resolved — an unresolvable host is exactly the traffic that
 // should not get an unlimited allowance while it is being refused.
-func (process *process) tenantKey(request *http.Request) string {
-	if entry, ok := process.hostTenant(request); ok {
-		return "tenant:" + entry.TenantID
+func (process *process) tenantKey(clientKey func(*http.Request) string) func(*http.Request) string {
+	return func(request *http.Request) string {
+		if entry, ok := process.hostTenant(request); ok {
+			return "tenant:" + entry.TenantID
+		}
+		// 🔴 退化分支也走同一个 clientKey。直接用 `ratelimit.ClientKey` 的话，
+		//    解析不出租户的那些请求会全部落进 console 容器那一个桶 —— 和登录
+		//    那条路上修掉的是同一件事。
+		return "addr:" + clientKey(request)
 	}
-	return "addr:" + ratelimit.ClientKey(request)
 }
 
 // commandKinds tells the console what this gateway can dispatch, so the device

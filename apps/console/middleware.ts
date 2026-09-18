@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  CLIENT_ADDRESS_HEADER,
   DEFAULT_BASE_DOMAIN,
   classifyHost,
   decideTenantRoute,
+  forwardedClientAddress,
   requestHost,
   trustsForwardedHost,
 } from "./lib/host";
@@ -59,6 +61,17 @@ export async function middleware(request: NextRequest) {
   }
 
   const headers = new Headers(request.headers);
+  // 谁在敲门。网关的登录限流按这个值分桶 —— 没有它，每一次登录都记在
+  // console 容器那一个桶里，于是一个人五次废凭据就能把所有人挡在外面。
+  //
+  // 🔴 先删再设。这个头是调用方可以自己带的，而带着它进来的那一个正是想自己
+  //    挑桶的那一个。推不出地址时就让它**不存在** —— 不是留着对方写的那个值，
+  //    也不是编一个。
+  headers.delete(CLIENT_ADDRESS_HEADER);
+  const client = forwardedClientAddress(request.headers);
+  if (client) {
+    headers.set(CLIENT_ADDRESS_HEADER, client);
+  }
   for (const [name, value] of Object.entries(
     gatewayAuthHeader(request.nextUrl.pathname, request.cookies.get(SESSION_COOKIE)?.value),
   )) {

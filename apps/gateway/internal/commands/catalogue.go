@@ -110,7 +110,7 @@ type Request struct {
 	Username *string `json:"username"`
 	// 🔴 Write-only. It is carried to the edge and stripped from every read of
 	// the command row -- see the payload column in catalog.ListCommands.
-	Password *string `json:"password"`
+	Password *string `json:"password" sensitive:"true"`
 	Auth     string  `json:"auth"`
 
 	// SetUsbnetMode
@@ -141,8 +141,8 @@ type Request struct {
 	// struct is the only place in the cloud that ever holds it, and the
 	// payload it goes into is stored because the edge has to be able to read
 	// it after a reconnect.
-	ActivationCode   string `json:"activation_code"`
-	ConfirmationCode string `json:"confirmation_code"`
+	ActivationCode   string `json:"activation_code" sensitive:"true"`
+	ConfirmationCode string `json:"confirmation_code" sensitive:"true"`
 
 	// SelfUpdate
 	Version   string `json:"version"`

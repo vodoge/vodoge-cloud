@@ -37,6 +37,7 @@ import (
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/messaging"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/notify"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/proxy"
+	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/ratelimit"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/region"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/schedule"
 	"github.com/vodoge/vodoge-cloud/apps/gateway/internal/session"
@@ -807,6 +808,54 @@ func TestOneAddressBeingLimitedDoesNotAffectAnother(t *testing.T) {
 	}
 	if code := attemptFrom("198.51.100.4:1000"); code == http.StatusTooManyRequests {
 		t.Fatal("a second address was limited by the first one's attempts")
+	}
+}
+
+// 上面那条测的性质，在真正的部署里是假的 —— 这条测的是部署里的形状。
+//
+// 🔴 上面那条给两个 httptest 请求写了两个不同的 `RemoteAddr`，而这套部署
+//
+//	**造不出**两个不同的对端地址：浏览器的 /v1/* 走 Next 的 rewrite
+//	（next.config.ts 里那条 `/v1/:path*`），登录走 `POST /api/auth/login`
+//	里的服务端 fetch，两条路都以 console 容器的身份到达网关。所以在生产上
+//	每一次登录 —— 每个租户、每个子域、连同攻击者那几次 —— 都记在同一个桶里。
+//
+//	后果是一个人五次废凭据打空桶，之后**所有人**都登不进去，一个 IP 每 12 秒
+//	补一下就能一直压着。那条假绿的测试在这件事发生的整段时间里一直是绿的：
+//	它报的性质为真，只是它构造的那两个地址在部署里不存在。
+//
+// ⚠️ 不能 t.Parallel：这条要设环境变量，而 `handler()` 是在那之后才读它的。
+func TestTwoOperatorsBehindTheConsoleAreNotOneBucket(t *testing.T) {
+	t.Setenv("VODOGE_TRUSTED_PROXIES", "172.20.0.0/16")
+
+	handler := tenantFixture(t).handler()
+	// 同一个对端（console 容器），不同的转述地址 —— 这正是生产上两位运维
+	// 各自登录时网关看到的样子。
+	attemptFor := func(client string) int {
+		body := strings.NewReader(`{"email":"someone@example.com","password":"guess-again"}`)
+		request := httptest.NewRequest(http.MethodPost, "http://a.vodoge.com/v1/auth/login", body)
+		request.RemoteAddr = "172.20.0.4:41234"
+		request.Header.Set(ratelimit.ClientAddressHeader, client)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	var limited bool
+	for i := 0; i < 12; i++ {
+		if attemptFor("203.0.113.9") == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	// 🔴 负面对照：打空那个桶这件事本身得真的发生过。少了它，一个「永不限流」
+	//    的实现也能让下面那句变绿，而那才是真正危险的方向。
+	if !limited {
+		t.Fatal("打了 12 次都没被限 —— 那这条测试下半段证明不了任何事")
+	}
+
+	if code := attemptFor("198.51.100.4"); code == http.StatusTooManyRequests {
+		t.Fatal("同一个代理后面的另一位运维被别人的失败登录锁住了 —— " +
+			"这就是生产上那个全平台共用一个桶的形状")
 	}
 }
 
@@ -3457,5 +3506,324 @@ func TestEveryServerHookIsWired(t *testing.T) {
 			t.Errorf("wss.Server 有钩子 %s，而 main.go 一次都没给它赋值 —— "+
 				"nil 钩子是静默不做事，屏幕上和日志里都看不出少了什么", name)
 		}
+	}
+}
+
+// 公网那一口不端运维数字。
+//
+// 🔴 这条测试的由来是一次实测，不是推演：2026-09-18 从互联网上
+//
+//	`curl -sk https://43.108.53.126:444/metrics`，不带凭据、不带客户端证书，
+//	HTTP 200，2298 字节 —— 在线设备数、上行与短信累计条数、哪条通知渠道在失败
+//	以及重试了多少次、每条路由的请求数（含 `POST /v1/auth/login`，也就是运维
+//	什么时候登录）。/readyz 还会说数据库通不通。
+//
+//	同样三条路径走 Caddy 是 307。控制台那道登录闸是对的，只是 444 不经过它 ——
+//	Caddy 只占 80/443，而 compose 里 444 那行没有 127.0.0.1 前缀。
+//
+// ⚠️ 名单从 `operationalRoutes()` 枚举，不在这里手写。手写的那份会在有人加第四条
+//
+//	运维路由时留在原地，而测试照样绿 —— 那正是「一份名单两处抄」的失败形状。
+func TestTheDeviceListenerDoesNotServeOperationalRoutes(t *testing.T) {
+	t.Parallel()
+
+	proc := tenantFixture(t)
+	public := proc.publicHandler()
+	loopback := proc.handler()
+
+	routes := operationalRoutes()
+	if len(routes) == 0 {
+		t.Fatal("一条运维路由都没枚举到 —— 这条测试会永远绿")
+	}
+	for path := range routes {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Host = "a.vodoge.com"
+		response := httptest.NewRecorder()
+		public.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("设备那一口上 GET %s = %d，要 404 —— 这一口在公网上",
+				path, response.Code)
+		}
+
+		// 🔴 负面对照。少了它，一个把两个 handler 都改成全 404 的改动也能让
+		//    上面那段变绿，而那会让编排器的存活探针和抓指标一起断掉。
+		inner := httptest.NewRecorder()
+		loopbackRequest := httptest.NewRequest(http.MethodGet, path, nil)
+		loopbackRequest.Host = "a.vodoge.com"
+		loopback.ServeHTTP(inner, loopbackRequest)
+		if inner.Code == http.StatusNotFound {
+			t.Errorf("环回那一口上 GET %s 也 404 了 —— 那是健康检查和指标要走的口", path)
+		}
+	}
+
+	// 设备真正要打的两条必须还在。设备全部的 HTTP 面就是这两条
+	// （edge-uplink/src/dial.rs:21、enroll.rs:415）。
+	for _, path := range []string{"/v1/enroll", "/v1/edge"} {
+		method := http.MethodPost
+		if path == "/v1/edge" {
+			method = http.MethodGet
+		}
+		request := httptest.NewRequest(method, path, http.NoBody)
+		request.Host = "a.vodoge.com"
+		response := httptest.NewRecorder()
+		public.ServeHTTP(response, request)
+		if response.Code == http.StatusNotFound {
+			t.Errorf("设备那一口上 %s %s 成了 404 —— 这一口就是给设备用的", method, path)
+		}
+	}
+}
+
+// 那一口真的接的是 `publicHandler`。
+//
+// 🔴 上一条测的是两个 handler 各自的行为，而它们都对、接线接错，照样全绿 ——
+//
+//	昨天在通知渠道那条上就逃掉过一次同形状的变异。所以这里直接读 `run()` 里
+//	那个 `http.Server` 字面量：TLS 那台服务器的 Handler 必须是
+//	`proc.publicHandler()`。
+//
+// ⚠️ 用 AST 而不是字符串匹配：`gofmt` 会改缩进和折行，字面量锚点会静悄悄地
+//
+//	不命中，于是断言从「承重」变成「永远不执行」。
+func TestTheTLSListenerIsWiredToThePublicHandler(t *testing.T) {
+	t.Parallel()
+
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("解析 main.go：%v", err)
+	}
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("读 main.go：%v", err)
+	}
+
+	// 两台服务器各自接的是哪个 handler。两边都要钉 —— 做这次变异验证时我把
+	// 它们接反了，而「反着接」的后果同样是实打实的：环回那一口没有 /healthz，
+	// compose 的健康检查就一直失败，容器进不了 healthy。
+	handlerOf := map[string]string{}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		var name string
+		var value ast.Expr
+		switch statement := node.(type) {
+		case *ast.AssignStmt:
+			if len(statement.Lhs) != 1 || len(statement.Rhs) != 1 {
+				return true
+			}
+			target, ok := statement.Lhs[0].(*ast.Ident)
+			if !ok {
+				return true
+			}
+			name, value = target.Name, statement.Rhs[0]
+		default:
+			return true
+		}
+		unary, ok := value.(*ast.UnaryExpr)
+		if !ok {
+			return true
+		}
+		literal, ok := unary.X.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		for _, element := range literal.Elts {
+			pair, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := pair.Key.(*ast.Ident)
+			if !ok || key.Name != "Handler" {
+				continue
+			}
+			start := fileSet.Position(pair.Value.Pos()).Offset
+			end := fileSet.Position(pair.Value.End()).Offset
+			handlerOf[name] = string(source[start:end])
+		}
+		return true
+	})
+
+	for server, want := range map[string]string{
+		// 公网那一口：减去运维路由的那个。
+		"tlsServer": "proc.publicHandler()",
+		// 环回那一口：全量，健康检查和指标都要从这里出去。
+		"httpServer": "handler",
+	} {
+		got, ok := handlerOf[server]
+		if !ok {
+			t.Errorf("在 main.go 里找不到 %s 的 Handler 字段 —— 这条断言不能"+
+				"因为找不到就算通过，那样它挡不住任何东西", server)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s 的 Handler = %s，要 %s。接错的两个方向都有后果："+
+				"公网那口接成 handler 是把 /metrics 挂上公网，环回那口接成 "+
+				"publicHandler 是健康检查再也不通过。", server, got, want)
+		}
+	}
+}
+
+// 不在 /v1/ 下的路由，必须被声明为「运维路由」—— 也就是不上公网那一口。
+//
+// 🔴 `operationalRoutes()` 是第二份名单：注册写在 `handler()` 里的字面量，
+//
+//	而阻挡按这份名单做。两份名单就会分家，分家的那一侧是「以为挡住了，其实
+//	没挡」。这条测试从源码枚举出全部注册路由，两个方向都查：
+//	  ① 注册了一条不在 /v1/ 下的路由却没声明 → 它会静悄悄地上公网；
+//	  ② 声明了一条根本没注册的路径 → 名单里留着一条早已删掉的路径，
+//	    下次有人照着它判断「挡的是这些」就会判断错。
+//
+// ⚠️ 分界线用 `/v1/` 而不是列举具体前缀：判断标准是「这条路由属不属于那套面向
+//
+//	租户的 API」，而新加的 API 路由一律在 /v1/ 下（openapi 那套测试也是这么
+//	假设的）。一条既不在 /v1/ 下、又不想被挡的路由，应当在这里显式出现。
+func TestEveryNonAPIRouteIsDeclaredOperational(t *testing.T) {
+	t.Parallel()
+
+	declared := operationalRoutes()
+	if len(declared) == 0 {
+		t.Fatal("没有声明任何运维路由 —— 这条测试会永远绿")
+	}
+
+	registered := map[string]bool{}
+	for _, entry := range routesFromSource(t) {
+		registered[entry.path] = true
+		if strings.HasPrefix(entry.path, "/v1/") {
+			continue
+		}
+		if _, ok := declared[entry.path]; !ok {
+			t.Errorf("%s %s 注册了，却没有出现在 operationalRoutes() 里 —— "+
+				"于是它会跟着上设备那一口（公网）。要么声明它，要么把它挪到 /v1/ 下。",
+				entry.method, entry.path)
+		}
+	}
+
+	for path := range declared {
+		if !registered[path] {
+			t.Errorf("operationalRoutes() 里有 %s，但源码里没有这条注册 —— "+
+				"名单里留着一条不存在的路径，下次照着它判断「挡的是这些」就会判断错。",
+				path)
+		}
+	}
+}
+
+// 审计行里不许出现一次性凭据，而发给设备的那一份必须原样带着。
+//
+// 🔴 2026-09-18 在生产上量到：app.audit_log 里有 2 行带着明文 eSIM 激活码，
+//
+//	而那个租户有一个在用的 readonly 账号。`GET /v1/audit` 不看角色（readOnly
+//	那道闸只拦改动类方法，GET 一律放行 —— 那是它的设计），所以一个连下载命令
+//	都发不出去的角色，拿得到执行那次下载所需要的凭据本身。SGP.22 的激活码是
+//	一次性的：被别人先兑掉，这一单就废了。
+//
+// ⚠️ 两个方向都查。只查「审计里没有」的话，一个把载荷整个删掉的实现也能绿 ——
+//
+//	而那样设备就收不到码，下载必然失败。命令行里那一份是设备重连后要再读的。
+func TestAnActivationCodeReachesTheDeviceButNotTheAuditLog(t *testing.T) {
+	t.Parallel()
+
+	const code = "1$smdp.example.com$TESTMATCHINGID"
+
+	proc := tenantFixture(t)
+	handler := proc.handler()
+
+	body := `{"device_id":"d-a","kind":"download_esim_profile",` +
+		`"modem_imei":"860000000000001","activation_code":"` + code + `"}`
+	request := authorize(httptest.NewRequest(http.MethodPost,
+		"http://a.vodoge.com/v1/commands", strings.NewReader(body)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK && response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+
+	events := proc.audit.(*audit.Memory).ForTenant("t-a")
+	if len(events) != 1 {
+		t.Fatalf("审计事件 = %d 条，期望 1 条", len(events))
+	}
+	if strings.Contains(string(events[0].Detail), code) {
+		t.Fatalf("审计行里带着明文激活码：%s", events[0].Detail)
+	}
+	// 隐去之后仍要看得出这条命令**带过**凭据，否则一条下载记录和一条什么都
+	// 没带的记录长得一样。
+	if !strings.Contains(string(events[0].Detail), "activation_code") {
+		t.Fatalf("审计行里连 activation_code 这个键都没了：%s\n"+
+			"「带过凭据」本身是审计要回答的事实之一。", events[0].Detail)
+	}
+
+	queue := proc.queue.(*commands.Memory)
+	if len(queue.Items) != 1 {
+		t.Fatalf("队列里 = %d 条", len(queue.Items))
+	}
+	if !strings.Contains(string(queue.Items[0].Payload), code) {
+		t.Fatalf("发给设备的那一份没有带激活码：%s\n"+
+			"设备重连之后还要再读一次，这是这些码存在命令行里的全部理由。",
+			queue.Items[0].Payload)
+	}
+}
+
+// 没有任何一处限流直接按对端地址做键。
+//
+// 🔴 做变异验证时，把**第二个**调用点（改密码）退回 `ratelimit.ClientKey`，
+//
+//	整个网关全绿 —— 行为测试钉的是登录那一条路。而两条路的形状完全一样：
+//	`POST /v1/auth/password` 同样经 console 转发，同样会被一个人打空、
+//	同样会把所有人挡在外面。
+//
+//	所以这条从源码枚举**每一处** `ratelimit.Guard(...)`，要求它的键函数不是
+//	`ratelimit.ClientKey`。以后新加一处限流，作者什么都不用记得做，这条会红。
+//
+// ⚠️ `ratelimit.ClientKey` 本身没有被删掉：它是 `ClientKeyBehind` 在没配信任
+//
+//	名单时的退化形式，也是那个包对外的基础件。这里禁的是**在 Guard 处直接
+//	用它**。
+func TestNoRateLimitKeysDirectlyOnThePeerAddress(t *testing.T) {
+	t.Parallel()
+
+	fileSet := token.NewFileSet()
+	packages, err := parser.ParseDir(fileSet, ".", func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("解析源码：%v", err)
+	}
+
+	guards := 0
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) < 2 {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "Guard" {
+					return true
+				}
+				if pkgName, ok := selector.X.(*ast.Ident); !ok || pkgName.Name != "ratelimit" {
+					return true
+				}
+				guards++
+				key, ok := call.Args[1].(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkgName, ok := key.X.(*ast.Ident)
+				if !ok || pkgName.Name != "ratelimit" || key.Sel.Name != "ClientKey" {
+					return true
+				}
+				t.Errorf("%s 这处限流直接按对端地址做键。在这套部署里对端"+
+					"永远是 console 容器，于是它是一个全平台共用的桶：一个人"+
+					"打空之后所有人都被挡住。用 clientKey（ClientKeyBehind）。",
+					fileSet.Position(call.Pos()))
+				return true
+			})
+		}
+	}
+
+	// 🔴 一处都没找到就是这条测试坏了，不是「全都合规」。
+	if guards < 3 {
+		t.Fatalf("只找到 %d 处 ratelimit.Guard —— 期望至少 3 处"+
+			"（登录、改密码、下发命令）。多半是调用形状变了，这条测试已经查不到东西。",
+			guards)
 	}
 }

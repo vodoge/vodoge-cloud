@@ -117,6 +117,16 @@ services:
       # RLS means not even the gateway can list the tenants it serves.
       VODOGE_OPS_TENANT: ${VODOGE_OPS_TENANT:-}
       VODOGE_OPS_TOKEN: ${VODOGE_OPS_TOKEN:-}
+      # 谁的转述地址算数。控制台把每一个 /v1 请求转发给网关（浏览器的 /v1/*
+      # 走 Next 的 rewrite，登录走 /api/auth/login 里的服务端 fetch），所以
+      # 网关看到的对端**永远**是 console 容器 —— 不把它认出来的话，登录限流
+      # 就是全平台共用一个桶：任何人打五次废凭据，之后每个租户的每位运维都
+      # 登不进去。
+      #
+      # ⚠️ 写的是 backend 这一段，不是「所有私网地址」：范围越大，能自己挑
+      #    限流桶的东西越多。这一段之外的对端送来那个头会被忽略**并且记一条
+      #    警告** —— docker 重编网段时，那条警告就是唯一的声音。
+      VODOGE_TRUSTED_PROXIES: ${VODOGE_TRUSTED_PROXIES:-172.20.0.0/16}
     volumes:
       - ./certs:/certs:ro
     ports:
@@ -128,10 +138,22 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - backend
-      - edge
+      backend:
+        # 🔴 网络内别名。容器名 `gateway` 在这三张网上都有记录，而 DNS 交出
+        #    哪一个由不得我们挑 —— 2026-09-18 实测，console 解析 `gateway`
+        #    拿到的是 **172.19.0.6**，也就是 `trek_default`（ingress）那一张：
+        #    控制台到网关的每一个请求（带着会话令牌）都在跟 trek / anki /
+        #    rustdesk 同一张网上走，而不是在这张 internal 的 backend 上。
+        #
+        #    这个别名只在 backend 上有记录，所以解析它必然落到 172.20.x，
+        #    内核也就必然从 backend 那张网卡发出去。限流的信任名单
+        #    （VODOGE_TRUSTED_PROXIES）据此才写得准 —— 而这件事正是那条
+        #    「不在信任名单里的对端转述了调用方地址」的警告抓出来的。
+        aliases:
+          - gateway-backend
+      edge:
       # And ingress, so Caddy can reach it by container name.
-      - ingress
+      ingress:
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
       interval: 10s
@@ -149,7 +171,9 @@ services:
       dockerfile: deploy/Dockerfile.console
     restart: unless-stopped
     environment:
-      VODOGE_GATEWAY_URL: http://gateway:8080
+      # 走 backend 上那个网络内别名，不走容器名 —— 容器名会解析到
+      # trek_default 那张与第三方容器共用的网。见 gateway 服务里的 aliases。
+      VODOGE_GATEWAY_URL: http://gateway-backend:8080
       VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -177,7 +201,9 @@ services:
     image: vodoge-cloud-admin
     restart: unless-stopped
     environment:
-      VODOGE_GATEWAY_URL: http://gateway:8080
+      # 走 backend 上那个网络内别名，不走容器名 —— 容器名会解析到
+      # trek_default 那张与第三方容器共用的网。见 gateway 服务里的 aliases。
+      VODOGE_GATEWAY_URL: http://gateway-backend:8080
       VODOGE_BASE_DOMAIN: ${VODOGE_BASE_DOMAIN:-vodoge.com}
       HOSTNAME: 0.0.0.0
       PORT: "3000"

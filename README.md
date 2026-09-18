@@ -367,7 +367,7 @@ docs/               Protocol semantics, roadmap, execution plan
 
 ```sh
 cd apps/gateway && go test ./...      # gateway
-cd apps/console && npm test           # console: 367 checks, no gateway needed
+cd apps/console && npm test           # console: 373 checks, no gateway needed
 cd apps/console && npm run typecheck
 ```
 

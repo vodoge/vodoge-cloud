@@ -2627,6 +2627,9 @@ const CAPTURED_FROM = {
   //      import 链上，所以它在闭包里。
   //   ⑤ `messages/*.json` 改了一句文案（卡策略那列的提示，改成只承诺真的会
   //      生效的两项）。那句话在设备页上，首页一个字都看不到。
+  //   ⑥ `middleware.ts` 和 `lib/host.ts` 加了「把调用方地址转给网关」那一段
+  //      （登录限流原本全平台共用一个桶）。路由和取头，画面无关；第九次和
+  //      第十次重拍（中间改成认 cf-connecting-ip），两张图都仍然逐字节相同。
   //
   // ⚠️ ③ 和 ④ 说明这个摘要盯的是**文件字节**，不是「画面会不会变」。那是这道闸
   //    有意的保守：换一个 key 的位置、给一个测试常量加两行，确实都改不了画面，
@@ -2856,7 +2859,7 @@ const CAPTURED_FROM = {
   // 改动全在设备页（模组表以注册册子为主，没被观测过的那一根改画一句话），
   // 而取景是首页。
   // 2026-09-10 第二次：连同上面的 recipe 一起重盖，理由同上。
-  chrome: "5d73ce1f8d447fd814fac31a4e2752bed9f90f169be13dd5bd84e3e1fdc9f0a3",
+  chrome: "4d086e66a9d3973066951f5670361d0fc96c24bed8a36d6d5c31deddb20d58a6",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2915,7 +2918,7 @@ const CAPTURED_FROM = {
   // 设备总览页把那一行画成了 `unknown` 徽标加一排横杠加一句「从未」
   // （也就是「坏了、已停止上报」的样子），收件箱的发送表单则把它列成了
   // 一个可以选中的发信方。取景是首页，既不画这两张表也不画那个表单。
-  recipe: "533d46ca33b3021101df9443ca6580ec002581fb7a0092e21e5b561df60458db",
+  recipe: "d19f3d3dbdb71f344c9f6ae8f7024e221d11e87eb646d7e7393c868e720b3e53",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",
