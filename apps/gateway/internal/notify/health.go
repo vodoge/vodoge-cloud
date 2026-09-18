@@ -45,6 +45,14 @@ type ChannelHealth struct {
 	LastDetail string `json:"last_detail"`
 	// 记录范围内这条渠道一共尝试过几次。分母，没有它「失败 3 次」读不出轻重。
 	Total int `json:"total"`
+	// 这条渠道的记录**占满了**读取窗口 —— 也就是说更早的记录被截断了。
+	//
+	// 🔴 `LastSuccess == nil && WindowFull` 的意思是「窗口里没看到成功」，
+	//    **不是**「从来没成功过」。两者的下一步完全不同：一个是配置从没对过，
+	//    一个是刚刚坏掉。对抗复核抓到的第一版把两者显示成同一句话。
+	//
+	//    缺席 ≠ 空：窗口看不到，不等于不存在。
+	WindowFull bool `json:"window_full"`
 }
 
 // Summarise folds attempts into one row per channel.
@@ -58,7 +66,19 @@ type ChannelHealth struct {
 //	缺席 ≠ 空：「从没发过」和「发过而且都成功」是两件事，把前者画成一片绿色
 //	正是这个功能要避免的那种谎。调用方拿设置里配了哪些渠道去对，就能把
 //	「配了但从没发过」单独说出来。
+//
+// Summarise folds attempts with no knowledge of the read window.
+//
+// ⚠️ 等价于 `SummariseWindow(attempts, 0)`：窗口未知时 `WindowFull` 一律为 false,
+//
+//	也就是「按看到的说」。调用方知道窗口大小的话应当用 `SummariseWindow` ——
+//	生产那条路就是。
 func Summarise(attempts []Attempt) map[string]ChannelHealth {
+	return SummariseWindow(attempts, 0)
+}
+
+// SummariseWindow folds attempts, knowing how many rows per channel were read.
+func SummariseWindow(attempts []Attempt, perChannelLimit int) map[string]ChannelHealth {
 	byChannel := map[string][]Attempt{}
 	for _, attempt := range attempts {
 		byChannel[attempt.Channel] = append(byChannel[attempt.Channel], attempt)
@@ -68,7 +88,12 @@ func Summarise(attempts []Attempt) map[string]ChannelHealth {
 	for channel, rows := range byChannel {
 		sort.Slice(rows, func(i, j int) bool { return rows[i].At.After(rows[j].At) })
 
-		entry := ChannelHealth{Total: len(rows)}
+		entry := ChannelHealth{
+			Total: len(rows),
+			// 取到的条数等于上限 = 更早的被截断了。等于而不是大于:SQL 那一侧
+			// 用 `row_number() <= limit`,不会多给。
+			WindowFull: perChannelLimit > 0 && len(rows) >= perChannelLimit,
+		}
 		counting := true
 		for _, row := range rows {
 			if row.Result == "delivered" {

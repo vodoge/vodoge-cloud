@@ -80,6 +80,7 @@ SQL
 fi
 
 DRIFT=0
+UNVERIFIABLE=0
 SEEN_VERSIONS=""
 
 for file in "$@"; do
@@ -89,7 +90,27 @@ for file in "$@"; do
 
   recorded=$(psql_q "SELECT coalesce(sha256, '') FROM app.schema_migrations WHERE version = $version" || true)
   if [ -n "$(psql_q "SELECT 1 FROM app.schema_migrations WHERE version = $version" || true)" ]; then
-    if [ -z "$recorded" ] || [ "$recorded" = "$sum" ]; then
+    if [ -z "$recorded" ]; then
+      # 账本里有这一行,但没有校验和。
+      #
+      # 🔴 **应用**时当成"一致"是对的:这一行是这个脚本存在之前记下的（0020 的
+      #    历史补录就是这么落的）,拿"没有校验和"去拒绝一次升级毫无道理。
+      #
+      #    但**对账**时当成"一致"是错的 —— 那是把"查不了"报成"查过了,没问题"。
+      #    生产上 71 条账本里有 **37 条**是这个状态（2026-09-18 量的）,也就是说
+      #    第一版的 --check 对超过一半的迁移报"对账通过",而它本来就是为了发现
+      #    「已应用的迁移被改过」才写的。改一改 0004 再跑 --check,它会说通过。
+      #
+      #    缺席 ≠ 空。这个仓库到处写着这条,而我在实现一个检查时违反了它。
+      SEEN_VERSIONS="$SEEN_VERSIONS,$version"
+      if [ "$CHECK_ONLY" = "1" ]; then
+        UNVERIFIABLE=$((UNVERIFIABLE + 1))
+      else
+        log "跳过 $base(已应用)"
+      fi
+      continue
+    fi
+    if [ "$recorded" = "$sum" ]; then
       [ "$CHECK_ONLY" = "1" ] || log "跳过 $base(已应用)"
       SEEN_VERSIONS="$SEEN_VERSIONS,$version"
       continue
@@ -103,6 +124,13 @@ for file in "$@"; do
     #    只看见一个问题、修一个再跑一次。
     if [ "$CHECK_ONLY" = "1" ]; then
       DRIFT=$((DRIFT + 1))
+      # 🔴 这一条也要记进 SEEN_VERSIONS。第一版漏了,于是校验和不符的迁移会在
+      #    结尾**再被报一次**,说它「已经离开版本库、恢复重放不出来」—— 而那个文件
+      #    就在树里,只是内容变了。两条结论互相矛盾,而且 DRIFT 被记了两次。
+      #
+      #    这正好是 2026-09-17 生产的状态（账本 0066 = cc75eb6f…,树里 be3f4b4f…）:
+      #    运维那天要是跑了 --check,会看到一个真问题配一个编造出来的。
+      SEEN_VERSIONS="$SEEN_VERSIONS,$version"
       continue
     fi
     exit 1
@@ -145,8 +173,19 @@ if [ "$CHECK_ONLY" = "1" ]; then
   version=$(psql_q "SELECT coalesce(max(version)::text, '(空)') FROM app.schema_migrations")
   recorded=$(psql_q "SELECT count(*) FROM app.schema_migrations")
   log "账本: $recorded 条,最大版本 $version；这棵树: $# 个文件"
-  if [ "$DRIFT" -eq 0 ]; then
+  if [ "$UNVERIFIABLE" -gt 0 ]; then
+    # ⚠️ 如实说"有多少条查不了",而不是把它们算进"通过"。
+    #    这些行的内容有没有被改过,这个脚本答不上来 —— 而答不上来和答"没问题"
+    #    是两件事。
+    log "其中 $UNVERIFIABLE 条没有记录校验和,内容是否被改过**无法判断**"
+    log "   （这些是本脚本存在之前记下的行；它们会随着重新应用自然获得校验和）"
+  fi
+  if [ "$DRIFT" -eq 0 ] && [ "$UNVERIFIABLE" -eq 0 ]; then
     log "对账通过:账本和这棵树一致"
+    exit 0
+  fi
+  if [ "$DRIFT" -eq 0 ]; then
+    log "没有发现不一致,但有 $UNVERIFIABLE 条查不了（见上）"
     exit 0
   fi
   log "对账发现 $DRIFT 处不一致（见上）"

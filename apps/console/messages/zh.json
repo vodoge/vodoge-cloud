@@ -770,6 +770,7 @@
   "settings.channelDelivering": "正常",
   "settings.channelFailing": "连续失败 {count} 次",
   "settings.channelNeverSucceeded": "从来没成功过",
+  "settings.channelNoSuccessInWindow": "窗口内没有成功记录（更早的看不到）",
   "settings.channelLastSuccess": "上次成功 {at}",
   "settings.channelAttempts": "共 {count} 次尝试",
   "settings.channelNoAttempts": "还没有投递记录。发生第一条告警或短信之后，每条渠道成没成会显示在这里。",

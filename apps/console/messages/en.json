@@ -770,6 +770,7 @@
   "settings.channelDelivering": "Delivering",
   "settings.channelFailing": "{count} failures in a row",
   "settings.channelNeverSucceeded": "has never succeeded",
+  "settings.channelNoSuccessInWindow": "no success in the window shown (earlier attempts not visible)",
   "settings.channelLastSuccess": "last succeeded {at}",
   "settings.channelAttempts": "{count} attempts",
   "settings.channelNoAttempts": "No deliveries recorded yet. Once the first alert or message goes out, each channel's outcome shows here.",

@@ -51,7 +51,13 @@ export function ChannelHealth({
                   比「上次成功很久以前」严重得多，两者的修法也不同。 */}
               <span className="text-xs text-muted-foreground">
                 {row.lastSuccess === null
-                  ? labels.neverSucceeded
+                  ? // 🔴 窗口满了 = 更早的记录看不到，所以说不出「从来没成功过」。
+                    //    一条曾经一直成功、后来连续失败 51 次的渠道正是这个状态，
+                    //    而它和真的从没通过下一步完全不同：一个是刚刚坏掉，一个是
+                    //    配置从没对过。缺席 ≠ 空。
+                    row.windowFull
+                    ? labels.noSuccessInWindow
+                    : labels.neverSucceeded
                   : labels.lastSuccess.replace(
                       "{at}",
                       new Date(row.lastSuccess).toISOString().replace("T", " ").slice(0, 16),

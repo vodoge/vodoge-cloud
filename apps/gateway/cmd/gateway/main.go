@@ -1833,12 +1833,15 @@ func (process *process) readSettings(writer http.ResponseWriter, request *http.R
 	//    没有失败记录」，那正好是它要推翻的那句话。缺席 ≠ 空。
 	response := map[string]any{"settings": shown}
 	if process.attempts != nil {
-		recent, err := process.attempts.RecentAttempts(request.Context(), entry.TenantID, 50)
+		// 窗口大小要交给 Summarise —— 它靠这个区分「窗口里没看到成功」和
+		// 「从来没成功过」。见 ChannelHealth.WindowFull。
+		const perChannel = 50
+		recent, err := process.attempts.RecentAttempts(request.Context(), entry.TenantID, perChannel)
 		if err != nil {
 			slog.Warn("notification health unavailable",
 				"tenant_id", entry.TenantID, "error", err)
 		} else if len(recent) > 0 {
-			response["notification_health"] = notify.Summarise(recent)
+			response["notification_health"] = notify.SummariseWindow(recent, perChannel)
 		}
 	}
 

@@ -1,6 +1,8 @@
 package notify
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,5 +117,79 @@ func TestAChannelWithNoAttemptsIsAbsentRatherThanGreen(t *testing.T) {
 	health := Summarise(nil)
 	if len(health) != 0 {
 		t.Fatalf("没有任何尝试却汇总出 %d 条", len(health))
+	}
+}
+
+// 「窗口里没有成功」不等于「从来没成功过」。
+//
+// 🔴 对抗复核抓到的：每条渠道只取最近 50 条。一条曾经一直成功、后来连续失败
+//
+//	51 次的渠道，窗口里就一条成功都看不到 —— 而界面会把它写成「从来没成功过」，
+//	和那条真的从没通过的 webhook 一模一样。而这两者的下一步完全不同：一个是
+//	「配置从没对过」，一个是「刚刚坏掉了」。
+//
+//	这正是这个仓库到处写的那条规矩：缺席 ≠ 空。窗口看不到，不等于不存在。
+func TestAFullWindowWithNoSuccessIsNotTheSameAsNeverSucceeding(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 18, 14, 0, 0, 0, time.UTC)
+	var attempts []Attempt
+	for i := 0; i < 50; i++ {
+		attempts = append(attempts, Attempt{
+			Channel: "telegram",
+			Result:  "failed",
+			At:      now.Add(-time.Duration(i) * time.Minute),
+			Detail:  "401 unauthorized",
+		})
+	}
+
+	// 窗口是满的（50 条 = limit），所以更早的记录被截断了 —— 我们**不知道**
+	// 这条渠道以前成没成功过。
+	health := SummariseWindow(attempts, 50)
+	if health["telegram"].LastSuccess != nil {
+		t.Fatal("窗口里确实没有成功，LastSuccess 应当是 nil")
+	}
+	if !health["telegram"].WindowFull {
+		t.Fatal("50 条 = 窗口上限，WindowFull 必须为真 —— 界面靠它区分「看不到」和「没有」")
+	}
+
+	// 对照：窗口没满，就是真的从来没成功过。
+	short := SummariseWindow(attempts[:3], 50)
+	if short["telegram"].WindowFull {
+		t.Fatal("只有 3 条却说窗口满了 —— 那会让一条真的从没成功过的渠道被说成「可能以前成功过」")
+	}
+}
+
+// 网关那条接线必须把窗口大小交出来。
+//
+// 🔴 变异验证逼出来的：把调用点改回 `Summarise(recent)`（不带窗口），整个
+//
+//	notify 包的测试**全绿** —— 因为它们测的是函数，而 `WindowFull` 的正确性
+//	取决于调用方有没有把 limit 传进来。一条只测函数、不测接线的断言，挡不住
+//	「函数写对了但没人正确调用」这种退化，而这正是最容易发生的一种。
+//
+// ⚠️ 读源码而不是跑 HTTP：这是个单元测试，而要钉的是「那一处调用带了窗口」。
+//
+//	它守不到的那一寸也说清楚：它证明不了 limit 的值和 SQL 里用的是同一个 ——
+//	那由同一个 `perChannel` 常量保证，而这条断言顺带也要求那个常量存在。
+func TestTheGatewayHandsTheWindowSizeToTheSummary(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("../../cmd/gateway/main.go")
+	if err != nil {
+		t.Fatalf("读不到网关源码：%v", err)
+	}
+	code := string(source)
+
+	if !strings.Contains(code, "notify.SummariseWindow(recent, perChannel)") {
+		t.Fatal("网关没有把窗口大小交给汇总 —— 那样每条渠道的 WindowFull 恒为 false，" +
+			"而「窗口里没看到成功」会重新显示成「从来没成功过」")
+	}
+	if strings.Contains(code, "notify.Summarise(recent)") {
+		t.Fatal("网关还在用不带窗口的 Summarise")
+	}
+	// 同一个常量既给 SQL 也给汇总 —— 两处各写一个数字就是两处会分家。
+	if !strings.Contains(code, "RecentAttempts(request.Context(), entry.TenantID, perChannel)") {
+		t.Fatal("SQL 的 limit 和汇总的窗口不是同一个常量")
 	}
 }

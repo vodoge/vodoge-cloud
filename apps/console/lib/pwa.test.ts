@@ -2613,7 +2613,7 @@ function renderRecipeDigest(files: string[]): string {
  * note that guard B will not accept it for anything structural.
  */
 const CAPTURED_FROM = {
-  // 🔴 2026-09-13/14：`recipe` 和 `chrome` 动了**七次**，七次重拍都逐字节没变
+  // 🔴 2026-09-13/14：`recipe` 和 `chrome` 动了**八次**，八次重拍都逐字节没变
   // （mobile 060824bb…、wide b13cea17…，一个像素都没差）。
   //
   // 四次的起因各不相同，分开记：
@@ -2856,7 +2856,7 @@ const CAPTURED_FROM = {
   // 改动全在设备页（模组表以注册册子为主，没被观测过的那一根改画一句话），
   // 而取景是首页。
   // 2026-09-10 第二次：连同上面的 recipe 一起重盖，理由同上。
-  chrome: "367b4a40983de2092a17a4db035ad57e1b56c8951dd8a1848979322484ce1be4",
+  chrome: "5d73ce1f8d447fd814fac31a4e2752bed9f90f169be13dd5bd84e3e1fdc9f0a3",
   // 🔴 The gate that `chrome` cannot be: a comment-neutral fingerprint of the
   // same closure. A re-stamp may move `chrome` and MUST NOT move this.
   //
@@ -2915,7 +2915,7 @@ const CAPTURED_FROM = {
   // 设备总览页把那一行画成了 `unknown` 徽标加一排横杠加一句「从未」
   // （也就是「坏了、已停止上报」的样子），收件箱的发送表单则把它列成了
   // 一个可以选中的发信方。取景是首页，既不画这两张表也不画那个表单。
-  recipe: "998984911338f9efc9e76552d44414f10a75cb213f148d197301682350199611",
+  recipe: "533d46ca33b3021101df9443ca6580ec002581fb7a0092e21e5b561df60458db",
   shots: {
     "/screenshot-mobile.png": "060824bba3a45d5c82a1f47bd34b34f6aefcee81140d6bc604e888409ca9d92e",
     "/screenshot-wide.png": "b13cea17a332af74bc6e5af987822331492a30892266625d2919c3a1d516440d",

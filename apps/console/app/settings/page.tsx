@@ -151,6 +151,7 @@ export default async function SettingsPage() {
                 delivering: t("settings.channelDelivering", locale),
                 failing: t("settings.channelFailing", locale),
                 neverSucceeded: t("settings.channelNeverSucceeded", locale),
+                noSuccessInWindow: t("settings.channelNoSuccessInWindow", locale),
                 lastSuccess: t("settings.channelLastSuccess", locale),
                 attempts: t("settings.channelAttempts", locale),
                 noAttempts: t("settings.channelNoAttempts", locale),

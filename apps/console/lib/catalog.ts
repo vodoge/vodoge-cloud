@@ -386,6 +386,15 @@ export type ChannelHealthRow = {
   lastSuccess: number | null;
   lastDetail: string;
   total: number;
+  /**
+   * 这条渠道的记录占满了读取窗口 —— 更早的被截断了。
+   *
+   * 🔴 `lastSuccess === null && windowFull` 的意思是「窗口里没看到成功」，
+   *    **不是**「从来没成功过」。一条曾经一直成功、后来连续失败 51 次的渠道
+   *    正是这个状态，而它和那条真的从没通过的 webhook 下一步完全不同：一个是
+   *    刚刚坏掉，一个是配置从没对过。
+   */
+  windowFull: boolean;
 };
 
 export function parseChannelHealth(value: unknown): ChannelHealthRow[] {
@@ -409,6 +418,10 @@ export function parseChannelHealth(value: unknown): ChannelHealthRow[] {
       lastSuccess: Number.isFinite(parsed) ? parsed : null,
       lastDetail: asString(row.last_detail) ?? "",
       total,
+      // 缺省 false：一个不报这个字段的旧网关，表达的是「不知道窗口」，
+      // 而按「窗口没满」处理会让界面说「从来没成功过」—— 那正是要避免的断言。
+      // 所以下面的文案只在 windowFull 为真时才改口，false 时维持原样。
+      windowFull: row.window_full === true,
     });
   }
   // 坏的排前面，然后按名字 —— 运维打开这一页是来看有没有东西坏了的。
