@@ -14,6 +14,12 @@ type Memory struct {
 	messages map[string][]Message
 	contacts map[string]map[string]Contact
 	nextID   int
+	// ExpiredCommands 是云端自己判掉的那些命令（expired / cancelled）。
+	//
+	// 🔴 SQL 那一侧去问 app.commands 的状态，来区分「设备的答复迟到了」和
+	//    「设备自己报了个重复结果」。这个假件手里没有命令表，所以由测试显式
+	//    置位 —— 问的是同一个问题，只是问法不同。
+	ExpiredCommands map[string]bool
 }
 
 func (store *Memory) Threads(_ context.Context, tenantID string) ([]Thread, error) {
@@ -98,6 +104,19 @@ func (store *Memory) RecordOutbound(_ context.Context, tenantID string, message 
 	return nil
 }
 
+// LateSentence 和 LateFailurePrefix 是 SQL 那一侧写死的两句话，这里照抄一份
+// 供断言比对。
+//
+// ⚠️ 这是一份副本，而副本会分家 —— 钉住它的是
+//
+//	`TestTheFakeAndTheSQLSayTheSameThingAboutALateAnswer`：它从 messaging.go
+//	的 SQL 文本里把这两句读出来比对。
+const (
+	LateSentence      = "设备在云端判过期之后才答复：这条短信已经发出，投递回执现在对得上了。"
+	LateFailurePrefix = "设备在云端判过期之后才答复："
+	LateNoReason      = "设备没有给出原因"
+)
+
 func (store *Memory) SettleOutbound(
 	_ context.Context,
 	tenantID, commandID, status, reason string,
@@ -109,13 +128,34 @@ func (store *Memory) SettleOutbound(
 		if message.CommandID == nil || *message.CommandID != commandID {
 			continue
 		}
-		if message.Status != "queued" {
+		switch {
+		case message.Status == "queued":
+			store.messages[tenantID][i].Status = status
+			if reason != "" {
+				value := reason
+				store.messages[tenantID][i].FailureReason = &value
+			}
+		// 云端已经放弃了，设备的答复迟到了。
+		//
+		// 🔴 判据是**命令**的状态，不是消息的状态 —— 和 SQL 那一侧问
+		//    app.commands 的 status IN ('expired','cancelled') 是同一个问题。
+		//    设备自己把命令结掉之后再来一条，不在这个集合里，所以不动。
+		case message.Status == "failed" && store.ExpiredCommands[commandID]:
+			if status == "sent" {
+				store.messages[tenantID][i].Status = "sent"
+				value := LateSentence
+				store.messages[tenantID][i].FailureReason = &value
+			} else {
+				value := LateFailurePrefix
+				if reason != "" {
+					value += reason
+				} else {
+					value += LateNoReason
+				}
+				store.messages[tenantID][i].FailureReason = &value
+			}
+		default:
 			continue
-		}
-		store.messages[tenantID][i].Status = status
-		if reason != "" {
-			value := reason
-			store.messages[tenantID][i].FailureReason = &value
 		}
 		if reference != nil {
 			value := *reference

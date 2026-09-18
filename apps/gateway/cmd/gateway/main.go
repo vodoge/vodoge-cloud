@@ -690,6 +690,7 @@ func (devices *liveDevices) Tenants(hub *session.Hub) map[string][]string {
 	}
 	devices.mu.Lock()
 	defer devices.mu.Unlock()
+	now := time.Now()
 	out := make(map[string][]string)
 	for deviceID, tenantID := range devices.byDevice {
 		if hub != nil {
@@ -698,6 +699,21 @@ func (devices *liveDevices) Tenants(hub *session.Hub) map[string][]string {
 				continue
 			}
 		}
+		// 🔴 还连着就把"最近见过"的时间戳往前推。
+		//
+		//    `Seen` 只在 Resume 时调用一次，而 `RecentTenants` 会**删掉**超过
+		//    窗口的条目（看门狗每分钟调一次）。所以一条连续在线超过 24 小时的
+		//    会话，它的时间戳会先被删掉 —— 设备一断线，这个租户就同时不在
+		//    `Tenants()` 里、也不在 `RecentTenants()` 里，于是租户清理和静默
+		//    看门狗对它双双停摆。
+		//
+		//    而"长时间在线"正是健康设备的常态，也就是说那两样东西恰好对最正常
+		//    的那一类设备失效。
+		//
+		// ⚠️ 放在这里而不是在每个上行里调 `Seen`：这个函数每 15 秒被调度器调
+		//    一次，本来就在遍历还连着的设备 —— 顺手盖个戳，不需要任何别的地方
+		//    记得做这件事。
+		devices.seenTenants[tenantID] = now
 		out[tenantID] = append(out[tenantID], deviceID)
 	}
 	return out

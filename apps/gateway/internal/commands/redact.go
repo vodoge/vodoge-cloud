@@ -84,24 +84,32 @@ func Redact(payload map[string]any) map[string]any {
 			clone[key] = Redacted
 			continue
 		}
-		switch nested := value.(type) {
-		case map[string]any:
-			clone[key] = Redact(nested)
-		case []any:
-			items := make([]any, len(nested))
-			for index, item := range nested {
-				if inner, ok := item.(map[string]any); ok {
-					items[index] = Redact(inner)
-					continue
-				}
-				items[index] = item
-			}
-			clone[key] = items
-		default:
-			clone[key] = value
-		}
+		clone[key] = redactValue(value)
 	}
 	return clone
+}
+
+// redactValue 往下走一层。
+//
+// 🔴 数组**套**数组也要走进去。第一版只对数组里的对象递归，套两层的那一档
+//
+//	原样放行 —— 而那一版的注释写着「嵌套一层就漏一层的隐去，等于没有隐去」。
+//	注释说对了，代码没做到：`[[{"activation_code": …}]]` 会原样进审计行。
+//	今天的载荷都是平的，所以这不是一个活着的缺陷；把它修好是因为那句注释
+//	现在才成立。
+func redactValue(value any) any {
+	switch nested := value.(type) {
+	case map[string]any:
+		return Redact(nested)
+	case []any:
+		items := make([]any, len(nested))
+		for index, item := range nested {
+			items[index] = redactValue(item)
+		}
+		return items
+	default:
+		return value
+	}
 }
 
 // RedactJSON 是同一件事，作用在已经序列化好的载荷上。

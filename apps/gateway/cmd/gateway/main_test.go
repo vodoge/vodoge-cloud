@@ -3820,6 +3820,29 @@ func TestNoRateLimitKeysDirectlyOnThePeerAddress(t *testing.T) {
 		}
 	}
 
+	// 🔴 再钉一次，换个角度：`ratelimit.ClientKey` 在这个包里应当**一次都不出现**。
+	//
+	//    上面那条按 `Guard(...)` 的第二个实参查，而 `process.tenantKey` 是把
+	//    键函数包了一层再传进去的 —— 它内部要是退回 `ratelimit.ClientKey`，
+	//    上面那条看不见。对抗复审点名说的就是这个缺口。
+	//
+	// ⚠️ 排除注释：这个文件里有两处注释在解释"为什么不要直接用它"。
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("读 main.go：%v", err)
+	}
+	needle := "ratelimit." + "ClientKey"
+	for index, line := range strings.Split(string(source), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		// `ClientKeyBehind` 是对的，别把它算进来。
+		if strings.Contains(line, needle) && !strings.Contains(line, needle+"Behind") {
+			t.Errorf("main.go:%d 直接用了 %s：%s", index+1, needle, trimmed)
+		}
+	}
+
 	// 🔴 一处都没找到就是这条测试坏了，不是「全都合规」。
 	if guards < 3 {
 		t.Fatalf("只找到 %d 处 ratelimit.Guard —— 期望至少 3 处"+
@@ -3891,5 +3914,93 @@ func TestTheSchedulerGetsTheRecentlySeenTenants(t *testing.T) {
 	if !strings.Contains(recent, "RecentTenants(tenantMemory") {
 		t.Fatalf("Recent = %s，期望用 RecentTenants(tenantMemory, …)。"+
 			"换一个 window 会让它和静默看门狗互相删对方的条目。", recent)
+	}
+
+	// 🔴 上面只钉了调度器那一处，而这条不变量是关于**每一处**的：
+	//    `RecentTenants` 会顺手删掉超过 window 的条目，所以两个调用方用不同
+	//    窗口时，短的那个会替长的那个删 —— 看门狗会在它该报警之前就忘掉租户。
+	//    对抗复审点名说这条不变量「一条测试都没钉住，改看门狗那一侧全绿」。
+	//
+	// ⚠️ 用 AST 数**调用点**，不数字面量：按字面数会把函数定义那一行和注释里
+	//    提到它的地方一起算进去（第一版就是这么红的，报的是 4 处里只有 2 处）。
+	calls, withMemory := 0, 0
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "RecentTenants" {
+			return true
+		}
+		calls++
+		if window, ok := call.Args[0].(*ast.Ident); ok && window.Name == "tenantMemory" {
+			withMemory++
+		}
+		return true
+	})
+	if calls < 2 {
+		t.Fatalf("只找到 %d 处 RecentTenants 调用（期望至少 2：调度器和静默看门狗）"+
+			" —— 这条断言已经查不到东西了", calls)
+	}
+	if withMemory != calls {
+		t.Errorf("%d 处 RecentTenants 调用里只有 %d 处用了 tenantMemory。"+
+			"两个调用方必须用同一个窗口：这个函数会删掉超期条目，短窗口的那个"+
+			"会替长窗口的那个删。", calls, withMemory)
+	}
+}
+
+// 一条连续在线超过 24 小时的会话，断线之后这个租户仍然要能被清理和被看门狗看到。
+//
+// 🔴 `Seen` 只在 Resume 时调用一次，而 `RecentTenants` 每次调用都会**删掉**超过
+//
+//	窗口的条目（静默看门狗每分钟调一次）。所以一条长会话的时间戳会先被删掉，
+//	设备一断线，这个租户就同时不在 `Tenants()` 里、也不在 `RecentTenants()`
+//	里 —— 今天刚修好的"清理够得到断线租户"对它又失效了，而且看门狗也报不出
+//	它的静默。
+//
+//	"长时间在线"正是健康设备的常态：那两样东西恰好对最正常的那一类设备失效。
+func TestALongLivedSessionKeepsItsTenantSweepable(t *testing.T) {
+	t.Parallel()
+
+	devices := newLiveDevices()
+	devices.Seen("t-long", "d-long")
+
+	// 把时间戳推回 25 小时前 —— 就是那条长会话的样子。
+	devices.mu.Lock()
+	devices.seenTenants["t-long"] = time.Now().Add(-25 * time.Hour)
+	devices.mu.Unlock()
+
+	now := time.Now()
+	// 设备还连着（hub 传 nil = 全部当作还绑着，这条测试要的就是"还连着"）。
+	if live := devices.Tenants(nil); len(live["t-long"]) != 1 {
+		t.Fatalf("还连着的设备不在 Tenants 里：%v", live)
+	}
+
+	recent := devices.RecentTenants(tenantMemory, now)
+	if len(recent) != 1 || recent[0] != "t-long" {
+		t.Fatalf("RecentTenants = %v，期望 [t-long] —— 还连着的租户不该被窗口淘汰掉，"+
+			"否则它一断线，清理和看门狗就同时停摆", recent)
+	}
+}
+
+// 负面对照：**没有**连着的租户，超过窗口就该被淘汰。
+//
+// ⚠️ 少了这一条，一个"永不淘汰"的实现也能让上面那条变绿 —— 而那样
+//
+//	`seenTenants` 会无限长下去，而且清理会一直跑在早就不存在的租户上。
+func TestATenantThatStoppedConnectingIsForgotten(t *testing.T) {
+	t.Parallel()
+
+	devices := newLiveDevices()
+	devices.Seen("t-gone", "d-gone")
+	devices.mu.Lock()
+	devices.seenTenants["t-gone"] = time.Now().Add(-25 * time.Hour)
+	// 设备也不在了（模拟 hub 已经不持有它之后被 Tenants 清掉的状态）。
+	delete(devices.byDevice, "d-gone")
+	devices.mu.Unlock()
+
+	if recent := devices.RecentTenants(tenantMemory, time.Now()); len(recent) != 0 {
+		t.Fatalf("RecentTenants = %v，期望空 —— 一年不连的租户不该永远留在名单里", recent)
 	}
 }

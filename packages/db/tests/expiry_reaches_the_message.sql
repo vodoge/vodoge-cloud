@@ -108,8 +108,16 @@ BEGIN
     IF v_reason IS NULL THEN
         RAISE EXCEPTION '落到 failed 却没说为什么 —— 运维看到的会是一条没有理由的失败';
     END IF;
-    IF v_reason NOT LIKE '%可以直接重发%' THEN
-        RAISE EXCEPTION '没有告诉运维这条可以直接重发: %', v_reason;
+    -- 🔴 这一条原本断言的是「要告诉运维可以直接重发」—— 而那句建议是错的，
+    --    0072 把它删掉了。云端不知道短信发没发出去：边缘先执行后发回执，而
+    --    `CommandReceipt` 是 seq:None、不进落盘队列，帧丢了就永远丢了；网关又
+    --    从不把命令标成 dispatched，所以「没收到回执」和「从没推送过」在库里
+    --    长得一模一样。生产上 12 条过期命令全部走的这一支。
+    --
+    -- ⚠️ 一条把假话钉住的测试，比没有测试更难改 —— 它会让改正的人以为自己
+    --    弄坏了什么。所以这里留下理由。
+    IF v_reason LIKE '%可以直接重发%' THEN
+        RAISE EXCEPTION '仍然在叫运维直接重发，而云端并不知道短信发没发出去: %', v_reason;
     END IF;
 
     -- 🔴 设备接过的那条：话必须不一样。

@@ -151,6 +151,28 @@ jobs:
             exit 1
           fi
           echo "every tenant table enforces isolation"
+      - name: The gateway's SQL runs against a real database
+        env:
+          PGPASSWORD: ci
+          VODOGE_TEST_DATABASE_URL: postgres://vodoge:ci@localhost:5432/vodoge?sslmode=disable
+        # 🔴 这一步此前不存在：网关那一侧的 SQL **一条都没有自动化覆盖**。包里的
+        #    测试全部跑在 `messaging.Memory` 这种假件上，而假件不会因为 SQL 写错
+        #    而变红。
+        #
+        #    代价刚刚发生过一次：2026-09-18 把 catalog.ListCommands 的
+        #    `payload - 'password'` 改成按参数删键，整棵树 32 个包全绿 —— 那条
+        #    语句从来没有被任何测试执行过，它第一次运行就是在生产上。那次是靠
+        #    手工在生产库上 SELECT 验的，而手工验证不会在下一个人改它的时候
+        #    再做一遍。
+        #
+        # ⚠️ 用 build tag 而不是「读不到环境变量就 skip」：跳过的测试会安静地
+        #    永远跳过，而那正是这个仓库反复吃亏的形状。带上 -tags dbtest 就是
+        #    明确要求打库，连不上必须是失败。
+        #
+        # 这一步跑在上面那个已经重放完迁移的库上，测试自己按租户建/删数据。
+        run: |
+          cd apps/gateway
+          go test -tags dbtest ./... 2>&1 | tail -40
       - name: Every command the catalogue can build is a value the table accepts
         env:
           PGPASSWORD: ci

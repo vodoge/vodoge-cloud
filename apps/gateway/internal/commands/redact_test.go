@@ -183,3 +183,32 @@ func TestAnUnparsablePayloadIsNotPassedThrough(t *testing.T) {
 		t.Fatalf("隐去失败时返回的东西不是合法 JSON：%s", out)
 	}
 }
+
+// 数组套数组也要隐去。
+//
+// 🔴 对抗复审抓到的：第一版只对数组里的**对象**递归，套两层的那一档原样放行。
+//
+//	而同一段代码的注释写着「嵌套一层就漏一层的隐去，等于没有隐去」—— 注释说
+//	对了，代码没做到。今天的载荷都是平的，所以这不是一个活着的缺陷；修它是
+//	因为那句注释现在才成立。
+func TestRedactingReachesIntoNestedArrays(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]any{
+		"batch": []any{
+			[]any{
+				map[string]any{"activation_code": sentinelActivation},
+			},
+		},
+	}
+	out, err := json.Marshal(Redact(payload))
+	if err != nil {
+		t.Fatalf("序列化：%v", err)
+	}
+	if strings.Contains(string(out), sentinelActivation) {
+		t.Fatalf("数组套数组里的凭据没有被隐去：%s", out)
+	}
+	if !strings.Contains(string(out), Redacted) {
+		t.Fatalf("隐去之后连占位都没有：%s", out)
+	}
+}

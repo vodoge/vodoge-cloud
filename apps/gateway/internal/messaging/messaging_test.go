@@ -302,3 +302,65 @@ func TestAContactNamesItsConversation(t *testing.T) {
 		t.Fatalf("contacts = %+v, want the name to survive", contacts)
 	}
 }
+
+// 云端放弃之后设备才答复：假件也要记下 TP-MR。
+//
+// 🔴 这是 `SettleOutbound` 里那条「迟到」分支的假件一侧。真正的 SQL 由
+//
+//	`sql_dbtest_test.go`（-tags dbtest）打真库验，包括端到端那一步：投递回执
+//	进来之后这一行会变成 delivered。这里验的是假件和它说同一套话 —— 否则每一个
+//	用假件的上层测试都会在一个不存在的世界里绿。
+func TestALateAnswerIsRecordedOnTheFake(t *testing.T) {
+	t.Parallel()
+
+	store := &Memory{ExpiredCommands: map[string]bool{"cmd-late": true}}
+	ctx := context.Background()
+	commandID := "cmd-late"
+	_ = store.RecordOutbound(ctx, "t", Message{DeviceID: "d1", Peer: "10086",
+		Body: "hi", CommandID: &commandID})
+	// 云端放弃：消息被判成 failed（生产上是 0068 那个函数做的）。
+	_ = store.SettleOutbound(ctx, "t", commandID, "failed", "云端等到超时就不再等了。", nil)
+
+	reference := 42
+	_ = store.SettleOutbound(ctx, "t", commandID, "sent", "", &reference)
+
+	thread, _ := store.Thread(ctx, "t", "10086", 0)
+	if thread[0].ProviderReference == nil || *thread[0].ProviderReference != 42 {
+		t.Fatalf("迟到的答复没有写下 TP-MR：%v", thread[0].ProviderReference)
+	}
+	if thread[0].Status != "sent" {
+		t.Fatalf("status = %q，期望 sent —— Threads 按 queued/failed 数未发送",
+			thread[0].Status)
+	}
+	if thread[0].FailureReason == nil || *thread[0].FailureReason != LateSentence {
+		t.Fatalf("说法不对：%v", thread[0].FailureReason)
+	}
+}
+
+// 负面对照：命令**不是**云端判掉的，那就不是迟到，是重复。
+//
+// ⚠️ 少了这一条，一个「凡是 failed 就改」的假件也能让上面那条变绿，而它和
+//
+//	SQL 那一侧的行为就分家了 —— 而分家的假件比没有假件更坏。
+func TestTheFakeOnlyTreatsACloudExpiredCommandAsLate(t *testing.T) {
+	t.Parallel()
+
+	// 注意：ExpiredCommands 里没有这一条。
+	store := &Memory{}
+	ctx := context.Background()
+	commandID := "cmd-dup"
+	_ = store.RecordOutbound(ctx, "t", Message{DeviceID: "d1", Peer: "10086",
+		Body: "hi", CommandID: &commandID})
+	_ = store.SettleOutbound(ctx, "t", commandID, "failed", "模组拒绝了这条消息", nil)
+
+	reference := 77
+	_ = store.SettleOutbound(ctx, "t", commandID, "sent", "", &reference)
+
+	thread, _ := store.Thread(ctx, "t", "10086", 0)
+	if thread[0].Status != "failed" {
+		t.Fatalf("设备自己报的失败被重复结果翻成了 %q", thread[0].Status)
+	}
+	if thread[0].ProviderReference != nil {
+		t.Fatalf("重复结果写进了 provider_reference：%v", thread[0].ProviderReference)
+	}
+}

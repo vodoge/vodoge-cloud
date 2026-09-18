@@ -307,6 +307,39 @@ func (store SQL) CountOutboundSince(
 // an SMS-STATUS-REPORT projected by accept_ingress -- and the only thing this
 // does about it is write down `reference`, the TP-MR the modem used, which is
 // how that later report finds this row.
+// 🔴 两种情形，一条语句：
+//
+//   - 还在等（status='queued'）：设备答什么就写什么。这是常态。
+//
+//   - 云端已经放弃了（status='failed' 且命令是 expired/cancelled）：设备的答复
+//     **迟到**了。此前这一支什么都不做 —— `AND status = 'queued'` 让它更新 0 行，
+//     而且没人看 RowsAffected，所以是静默的。
+//
+//     代价是整条链在唯一没有退路的地方断掉。0068 在放弃时写下的那句话是
+//     「这台设备**接受过**这条命令，所以这条短信可能已经真的发出去了 ——
+//     重发之前先查投递回执」，而投递回执靠 TP-MR 找消息行（0066 的
+//     SmsStatusReport 分支严格按 provider_reference = reference 匹配）。
+//     TP-MR 只有这一处写入口。丢了它，那句话指向的就是一张**结构上不可能
+//     出现**的回执。
+//
+//     更贵的一半在 Threads：它按 `status IN ('queued','failed')` 数未发送，
+//     所以一条真的发出去了的短信会永远显示成未发送，而运维看到的下一步是
+//     再发一次 —— 再花一次钱，收件人收到两条。
+//
+//     `messageReference` 自己的注释早就写着这个危害：「没记下来的 reference，
+//     那条回执会被观测到到达、却永远配不到运维正看着的那一行」。
+//
+// ⚠️ 用**命令**的状态（expired/cancelled）而不是消息的状态来区分「迟到」和
+//
+//	「设备自己报的重复结果」：那是 recordLateResultSQL 里同一条判据。设备自己
+//	把命令结成 succeeded/failed 之后再来一条，命令不在这两个状态里，这条
+//	UPDATE 就不动它。
+//
+// ⚠️ 迟到的成功会把消息改成 'sent'，而命令行**保持** expired。两者不矛盾：
+//
+//	命令的状态记的是云端当时做了什么决定（改写它会让超时不可审计，见
+//	recordLateResultSQL 那段注释），消息的状态说的是这条短信本身的下落 ——
+//	而它确实发出去了。
 func (store SQL) SettleOutbound(
 	ctx context.Context,
 	tenantID, commandID, status, reason string,
@@ -314,16 +347,36 @@ func (store SQL) SettleOutbound(
 ) error {
 	return tenant.Transact(ctx, store.DB, tenantID, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
-			UPDATE app.messages
-			   SET status = $2,
-			       failure_reason = nullif($3, ''),
+			UPDATE app.messages AS m
+			   SET status = CASE
+			           WHEN m.status = 'queued' THEN $2
+			           -- 迟到的成功：这条短信确实发出去了，状态得说实话，
+			           -- 否则 Threads 会一直把它数成未发送。
+			           WHEN $2 = 'sent' THEN 'sent'
+			           ELSE m.status
+			       END,
+			       failure_reason = CASE
+			           WHEN m.status = 'queued' THEN nullif($3, '')
+			           WHEN $2 = 'sent' THEN
+			               '设备在云端判过期之后才答复：这条短信已经发出，'
+			               '投递回执现在对得上了。'
+			           ELSE '设备在云端判过期之后才答复：'
+			                || coalesce(nullif($3, ''), '设备没有给出原因')
+			       END,
 			       received_at = now(),
 			       -- Left alone when the device did not report one, so an
 			       -- agent older than this column does not erase a reference
 			       -- a retry already established.
-			       provider_reference = coalesce($4, provider_reference)
-			 WHERE command_id = $1::uuid
-			   AND status = 'queued'`, commandID, status, reason, reference)
+			       provider_reference = coalesce($4, m.provider_reference)
+			 WHERE m.command_id = $1::uuid
+			   AND m.direction = 'outbound'
+			   AND (m.status = 'queued'
+			        OR (m.status = 'failed'
+			            AND EXISTS (SELECT 1
+			                          FROM app.commands AS c
+			                         WHERE c.id = m.command_id
+			                           AND c.status IN ('expired', 'cancelled'))))`,
+			commandID, status, reason, reference)
 		return err
 	})
 }
